@@ -368,6 +368,7 @@ bool DebugEvaluate::IsSideEffectFreeIntrinsic(Runtime::FunctionId id) {
   V(ObjectIsExtensible)                       \
   V(RegExpInitializeAndCompile)               \
   V(StackGuard)                               \
+  V(HandleNoHeapWritesInterrupts)             \
   V(StringAdd)                                \
   V(StringCharCodeAt)                         \
   V(StringEqual)                              \

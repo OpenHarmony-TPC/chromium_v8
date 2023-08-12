@@ -389,6 +389,10 @@ void SetInstancePrototype(Isolate* isolate, Handle<JSFunction> function,
       // At that point, a new initial map is created and the prototype is put
       // into the initial map where it belongs.
       function->set_prototype_or_initial_map(*value, kReleaseStore);
+      if (value->IsJSObjectThatCanBeTrackedAsPrototype()) {
+        // Optimize as prototype to detach it from its transition tree.
+        JSObject::OptimizeAsPrototype(Handle<JSObject>::cast(value));
+      }
     } else {
       Handle<Map> new_map =
           Map::Copy(isolate, initial_map, "SetInstancePrototype");
@@ -414,7 +418,7 @@ void SetInstancePrototype(Isolate* isolate, Handle<JSFunction> function,
     // needed.  At that point, a new initial map is created and the
     // prototype is put into the initial map where it belongs.
     function->set_prototype_or_initial_map(*value, kReleaseStore);
-    if (value->IsJSObject()) {
+    if (value->IsJSObjectThatCanBeTrackedAsPrototype()) {
       // Optimize as prototype to detach it from its transition tree.
       JSObject::OptimizeAsPrototype(Handle<JSObject>::cast(value));
     }
@@ -523,8 +527,10 @@ void JSFunction::EnsureHasInitialMap(Handle<JSFunction> function) {
   Handle<HeapObject> prototype;
   if (function->has_instance_prototype()) {
     prototype = handle(function->instance_prototype(), isolate);
+    map->set_prototype(*prototype);
   } else {
     prototype = isolate->factory()->NewFunctionPrototype(function);
+    Map::SetPrototype(isolate, map, prototype);
   }
   DCHECK(map->has_fast_object_elements());
 

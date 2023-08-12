@@ -1077,7 +1077,8 @@ RUNTIME_FUNCTION(Runtime_DefineAccessorPropertyUnchecked) {
   CONVERT_PROPERTY_ATTRIBUTES_CHECKED(attrs, 4);
 
   RETURN_FAILURE_ON_EXCEPTION(
-      isolate, JSObject::DefineAccessor(obj, name, getter, setter, attrs));
+      isolate, JSObject::DefineOwnAccessorIgnoreAttributes(obj, name, getter,
+                                                           setter, attrs));
   return ReadOnlyRoots(isolate).undefined_value();
 }
 
@@ -1210,8 +1211,8 @@ RUNTIME_FUNCTION(Runtime_DefineGetterPropertyUnchecked) {
 
   RETURN_FAILURE_ON_EXCEPTION(
       isolate,
-      JSObject::DefineAccessor(object, name, getter,
-                               isolate->factory()->null_value(), attrs));
+      JSObject::DefineOwnAccessorIgnoreAttributes(
+          object, name, getter, isolate->factory()->null_value(), attrs));
   return ReadOnlyRoots(isolate).undefined_value();
 }
 
@@ -1307,8 +1308,8 @@ RUNTIME_FUNCTION(Runtime_DefineSetterPropertyUnchecked) {
 
   RETURN_FAILURE_ON_EXCEPTION(
       isolate,
-      JSObject::DefineAccessor(object, name, isolate->factory()->null_value(),
-                               setter, attrs));
+      JSObject::DefineOwnAccessorIgnoreAttributes(
+          object, name, isolate->factory()->null_value(), setter, attrs));
   return ReadOnlyRoots(isolate).undefined_value();
 }
 
