@@ -2698,6 +2698,10 @@ Maybe<bool> Object::SetSuperProperty(LookupIterator* it, Handle<Object> value,
             JSReceiver::GetOwnPropertyDescriptor(&own_lookup, &desc);
         MAYBE_RETURN(owned, Nothing<bool>());
         if (!owned.FromJust()) {
+          if (!CheckContextualStoreToJSGlobalObject(&own_lookup,
+                                                    should_throw)) {
+            return Nothing<bool>();
+          }
           return JSReceiver::CreateDataProperty(&own_lookup, value,
                                                 should_throw);
         }
@@ -6907,7 +6911,7 @@ void JSFinalizationRegistry::RemoveCellFromUnregisterTokenMap(
   }
 
   // weak_cell is now removed from the unregister token map, so clear its
-  // unregister token-related fields for heap verification.
+  // unregister token-related fields.
   weak_cell.set_unregister_token(undefined);
   weak_cell.set_key_list_prev(undefined);
   weak_cell.set_key_list_next(undefined);

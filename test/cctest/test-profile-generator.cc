@@ -461,7 +461,8 @@ TEST(SampleIds) {
   CpuProfiler profiler(isolate);
   CpuProfilesCollection profiles(isolate);
   profiles.set_cpu_profiler(&profiler);
-  profiles.StartProfiling("", {CpuProfilingMode::kLeafNodeLineNumbers});
+  ProfilerId id =
+      profiles.StartProfiling("", {CpuProfilingMode::kLeafNodeLineNumbers}).id;
   CodeEntryStorage storage;
   CodeMap code_map(storage);
   Symbolizer symbolizer(&code_map);
@@ -509,7 +510,7 @@ TEST(SampleIds) {
       sample3.timestamp, symbolized.stack_trace, symbolized.src_line, true,
       base::TimeDelta(), StateTag::JS, EmbedderStateTag::EMPTY);
 
-  CpuProfile* profile = profiles.StopProfiling("");
+  CpuProfile* profile = profiles.StopProfiling(id);
   unsigned nodeId = 1;
   CheckNodeIds(profile->top_down()->root(), &nodeId);
   CHECK_EQ(7u, nodeId - 1);
@@ -521,11 +522,51 @@ TEST(SampleIds) {
   }
 }
 
+TEST(SampleIds_StopProfilingByProfilerId) {
+  TestSetup test_setup;
+  i::Isolate* isolate = CcTest::i_isolate();
+  CpuProfiler profiler(isolate);
+  CpuProfilesCollection profiles(isolate);
+  profiles.set_cpu_profiler(&profiler);
+  CpuProfilingResult result =
+      profiles.StartProfiling("", {CpuProfilingMode::kLeafNodeLineNumbers});
+  CHECK_EQ(result.status, CpuProfilingStatus::kStarted);
+
+  CpuProfile* profile = profiles.StopProfiling(result.id);
+  CHECK_NE(profile, nullptr);
+}
+
+TEST(CpuProfilesCollectionDuplicateId) {
+  CpuProfilesCollection collection(CcTest::i_isolate());
+  CpuProfiler profiler(CcTest::i_isolate());
+  collection.set_cpu_profiler(&profiler);
+
+  auto profile_result = collection.StartProfiling();
+  CHECK_EQ(CpuProfilingStatus::kStarted, profile_result.status);
+  CHECK_EQ(CpuProfilingStatus::kAlreadyStarted,
+           collection.StartProfilingForTesting(profile_result.id).status);
+
+  collection.StopProfiling(profile_result.id);
+}
+
+TEST(CpuProfilesCollectionDuplicateTitle) {
+  CpuProfilesCollection collection(CcTest::i_isolate());
+  CpuProfiler profiler(CcTest::i_isolate());
+  collection.set_cpu_profiler(&profiler);
+
+  auto profile_result = collection.StartProfiling("duplicate");
+  CHECK_EQ(CpuProfilingStatus::kStarted, profile_result.status);
+  CHECK_EQ(CpuProfilingStatus::kAlreadyStarted,
+           collection.StartProfiling("duplicate").status);
+
+  collection.StopProfiling(profile_result.id);
+}
+
 namespace {
 class DiscardedSamplesDelegateImpl : public v8::DiscardedSamplesDelegate {
  public:
   DiscardedSamplesDelegateImpl() : DiscardedSamplesDelegate() {}
-  void Notify() override {}
+  void Notify() override { CHECK_GT(GetId(), 0); }
 };
 
 class MockPlatform : public TestPlatform {
@@ -589,10 +630,13 @@ TEST(MaxSamplesCallback) {
   std::unique_ptr<DiscardedSamplesDelegateImpl> impl =
       std::make_unique<DiscardedSamplesDelegateImpl>(
           DiscardedSamplesDelegateImpl());
-  profiles.StartProfiling("",
+  ProfilerId id =
+      profiles
+          .StartProfiling("",
                           {v8::CpuProfilingMode::kLeafNodeLineNumbers, 1, 1,
                            MaybeLocal<v8::Context>()},
-                          std::move(impl));
+                          std::move(impl))
+          .id;
 
   CodeEntryStorage storage;
   CodeMap code_map(storage);
@@ -628,7 +672,7 @@ TEST(MaxSamplesCallback) {
   CHECK_EQ(1, mock_platform->posted_count());
 
   // Teardown
-  profiles.StopProfiling("");
+  profiles.StopProfiling(id);
   delete mock_platform;
 }
 
@@ -638,7 +682,7 @@ TEST(NoSamples) {
   CpuProfiler profiler(isolate);
   CpuProfilesCollection profiles(isolate);
   profiles.set_cpu_profiler(&profiler);
-  profiles.StartProfiling("");
+  ProfilerId id = profiles.StartProfiling().id;
   CodeEntryStorage storage;
   CodeMap code_map(storage);
   Symbolizer symbolizer(&code_map);
@@ -657,7 +701,7 @@ TEST(NoSamples) {
                                     true, base::TimeDelta(), StateTag::JS,
                                     EmbedderStateTag::EMPTY);
 
-  CpuProfile* profile = profiles.StopProfiling("");
+  CpuProfile* profile = profiles.StopProfiling(id);
   unsigned nodeId = 1;
   CheckNodeIds(profile->top_down()->root(), &nodeId);
   CHECK_EQ(3u, nodeId - 1);
@@ -732,15 +776,14 @@ TEST(Issue51919) {
     base::Vector<char> title = v8::base::Vector<char>::New(16);
     base::SNPrintF(title, "%d", i);
     CHECK_EQ(CpuProfilingStatus::kStarted,
-             collection.StartProfiling(title.begin()));
+             collection.StartProfiling(title.begin()).status);
     titles[i] = title.begin();
   }
   CHECK_EQ(CpuProfilingStatus::kErrorTooManyProfilers,
-           collection.StartProfiling("maximum"));
+           collection.StartProfiling("maximum").status);
   for (int i = 0; i < CpuProfilesCollection::kMaxSimultaneousProfiles; ++i)
     i::DeleteArray(titles[i]);
 }
-
 
 static const v8::CpuProfileNode* PickChild(const v8::CpuProfileNode* parent,
                                            const char* name) {
