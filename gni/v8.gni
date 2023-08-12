@@ -189,6 +189,12 @@ if (!build_with_chromium && is_clang) {
   v8_remove_configs += [ "//build/config/clang:find_bad_constructs" ]
 }
 
+# ifdef OHOS_NWEB_EX
+if (ohos_nweb_ex_config_name != "") {
+  v8_remove_configs += [ "//build/config:ohos_nweb_ex_def_main" ]
+  v8_add_configs += [ "//build/config:ohos_nweb_ex_def_other" ]
+}  #endif  // OHOS_NWEB_EX
+
 # All templates should be kept in sync.
 template("v8_source_set") {
   if (defined(invoker.split_count) && invoker.split_count > 1 &&
