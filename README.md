@@ -1,37 +1,40 @@
-# chromium_v8
+V8 JavaScript Engine
+=============
 
-#### 介绍
-V8 JavaScript库
+V8 is Google's open source JavaScript engine.
 
-#### 软件架构
-软件架构说明
+V8 implements ECMAScript as specified in ECMA-262.
 
+V8 is written in C++ and is used in Google Chrome, the open source
+browser from Google.
 
-#### 安装教程
+V8 can run standalone, or can be embedded into any C++ application.
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 使用说明
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+V8 Project page: https://v8.dev/docs
 
 
-#### 特技
+Getting the Code
+=============
 
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+Checkout [depot tools](http://www.chromium.org/developers/how-tos/install-depot-tools), and run
+
+        fetch v8
+
+This will checkout V8 into the directory `v8` and fetch all of its dependencies.
+To stay up to date, run
+
+        git pull origin
+        gclient sync
+
+For fetching all branches, add the following into your remote
+configuration in `.git/config`:
+
+        fetch = +refs/branch-heads/*:refs/remotes/branch-heads/*
+        fetch = +refs/tags/*:refs/tags/*
+
+
+Contributing
+=============
+
+Please follow the instructions mentioned at
+[v8.dev/docs/contribute](https://v8.dev/docs/contribute).
