@@ -97,11 +97,11 @@ used to filter file path.
                  <filteritem type="filepath" name="README.OpenSource"
                     desc="" />
             </filefilter>
-        </filefilterlist>
-        <filefilter name="defaultFilter">
+            <filefilter name="defaultFilter">
                 <filteritem type="filepath" name="README.OpenSource"
                     desc="" />
             </filefilter>
+        </filefilterlist>
         <licensematcherlist>
             <!-- <licensematcher name="LLVM License" desc="">
                 <licensetext name="
