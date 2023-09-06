@@ -198,6 +198,19 @@ class FastKeyAccumulator {
 
   MaybeHandle<FixedArray> GetKeys(
       GetKeysConversion convert = GetKeysConversion::kKeepNumbers);
+ 
+  // Initialize the the enum cache for a map with all of the following:
+  //   - uninitialized enum length
+  //   - fast properties (i.e. !is_dictionary_map())
+  //   - has >0 enumerable own properties
+  //
+  // The number of enumerable properties is passed in as an optimization, for
+  // when the caller has already computed it.
+  //
+  // Returns the keys.
+  static Handle<FixedArray> InitializeFastPropertyEnumCache(
+      Isolate* isolate, Handle<Map> map, int enum_length,
+      AllocationType allocation = AllocationType::kOld);
 
  private:
   void Prepare();
