@@ -8,7 +8,7 @@
         <filefilterlist>
             <filefilter name="defaultPolicyFilter"
                 desc="Filters for compatibility,license header policies">
-                 <filteritem type="filepath" name="README.OpenSource"
+                <filteritem type="filepath" name="README.OpenSource"
                     desc="" />
             </filefilter>
             <filefilter name="defaultFilter">
