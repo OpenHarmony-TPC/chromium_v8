@@ -1043,6 +1043,13 @@ MapUpdater::State MapUpdater::ConstructNewMap() {
   // the new descriptors to maintain descriptors sharing invariant.
   split_map->ReplaceDescriptors(isolate_, *new_descriptors);
 
+  // If the old descriptors had an enum cache, make sure the new ones do too.
+  if (old_descriptors_->enum_cache().keys().length() > 0 &&
+      new_map->NumberOfEnumerableProperties() > 0) {
+    FastKeyAccumulator::InitializeFastPropertyEnumCache(
+        isolate_, new_map, new_map->NumberOfEnumerableProperties());
+  }
+ 
   if (has_integrity_level_transition_) {
     target_map_ = new_map;
     state_ = kAtIntegrityLevelSource;
