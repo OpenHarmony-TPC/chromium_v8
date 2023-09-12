@@ -1,6 +1,6 @@
 [
     {
-        "Name": "chromium_v8",                   # 上游开源软件名全称
+        "Name": "v8",                   # 上游开源软件名全称
         "License":          # 上游开源软件中包含的许可证信息
         "License File": "D:\code\chromium_v8\LICENSE"       # 许可证所在文件路径
         "Version Number": "7d7c04aac7d650964d96d1f1c080949ae5519c78",
