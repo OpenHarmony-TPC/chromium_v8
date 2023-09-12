@@ -1,10 +1,10 @@
 [
     {
-        "Name": "chromium_v8",                   # 上游开源软件名全称
+        "Name": "v8",                   # 上游开源软件名全称
         "License":          # 上游开源软件中包含的许可证信息
         "License File": "LICENSE"       # 许可证所在文件路径
         "Version Number": "7d7c04aac7d650964d96d1f1c080949ae5519c78",
         "Upstream URL": "https://chromium.googlesource.com/v8/v8.git@7d7c04aac7d650964d96d1f1c080949ae5519c78",   # 上游软件包发布地址
-        "Description": "第三方软件vulkan-deps/glslang"           # 开源软件功能描述
+        "Description": "V8 JavaScript库"           # 开源软件功能描述
     }
 ]

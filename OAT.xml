@@ -8,11 +8,93 @@
         <filefilterlist>
             <filefilter name="defaultPolicyFilter"
                 desc="Filters for compatibility,license header policies">
-                 <filteritem type="filepath" name="README.OpenSource"
+                <filteritem type="filepath" name="README.OpenSource"
                     desc="" />
             </filefilter>
             <filefilter name="defaultFilter">
                 <filteritem type="filepath" name="README.OpenSource"
+                    desc="" />
+                <filteritem type="filepath" name=".*wasm"
+                    desc="" />
+                <filteritem type="filepath" name=".*png"
+                    desc="" />
+                <filteritem type="filepath" name=".*tar.gz"
+                    desc="" />
+                <filteritem type="filepath" name=".*clang-tidy"
+                    desc="" />
+                <filteritem type="filepath" name=".*.bazelrc"
+                    desc="" />
+                <filteritem type="filepath" name=".*INFRA_OWNERS"
+                    desc="" />
+                <filteritem type="filepath" name=".*.gitignore.backup"
+                    desc="" />
+                <filteritem type="filepath" name="include.*"
+                    desc="" />
+                <filteritem type="filepath" name="infra.*"
+                    desc="" />
+                <filteritem type="filepath" name="src.*"
+                    desc="" />
+                <filteritem type="filepath" name="ENG_REVIEW_OWNERS"
+                    desc="" />
+                <filteritem type="filepath" name=".*settings"
+                    desc="" />
+                <filteritem type="filepath" name="build_overrides.*"
+                    desc="" />
+                <filteritem type="filepath" name="samples.*"
+                    desc="" />
+                <filteritem type="filepath" name="test.*"
+                    desc="" />
+                <filteritem type="filepath" name="gni.*"
+                    desc="" />
+                <filteritem type="filepath" name="third_party.*"
+                    desc="" />
+                <filteritem type="filepath" name="tools.*"
+                    desc="" />
+                <filteritem type="filepath" name=".*flake8"
+                    desc="" />
+                <filteritem type="filepath" name=".*INTL_OWNERS"
+                    desc="" />
+                <filteritem type="filepath" name=".*bazel"
+                    desc="" />
+                <filteritem type="filepath" name=".*git-blame-ignore-revs"
+                    desc="" />
+                <filteritem type="filepath" name=".*fdlibm"
+                    desc="" />
+                <filteritem type="filepath" name=".*gn"
+                    desc="" />
+                <filteritem type="filepath" name=".*strongtalk"
+                    desc="" />
+                <filteritem type="filepath" name=".*mailmap"
+                    desc="" />
+                <filteritem type="filepath" name=".*vpython"
+                    desc="" />
+                <filteritem type="filepath" name=".*WATCHLISTS"
+                    desc="" />
+                <filteritem type="filepath" name=".*bzl"
+                    desc="" />
+                <filteritem type="filepath" name=".*AUTHORS"
+                    desc="" />
+                <filteritem type="filepath" name=".*DEPS"
+                    desc="" />
+                <filteritem type="filepath" name=".*OWNERS"
+                    desc="" />
+                <filteritem type="filepath" name=".*v8"
+                    desc="" />
+                <filteritem type="filepath" name=".*icu"
+                    desc="" />
+                <filteritem type="filepath" name=".*py"
+                    desc="" />
+                <filteritem type="filepath" name=".*trace_event_common"
+                    desc="" />
+                <filteritem type="filepath" name=".*vpython3"
+                    desc="" />
+                <filteritem type="filepath" name=".*DIR_METADATA"
+                    desc="" />
+                <filteritem type="filepath" name=".*LICENSE"
+                    desc="" />
+                <filteritem type="filepath" name=".*WORKSPACE"
+                    desc="" />
+                <filteritem type="filepath" name=".*zlib"
                     desc="" />
             </filefilter>
         </filefilterlist>
