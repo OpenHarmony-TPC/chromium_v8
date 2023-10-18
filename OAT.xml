@@ -71,13 +71,12 @@ used to filter file path.
                 <policyitem type="compatibility" name="BSD-3-Clause" path="third_party/googletest/.*" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="BSD-3-Clause" path="test/mjsunit/migrations.js" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="BSD-3-Clause" path="third_party/inspector_protocol/README.v8" desc="经法务确认为宽松型许可证" />
-                <policyitem type="compatibility" name="BSD-3-Clause" path="third_party/inspector_protocol/README.v8" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="CC0-1.0" path="src/third_party/siphash/.*" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="MIT" path="third_party/jsoncpp/.*" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="Python-2.0" path="third_party/v8/builtins/.*" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="Generic Bare Warranty Disclaimer" path="test/benchmarks/csuite/.*" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="SunPro Attribution License" path="src/base/.*" desc="经法务确认为宽松型许可证" />
-                <policyitem type="compatibility" name="Unknown License file reference" path="test/wasm-js/third_party/testharness.js" desc="经法务确认为宽松型许可证" />
+                <policyitem type="compatibility" name="BSD-3-Clause" path="test/wasm-js/third_party/testharness.js" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="Apache 2.0" path="third_party/wasm-api/README.v8" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="Apache 2.0" path="third_party/google_benchmark/README.v8" desc="经法务确认为宽松型许可证" />
                 <policyitem type="compatibility" name="SunPro Attribution License" path="LICENSE.fdlibm" desc="经法务确认为宽松型许可证" />
@@ -102,8 +101,6 @@ used to filter file path.
                     desc="chromium原生文件无license" />
                 <filteritem type="filepath" name="test/test262/local-tests/test/language/module-code/comment-single-line-html-close-comment-before-function.js"
                     desc="chromium原生文件无license" />
-                <filteritem type="filepath" name="src/codegen/.*"
-                    desc="AGPL-3.0-only禁止使用" />
             </filefilter>
 
             <filefilter name="defaultFilter">
@@ -119,38 +116,6 @@ used to filter file path.
             </filefilter>
         </filefilterlist>
         <licensematcherlist>
-        <licensematcher name="BSD-3-Clause" desc="">
-            <licensetext name="
-                // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-                // &quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-                // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-                // FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-                // COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-                // INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-                // (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-                // SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-                // HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-                // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-                // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
-                // OF THE POSSIBILITY OF SUCH DAMAGE.
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="AGPL-3.0-only" desc="">
-            <licensetext name="
-                // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-                // &quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-                // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-                // FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-                // COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-                // INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-                // (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-                // SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-                // HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-                // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-                // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
-                // OF THE POSSIBILITY OF SUCH DAMAGE.
-                " desc="" />
-            </licensematcher>
             <licensematcher name="Generic Bare Warranty Disclaimer" desc="">
             <licensetext name="
                 // THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS'' AND ANY
@@ -164,31 +129,6 @@ used to filter file path.
                 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
                 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-            <licensetext name="
-                Name: colorama
-                Short Name: colorama
-                URL: https://github.com/tartley/colorama.git
-                Version: 799604a104
-                License: BSD
-                License File: NOT_SHIPPED
-                Security Critical: no
-
-                Description:
-                Provides a simple cross-platform API to print colored terminal text from Python
-                applications.
-
-                Local modifications:
-                None
-                " desc="" />
-            <licensematcher name="BSD-3-Clause" desc="">
-            <licensetext name="
-                // This code is governed by the BSD license found in the LICENSE file.
-                " desc="" />
-            </licensematcher>
-            </licensematcher>
-            <licensematcher name="Generic Bare Warranty Disclaimer" desc="">
             <licensetext name="
                 * THIS SOFTWARE IS PROVIDED BY APPLE COMPUTER, INC. ``AS IS'' AND ANY
                 * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -241,18 +181,60 @@ used to filter file path.
                 This will allow us to adapt to Google Test changes with minimal disruption.
 
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="Unknown License file reference" desc="">
             <licensetext name="
                 Distributed under both the W3C Test Suite License [1] and the W3C
                 3-clause BSD License [2]. To contribute to a W3C Test Suite, see the
                 policies and contribution forms [3].
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
             <licensetext name="
                 // Use of this source code is governed by a BSD-ayle license that can be
                 // found in the LICENSE file.
+                " desc="" />
+            <licensetext name="
+                Name: colorama
+                Short Name: colorama
+                URL: https://github.com/tartley/colorama.git
+                Version: 799604a104
+                License: BSD
+                License File: NOT_SHIPPED
+                Security Critical: no
+
+                Description:
+                Provides a simple cross-platform API to print colored terminal text from Python
+                applications.
+
+                Local modifications:
+                None
+                " desc="" />
+            <licensetext name="
+                // This code is governed by the BSD license found in the LICENSE file.
+                " desc="" />
+            <licensetext name="
+                // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+                // &quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+                // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+                // FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+                // COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+                // INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+                // (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+                // SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+                // HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+                // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+                // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+                // OF THE POSSIBILITY OF SUCH DAMAGE.
+                " desc="" />
+            <licensetext name="
+                Name: inspector protocol
+                Short Name: inspector_protocol
+                URL: https://chromium.googlesource.com/deps/inspector_protocol/
+                Version: 0
+                Revision: 32cf5f2bf4dc20c73ead291e68d2e2f6b638cd57
+                License: BSD
+                License File: LICENSE
+                Security Critical: no
+                " desc="" />
+            <licensetext name="
+                // This code is governed by the BSD license found in the LICENSE file.
                 " desc="" />
             </licensematcher>
             <licensematcher name="Apache 2.0" desc="">
@@ -267,8 +249,6 @@ used to filter file path.
                 License File: LICENSE
                 Security Critical: yes
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="Apache 2.0" desc="">
             <licensetext name="
                 Name: Google Benchmark
                 Short Name: benchmark
@@ -277,23 +257,6 @@ used to filter file path.
                 License: Apache 2.0
                 License File: NOT_SHIPPED
                 Security Critical: no
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-            <licensetext name="
-                Name: inspector protocol
-                Short Name: inspector_protocol
-                URL: https://chromium.googlesource.com/deps/inspector_protocol/
-                Version: 0
-                Revision: 32cf5f2bf4dc20c73ead291e68d2e2f6b638cd57
-                License: BSD
-                License File: LICENSE
-                Security Critical: no
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-            <licensetext name="
-                // This code is governed by the BSD license found in the LICENSE file.
                 " desc="" />
             </licensematcher>
         </licensematcherlist>
