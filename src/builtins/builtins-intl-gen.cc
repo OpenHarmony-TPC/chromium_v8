@@ -68,6 +68,12 @@ class IntlBuiltinsAssembler : public CodeStubAssembler {
         Int32Constant('z' - 'a'));
   }
 
+  TNode<BoolT> IsChinese(TNode<Uint16T> character) {
+    return Word32And(
+        Uint32GreaterThanOrEqual(character, Uint32Constant(0x4E00)),
+        Uint32LessThanOrEqual(character, Uint32Constant(0x9FFF)));
+  }
+
   enum class ToLowerCaseKind {
     kToLowerCase,
     kToLocaleLowerCase,
@@ -112,6 +118,7 @@ void IntlBuiltinsAssembler::ToLowerCaseImpl(
     TNode<String> string, TNode<Object> maybe_locales, TNode<Context> context,
     ToLowerCaseKind kind, std::function<void(TNode<Object>)> ReturnFct) {
   Label call_c(this), return_string(this), runtime(this, Label::kDeferred);
+  Label two_byte_string(this);
 
   // Unpack strings if possible, and bail to runtime unless we get a one-byte
   // flat string.
@@ -157,7 +164,7 @@ void IntlBuiltinsAssembler::ToLowerCaseImpl(
   CSA_DCHECK(this,
              Word32BinaryNot(IsIndirectStringInstanceType(instance_type)));
 
-  GotoIfNot(IsOneByteStringInstanceType(instance_type), &runtime);
+  GotoIfNot(IsOneByteStringInstanceType(instance_type), &two_byte_string);
 
   // For short strings, do the conversion in CSA through the lookup table.
 
@@ -223,6 +230,72 @@ void IntlBuiltinsAssembler::ToLowerCaseImpl(
 
     ReturnFct(result);
   }
+
+   BIND(&two_byte_string);
+   {
+     const TNode<String> dst = AllocateSeqTwoByteString(length);
+     const TNode<IntPtrT> dst_ptr = PointerToSeqStringData(dst);
+     const TNode<ExternalReference> to_lower_table_addr =
+         ExternalConstant(ExternalReference::intl_to_latin1_lower_table());
+     TVARIABLE(IntPtrT, var_cursor, IntPtrConstant(0));
+     const int kMaxShortStringLength = 24;  // Determined empirically.
+     GotoIf(Uint32GreaterThan(length, Uint32Constant(kMaxShortStringLength)),
+            &runtime);
+     const TNode<IntPtrT> start_address =
+         ReinterpretCast<IntPtrT>(to_direct.PointerToData(&runtime));
+     const TNode<IntPtrT> end_address =
+         Signed(IntPtrAdd(start_address, IntPtrMul(IntPtrConstant(kUInt16Size),
+                                                   ChangeUint32ToWord(length))));
+ 
+     TVARIABLE(Word32T, var_did_change, Int32Constant(0));
+ 
+     VariableList push_vars({&var_cursor, &var_did_change}, zone());
+ 
+     BuildFastLoop<IntPtrT>(
+         push_vars, start_address, end_address,
+         [&](TNode<IntPtrT> current) {
+           TNode<Uint16T> c = Load<Uint16T>(current);
+ 
+           Label is_assic(this), is_not_assic(this), inc_offset(this);
+ 
+           Branch(Uint32LessThanOrEqual(c, Uint32Constant(0x00FF)), &is_assic,
+                  &is_not_assic);
+ 
+           BIND(&is_assic);
+           {
+             // For assic character, convert to lower case
+             TNode<Uint16T> lower =
+                 Load<Uint8T>(to_lower_table_addr, ChangeInt32ToIntPtr(c));
+             StoreNoWriteBarrier(MachineRepresentation::kWord16, dst_ptr,
+                                 var_cursor.value(), lower);
+             var_did_change =
+                 Word32Or(Word32NotEqual(c, lower), var_did_change.value());
+             Goto(&inc_offset);
+           }
+ 
+           BIND(&is_not_assic);
+           {
+             // For non-assic character, check if is a Chinese character
+             GotoIfNot(IsChinese(c), &runtime);
+             StoreNoWriteBarrier(MachineRepresentation::kWord16, dst_ptr,
+                                 var_cursor.value(), c);
+             Goto(&inc_offset);
+           }
+ 
+           BIND(&inc_offset);
+           {
+             // Store to dst string
+             Increment(&var_cursor, kUInt16Size);
+           }
+         },
+         kUInt16Size, LoopUnrollingMode::kNo, IndexAdvanceMode::kPost);
+ 
+     // Return the original string if it remained unchanged in order to preserve
+     // e.g. internalization and private symbols (such as the preserved object
+     // hash) on the source string.
+     GotoIfNot(var_did_change.value(), &return_string);
+     ReturnFct(dst);
+   }
 
   BIND(&return_string);
   ReturnFct(string);
