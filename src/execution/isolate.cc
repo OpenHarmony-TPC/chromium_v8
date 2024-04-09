@@ -3759,6 +3759,9 @@ Isolate::~Isolate() {
   delete bootstrapper_;
   bootstrapper_ = nullptr;
 
+  delete enum_times_cache_;
+  enum_times_cache_ = nullptr;
+
   delete thread_manager_;
   thread_manager_ = nullptr;
 
@@ -4300,6 +4303,7 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
   heap_profiler_ = new HeapProfiler(heap());
   interpreter_ = new interpreter::Interpreter(this);
   bigint_processor_ = bigint::Processor::New(new BigIntPlatform(this));
+  enum_times_cache_ = new EnumTimesCache();
 
   if (is_shared_space_isolate_) {
     global_safepoint_ = std::make_unique<GlobalSafepoint>(this);

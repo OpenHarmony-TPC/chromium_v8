@@ -332,6 +332,9 @@ declare_args() {
   # as the backing store for all dictionary mode objects.
   v8_enable_swiss_name_dictionary = false
 
+  # Enable forin enum cache for slow properties
+  v8_enable_enum_cache_for_slow_properties = true
+
   # If enabled then macro definitions that are used in externally visible
   # header files are placed in a separate header file v8-gn.h.
   v8_generate_external_defines_header = false
@@ -1102,6 +1105,9 @@ config("features") {
   }
   if (v8_enable_swiss_name_dictionary) {
     defines += [ "V8_ENABLE_SWISS_NAME_DICTIONARY" ]
+  }
+  if (v8_enable_enum_cache_for_slow_properties) {
+    defines += [ "V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES" ]
   }
   if (v8_enable_system_instrumentation) {
     defines += [ "V8_ENABLE_SYSTEM_INSTRUMENTATION" ]

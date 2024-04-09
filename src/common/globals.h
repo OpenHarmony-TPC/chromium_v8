@@ -113,6 +113,12 @@ namespace internal {
 #define COMPRESS_POINTERS_IN_SHARED_CAGE_BOOL false
 #endif
 
+#ifdef V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES
+#define V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL true
+#else
+#define V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL false
+#endif
+
 #if defined(V8_SHARED_RO_HEAP) &&                     \
     (!defined(V8_COMPRESS_POINTERS) ||                \
      defined(V8_COMPRESS_POINTERS_IN_SHARED_CAGE)) && \
@@ -406,6 +412,11 @@ constexpr uint32_t kDefaultMaxWasmCodeSpaceSizeMb = 32;
 // within a 32-bit signed integer.
 constexpr uint32_t kDefaultMaxWasmCodeSpaceSizeMb = 1024;
 #endif
+
+constexpr int kEnumTimesCacheMaxPropertiesNum = 1000;
+constexpr int kSlowEnumTimesCacheCapacity = 5;
+constexpr size_t kOperateEnumTimeCacheInvalidPos = -1;
+constexpr int kHitsObjTimesThreshold = 4;
 
 #if V8_HOST_ARCH_64_BIT
 constexpr int kSystemPointerSizeLog2 = 3;
