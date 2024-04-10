@@ -14,6 +14,27 @@ namespace internal {
 
 namespace {
 
+void MigrateSlowPropertiesIntoEnumCache(Isolate& isolate,
+                                        Handle<JSReceiver> receiver) {
+  if (!receiver->IsJSObject()) {
+    return;
+  }
+  Handle<JSObject> object = Handle<JSObject>::cast(receiver);
+  if (V8_ENABLE_SWISS_NAME_DICTIONARY_BOOL ||
+      !V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL ||
+      object->HasFastProperties() ||
+      object->map().NumberOfOwnDescriptors() >
+      kEnumTimesCacheMaxPropertiesNum) {
+    return;
+  }
+  if (isolate.enum_times_cache()->Put(object->ptr()) >
+      kHitsObjTimesThreshold) {
+    JSObject::MigrateSlowToFast(object, 0,
+                                "MigrateSlowPropertiesIntoEnumCache");
+    isolate.enum_times_cache()->RemoveCurrentElem(object->ptr());
+  }
+}
+
 // Returns either a FixedArray or, if the given {receiver} has an enum cache
 // that contains all enumerable properties of the {receiver} and its prototypes
 // have none, the map of the {receiver}. This is used to speed up the check for
@@ -21,6 +42,7 @@ namespace {
 MaybeHandle<HeapObject> Enumerate(Isolate* isolate,
                                   Handle<JSReceiver> receiver) {
   JSObject::MakePrototypesFast(receiver, kStartAtReceiver, isolate);
+  MigrateSlowPropertiesIntoEnumCache(*isolate, receiver);
   FastKeyAccumulator accumulator(isolate, receiver,
                                  KeyCollectionMode::kIncludePrototypes,
                                  ENUMERABLE_STRINGS, true);

@@ -12,6 +12,7 @@
 #include <queue>
 #include <unordered_map>
 #include <vector>
+#include <deque>
 
 #include "include/v8-context.h"
 #include "include/v8-internal.h"
@@ -550,6 +551,48 @@ using DebugObjectCache = std::vector<Handle<HeapObject>>;
 
 #define THREAD_LOCAL_TOP_ADDRESS(type, name) \
   inline type* name##_address() { return &thread_local_top()->name##_; }
+
+class EnumTimesCache {
+ public:
+  explicit EnumTimesCache() {}
+  ~EnumTimesCache() = default;
+
+  size_t LookUp(uint64_t objPtr, int &objCnt) {
+    for (size_t index = 0; index < cache_deque_.size(); index++) {
+      if (cache_deque_[index].first == objPtr) {
+        objCnt = cache_deque_[index].second;
+        return index;
+      }
+    }
+    return kOperateEnumTimeCacheInvalidPos;
+  }
+
+  void RemoveCurrentElem(uint64_t objPtr) {
+    int objCnt = 0;
+    size_t index = LookUp(objPtr, objCnt);
+    if (index != kOperateEnumTimeCacheInvalidPos) {
+      cache_deque_.erase(cache_deque_.begin() + index);
+    }
+  }
+
+  int Put(uint64_t objPtr) {
+    int objCnt = 0;
+    size_t index = LookUp(objPtr, objCnt);
+    if (index == kOperateEnumTimeCacheInvalidPos) {
+      if (cache_deque_.size() > kSlowEnumTimesCacheCapacity) {
+        cache_deque_.pop_front();
+      }
+      cache_deque_.push_back(std::make_pair(objPtr, 0));
+    } else {
+      objCnt++;
+      cache_deque_[index] = {objPtr, objCnt};
+    }
+    return objCnt;
+  }
+
+ private:
+  std::deque<std::pair<uint64_t, int>> cache_deque_;
+};
 
 // HiddenFactory exists so Isolate can privately inherit from it without making
 // Factory's members available to Isolate directly.
@@ -1134,6 +1177,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   }
   TieringManager* tiering_manager() { return tiering_manager_; }
   CompilationCache* compilation_cache() { return compilation_cache_; }
+  EnumTimesCache* enum_times_cache() { return enum_times_cache_; }
   V8FileLogger* v8_file_logger() const {
     // Call InitializeLoggingAndCounters() if logging is needed before
     // the isolate is fully initialized.
@@ -2181,6 +2225,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   Bootstrapper* bootstrapper_ = nullptr;
   TieringManager* tiering_manager_ = nullptr;
   CompilationCache* compilation_cache_ = nullptr;
+  EnumTimesCache* enum_times_cache_ = nullptr;
   std::shared_ptr<Counters> async_counters_;
   base::RecursiveMutex break_access_;
   base::SharedMutex feedback_vector_access_;
