@@ -290,8 +290,10 @@ Expression* Parser::NewSuperPropertyReference(int pos) {
   } else {
     home_object_name = ast_value_factory_->dot_home_object_string();
   }
-  return factory()->NewSuperPropertyReference(
-      NewUnresolved(home_object_name, pos), pos);
+
+  VariableProxy* proxy = NewUnresolved(home_object_name, pos);
+  proxy->set_is_home_object();
+  return factory()->NewSuperPropertyReference(proxy, pos);
 }
 
 Expression* Parser::NewSuperCallReference(int pos) {
