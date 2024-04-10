@@ -1034,7 +1034,7 @@ DEFINE_BOOL(turbo_loop_rotation, true, "TurboFan loop rotation")
 DEFINE_BOOL(turbo_cf_optimization, true, "optimize control flow in TurboFan")
 DEFINE_BOOL(turbo_escape, true, "enable escape analysis")
 DEFINE_BOOL(turbo_allocation_folding, true, "TurboFan allocation folding")
-DEFINE_BOOL(turbo_instruction_scheduling, false,
+DEFINE_BOOL(turbo_instruction_scheduling, true,
             "enable instruction scheduling in TurboFan")
 DEFINE_BOOL(turbo_stress_instruction_scheduling, false,
             "randomly schedule instructions to stress dependency tracking")
