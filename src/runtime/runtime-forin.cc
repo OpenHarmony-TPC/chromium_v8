@@ -23,7 +23,12 @@ void MigrateSlowPropertiesIntoEnumCache(Isolate& isolate,
   if (V8_ENABLE_SWISS_NAME_DICTIONARY_BOOL ||
       !V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL ||
       object->HasFastProperties() ||
-      object->map().NumberOfOwnDescriptors() >
+      object->IsJSGlobalObject()) {
+    return;
+  }
+  Handle<NameDictionary> dictionary(
+      object->property_dictionary(&isolate), &isolate);
+  if (dictionary->NumberOfElements() >
       kEnumTimesCacheMaxPropertiesNum) {
     return;
   }
