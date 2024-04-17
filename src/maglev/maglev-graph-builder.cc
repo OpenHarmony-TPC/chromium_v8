@@ -105,18 +105,10 @@ class FunctionContextSpecialization final : public AllStatic {
   static compiler::OptionalContextRef TryToRef(
       const MaglevCompilationUnit* unit, ValueNode* context, size_t* depth) {
     DCHECK(unit->info()->specialize_to_function_context());
-    compiler::OptionalContextRef ref;
-    if (InitialValue* n = context->TryCast<InitialValue>()) {
-      if (n->source().is_current_context()) {
-        ref = compiler::MakeRefAssumeMemoryFence(
-            unit->broker(), unit->broker()->CanonicalPersistentHandle(
-                                unit->info()->toplevel_function()->context()));
-      }
-    } else if (Constant* n = context->TryCast<Constant>()) {
-      ref = n->ref().AsContext();
+    if (Constant* n = context->TryCast<Constant>()) {
+      return n->ref().AsContext().previous(unit->broker(), depth);
     }
-    if (!ref.has_value()) return {};
-    return ref->previous(unit->broker(), depth);
+    return {};
   }
 };
 
@@ -347,6 +339,14 @@ void MaglevGraphBuilder::InitializeRegister(interpreter::Register reg,
 
 void MaglevGraphBuilder::BuildRegisterFrameInitialization(ValueNode* context,
                                                           ValueNode* closure) {
+  if (closure == nullptr &&
+      compilation_unit_->info()->specialize_to_function_context()) {
+    compiler::JSFunctionRef function = compiler::MakeRefAssumeMemoryFence(
+        broker(), broker()->CanonicalPersistentHandle(
+                      compilation_unit_->info()->toplevel_function()));
+    closure = GetConstant(function);
+    context = GetConstant(function.context(broker()));
+  }
   InitializeRegister(interpreter::Register::current_context(), context);
   InitializeRegister(interpreter::Register::function_closure(), closure);
 
@@ -1731,6 +1731,18 @@ ValueNode* MaglevGraphBuilder::BuildInt32CompareNode(ValueNode* left,
   }
 
   return AddNewNode<Int32NodeFor<kOperation>>({left, right});
+}
+
+// static
+compiler::OptionalHeapObjectRef MaglevGraphBuilder::TryGetConstant(
+    compiler::JSHeapBroker* broker, LocalIsolate* isolate, ValueNode* node) {
+  if (Constant* c = node->TryCast<Constant>()) {
+    return c->object();
+  }
+  if (RootConstant* c = node->TryCast<RootConstant>()) {
+    return MakeRef(broker, isolate->root_handle(c->index())).AsHeapObject();
+  }
+  return {};
 }
 
 template <Operation kOperation>
@@ -4559,22 +4571,90 @@ void MaglevGraphBuilder::VisitDeletePropertySloppy() {
 
 void MaglevGraphBuilder::VisitGetSuperConstructor() {
   ValueNode* active_function = GetAccumulatorTagged();
-  ValueNode* map =
-      AddNewNode<LoadTaggedField>({active_function}, HeapObject::kMapOffset);
-  ValueNode* map_proto =
-      AddNewNode<LoadTaggedField>({map}, Map::kPrototypeOffset);
+  ValueNode* map_proto;
+  if (compiler::OptionalHeapObjectRef constant =
+          TryGetConstant(active_function)) {
+    map_proto = GetConstant(constant->map(broker()).prototype(broker()));
+  } else {
+    ValueNode* map =
+        AddNewNode<LoadTaggedField>({active_function}, HeapObject::kMapOffset);
+    map_proto = AddNewNode<LoadTaggedField>({map}, Map::kPrototypeOffset);
+  }
   StoreRegister(iterator_.GetRegisterOperand(0), map_proto);
+}
+
+bool MaglevGraphBuilder::HasValidInitialMap(
+    compiler::JSFunctionRef new_target, compiler::JSFunctionRef constructor) {
+  if (!new_target.map(broker()).has_prototype_slot()) return false;
+  if (!new_target.has_initial_map(broker())) return false;
+  compiler::MapRef initial_map = new_target.initial_map(broker());
+  return initial_map.GetConstructor(broker()).equals(constructor);
 }
 
 void MaglevGraphBuilder::VisitFindNonDefaultConstructorOrConstruct() {
   ValueNode* this_function = LoadRegisterTagged(0);
   ValueNode* new_target = LoadRegisterTagged(1);
 
-  CallBuiltin* call_builtin =
+  auto register_pair = iterator_.GetRegisterPairOperand(2);
+
+  if (compiler::OptionalHeapObjectRef constant =
+          TryGetConstant(this_function)) {
+    compiler::MapRef function_map = constant->map(broker());
+    compiler::HeapObjectRef current = function_map.prototype(broker());
+
+    while (true) {
+      if (!current.IsJSFunction()) break;
+      compiler::JSFunctionRef current_function = current.AsJSFunction();
+      if (current_function.shared(broker())
+              .requires_instance_members_initializer()) {
+        break;
+      }
+      if (current_function.context(broker())
+              .scope_info(broker())
+              .ClassScopeHasPrivateBrand()) {
+        break;
+      }
+      FunctionKind kind = current_function.shared(broker()).kind();
+      if (kind == FunctionKind::kDefaultDerivedConstructor) {
+        if (!broker()->dependencies()->DependOnArrayIteratorProtector()) break;
+      } else {
+        broker()->dependencies()->DependOnStablePrototypeChain(
+            function_map, WhereToStart::kStartAtReceiver, current_function);
+
+        compiler::OptionalHeapObjectRef new_target_function =
+            TryGetConstant(new_target);
+        if (kind == FunctionKind::kDefaultBaseConstructor) {
+          ValueNode* object;
+            if (new_target_function && new_target_function->IsJSFunction() &&
+                HasValidInitialMap(new_target_function->AsJSFunction(),
+                                   current_function)) {
+            object = BuildAllocateFastObject(
+                FastObject(new_target_function->AsJSFunction(), zone(),
+                           broker()),
+                AllocationType::kYoung);
+          } else {
+            object = BuildCallBuiltin<Builtin::kFastNewObject>(
+                {GetConstant(current_function), new_target});
+          }
+          StoreRegister(register_pair.first, GetBooleanConstant(true));
+          StoreRegister(register_pair.second, object);
+          return;
+        }
+        break;
+      }
+
+      // Keep walking up the class tree.
+      current = current_function.map(broker()).prototype(broker());
+    }
+    StoreRegister(register_pair.first, GetBooleanConstant(false));
+    StoreRegister(register_pair.second, GetConstant(current));
+    return;
+  }
+
+  CallBuiltin* result =
       BuildCallBuiltin<Builtin::kFindNonDefaultConstructorOrConstruct>(
           {this_function, new_target});
-  auto result = iterator_.GetRegisterPairOperand(2);
-  StoreRegisterPair(result, call_builtin);
+  StoreRegisterPair(register_pair, result);
 }
 
 ReduceResult MaglevGraphBuilder::BuildInlined(ValueNode* context,
@@ -6334,6 +6414,25 @@ void MaglevGraphBuilder::VisitToBoolean() {
   }
 }
 
+void FastObject::ClearFields() {
+  for (int i = 0; i < inobject_properties; i++) {
+    fields[i] = FastField();
+  }
+}
+
+FastObject::FastObject(compiler::JSFunctionRef constructor, Zone* zone,
+                       compiler::JSHeapBroker* broker)
+    : map(constructor.initial_map(broker)) {
+  compiler::SlackTrackingPrediction prediction =
+      broker->dependencies()->DependOnInitialMapInstanceSizePrediction(
+          constructor);
+  inobject_properties = prediction.inobject_property_count();
+  instance_size = prediction.instance_size();
+  fields = zone->NewArray<FastField>(inobject_properties);
+  ClearFields();
+  elements = FastFixedArray();
+}
+
 void MaglevGraphBuilder::VisitCreateRegExpLiteral() {
   // CreateRegExpLiteral <pattern_idx> <literal_idx> <flags>
   compiler::StringRef pattern = GetRefOperand<String>(0);
@@ -6392,8 +6491,7 @@ void MaglevGraphBuilder::VisitCreateEmptyArrayLiteral() {
       {}, compiler::FeedbackSource{feedback(), slot_index}));
 }
 
-base::Optional<FastLiteralObject>
-MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
+base::Optional<FastObject> MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
     compiler::JSObjectRef boilerplate, AllocationType allocation, int max_depth,
     int* max_properties) {
   DCHECK_GE(max_depth, 0);
@@ -6457,7 +6555,7 @@ MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
       boilerplate, JSObject::kElementsOffset, boilerplate_elements);
   int const elements_length = boilerplate_elements.length();
 
-  FastLiteralObject fast_literal(boilerplate_map, zone(), {});
+  FastObject fast_literal(boilerplate_map, zone(), {});
 
   // Compute the in-object properties to store first.
   int index = 0;
@@ -6494,25 +6592,25 @@ MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
     // via the boilerplate_migration_access lock.
     compiler::ObjectRef boilerplate_value = maybe_boilerplate_value.value();
 
-    FastLiteralField value;
+    FastField value;
     if (boilerplate_value.IsJSObject()) {
       compiler::JSObjectRef boilerplate_object = boilerplate_value.AsJSObject();
-      base::Optional<FastLiteralObject> maybe_object_value =
+      base::Optional<FastObject> maybe_object_value =
           TryReadBoilerplateForFastLiteral(boilerplate_object, allocation,
                                            max_depth - 1, max_properties);
       if (!maybe_object_value.has_value()) return {};
-      value = FastLiteralField(maybe_object_value.value());
+      value = FastField(maybe_object_value.value());
     } else if (property_details.representation().IsDouble()) {
       Float64 number =
           Float64::FromBits(boilerplate_value.AsHeapNumber().value_as_bits());
-      value = FastLiteralField(number);
+      value = FastField(number);
     } else {
       // It's fine to store the 'uninitialized' Oddball into a Smi field since
       // it will get overwritten anyway.
       DCHECK_IMPLIES(property_details.representation().IsSmi() &&
                          !boilerplate_value.IsSmi(),
                      boilerplate_value.object()->IsUninitialized());
-      value = FastLiteralField(boilerplate_value);
+      value = FastField(boilerplate_value);
     }
 
     DCHECK_LT(index, boilerplate_map.GetInObjectProperties());
@@ -6527,7 +6625,7 @@ MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
     // TODO(wenyuzhao): Fix incorrect MachineType when V8_MAP_PACKING is
     // enabled.
     DCHECK_LT(index, boilerplate_map.GetInObjectProperties());
-    fast_literal.fields[index] = FastLiteralField(MakeRef(
+    fast_literal.fields[index] = FastField(MakeRef(
         broker(), local_isolate()->factory()->one_pointer_filler_map()));
   }
 
@@ -6543,14 +6641,13 @@ MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
         !boilerplate.IsElementsTenured(boilerplate_elements)) {
       return {};
     }
-    fast_literal.elements = FastLiteralFixedArray(boilerplate_elements);
+    fast_literal.elements = FastFixedArray(boilerplate_elements);
   } else {
     // Compute the elements to store first (might have effects).
     if (boilerplate_elements.IsFixedDoubleArray()) {
       int const size = FixedDoubleArray::SizeFor(elements_length);
       if (size > kMaxRegularHeapObjectSize) return {};
-      fast_literal.elements =
-          FastLiteralFixedArray(elements_length, zone(), double{});
+      fast_literal.elements = FastFixedArray(elements_length, zone(), double{});
 
       compiler::FixedDoubleArrayRef elements =
           boilerplate_elements.AsFixedDoubleArray();
@@ -6561,7 +6658,7 @@ MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
     } else {
       int const size = FixedArray::SizeFor(elements_length);
       if (size > kMaxRegularHeapObjectSize) return {};
-      fast_literal.elements = FastLiteralFixedArray(elements_length, zone());
+      fast_literal.elements = FastFixedArray(elements_length, zone());
 
       compiler::FixedArrayRef elements = boilerplate_elements.AsFixedArray();
       for (int i = 0; i < elements_length; ++i) {
@@ -6570,14 +6667,13 @@ MaglevGraphBuilder::TryReadBoilerplateForFastLiteral(
             elements.TryGet(broker(), i);
         if (!element_value.has_value()) return {};
         if (element_value->IsJSObject()) {
-          base::Optional<FastLiteralObject> object =
-              TryReadBoilerplateForFastLiteral(element_value->AsJSObject(),
-                                               allocation, max_depth - 1,
-                                               max_properties);
+          base::Optional<FastObject> object = TryReadBoilerplateForFastLiteral(
+              element_value->AsJSObject(), allocation, max_depth - 1,
+              max_properties);
           if (!object.has_value()) return {};
-          fast_literal.elements.values[i] = FastLiteralField(*object);
+          fast_literal.elements.values[i] = FastField(*object);
         } else {
-          fast_literal.elements.values[i] = FastLiteralField(*element_value);
+          fast_literal.elements.values[i] = FastField(*element_value);
         }
       }
     }
@@ -6617,25 +6713,23 @@ void MaglevGraphBuilder::ClearCurrentRawAllocation() {
   current_raw_allocation_ = nullptr;
 }
 
-ValueNode* MaglevGraphBuilder::BuildAllocateFastLiteral(
-    FastLiteralObject object, AllocationType allocation_type) {
+ValueNode* MaglevGraphBuilder::BuildAllocateFastObject(
+    FastObject object, AllocationType allocation_type) {
   base::SmallVector<ValueNode*, 8, ZoneAllocator<ValueNode*>> properties(
-      object.map.GetInObjectProperties(), ZoneAllocator<ValueNode*>(zone()));
-  for (int i = 0; i < object.map.GetInObjectProperties(); ++i) {
-    properties[i] = BuildAllocateFastLiteral(object.fields[i], allocation_type);
+      object.inobject_properties, ZoneAllocator<ValueNode*>(zone()));
+  for (int i = 0; i < object.inobject_properties; ++i) {
+    properties[i] = BuildAllocateFastObject(object.fields[i], allocation_type);
   }
   ValueNode* elements =
-      BuildAllocateFastLiteral(object.elements, allocation_type);
+      BuildAllocateFastObject(object.elements, allocation_type);
 
   DCHECK(object.map.IsJSObjectMap());
   // TODO(leszeks): Fold allocations.
   ValueNode* allocation = ExtendOrReallocateCurrentRawAllocation(
-      object.map.instance_size(), allocation_type);
+      object.instance_size, allocation_type);
   AddNewNode<StoreMap>({allocation}, object.map);
   AddNewNode<StoreTaggedFieldNoWriteBarrier>(
-      {allocation,
-       GetConstant(MakeRefAssumeMemoryFence(
-           broker(), local_isolate()->factory()->empty_fixed_array()))},
+      {allocation, GetRootConstant(RootIndex::kEmptyFixedArray)},
       JSObject::kPropertiesOrHashOffset);
   if (object.js_array_length.has_value()) {
     BuildStoreTaggedField(allocation, GetConstant(*object.js_array_length),
@@ -6643,19 +6737,20 @@ ValueNode* MaglevGraphBuilder::BuildAllocateFastLiteral(
   }
 
   BuildStoreTaggedField(allocation, elements, JSObject::kElementsOffset);
-  for (int i = 0; i < object.map.GetInObjectProperties(); ++i) {
+  for (int i = 0; i < object.inobject_properties; ++i) {
     BuildStoreTaggedField(allocation, properties[i],
                           object.map.GetInObjectPropertyOffset(i));
   }
+  EnsureType(allocation, NodeType::kJSReceiver);
   return allocation;
 }
 
-ValueNode* MaglevGraphBuilder::BuildAllocateFastLiteral(
-    FastLiteralField value, AllocationType allocation_type) {
+ValueNode* MaglevGraphBuilder::BuildAllocateFastObject(
+    FastField value, AllocationType allocation_type) {
   switch (value.type) {
-    case FastLiteralField::kObject:
-      return BuildAllocateFastLiteral(value.object, allocation_type);
-    case FastLiteralField::kMutableDouble: {
+    case FastField::kObject:
+      return BuildAllocateFastObject(value.object, allocation_type);
+    case FastField::kMutableDouble: {
       ValueNode* new_alloc = ExtendOrReallocateCurrentRawAllocation(
           HeapNumber::kSize, allocation_type);
       AddNewNode<StoreMap>(
@@ -6669,22 +6764,21 @@ ValueNode* MaglevGraphBuilder::BuildAllocateFastLiteral(
       return new_alloc;
     }
 
-    case FastLiteralField::kConstant:
+    case FastField::kConstant:
       return GetConstant(value.constant_value);
-    case FastLiteralField::kUninitialized:
+    case FastField::kUninitialized:
       UNREACHABLE();
   }
 }
 
-ValueNode* MaglevGraphBuilder::BuildAllocateFastLiteral(
-    FastLiteralFixedArray value, AllocationType allocation_type) {
+ValueNode* MaglevGraphBuilder::BuildAllocateFastObject(
+    FastFixedArray value, AllocationType allocation_type) {
   switch (value.type) {
-    case FastLiteralFixedArray::kTagged: {
+    case FastFixedArray::kTagged: {
       base::SmallVector<ValueNode*, 8, ZoneAllocator<ValueNode*>> elements(
           value.length, ZoneAllocator<ValueNode*>(zone()));
       for (int i = 0; i < value.length; ++i) {
-        elements[i] =
-            BuildAllocateFastLiteral(value.values[i], allocation_type);
+        elements[i] = BuildAllocateFastObject(value.values[i], allocation_type);
       }
       ValueNode* allocation = ExtendOrReallocateCurrentRawAllocation(
           FixedArray::SizeFor(value.length), allocation_type);
@@ -6702,7 +6796,7 @@ ValueNode* MaglevGraphBuilder::BuildAllocateFastLiteral(
       }
       return allocation;
     }
-    case FastLiteralFixedArray::kDouble: {
+    case FastFixedArray::kDouble: {
       ValueNode* allocation = ExtendOrReallocateCurrentRawAllocation(
           FixedDoubleArray::SizeFor(value.length), allocation_type);
       AddNewNode<StoreMap>(
@@ -6721,9 +6815,9 @@ ValueNode* MaglevGraphBuilder::BuildAllocateFastLiteral(
       }
       return allocation;
     }
-    case FastLiteralFixedArray::kCoW:
+    case FastFixedArray::kCoW:
       return GetConstant(value.cow_value);
-    case FastLiteralFixedArray::kUninitialized:
+    case FastFixedArray::kUninitialized:
       UNREACHABLE();
   }
 }
@@ -6738,17 +6832,16 @@ ReduceResult MaglevGraphBuilder::TryBuildFastCreateObjectOrArrayLiteral(
   // First try to extract out the shape and values of the boilerplate, bailing
   // out on complex boilerplates.
   int max_properties = compiler::kMaxFastLiteralProperties;
-  base::Optional<FastLiteralObject> maybe_value =
-      TryReadBoilerplateForFastLiteral(
-          *site.boilerplate(broker()), allocation_type,
-          compiler::kMaxFastLiteralDepth, &max_properties);
+  base::Optional<FastObject> maybe_value = TryReadBoilerplateForFastLiteral(
+      *site.boilerplate(broker()), allocation_type,
+      compiler::kMaxFastLiteralDepth, &max_properties);
   if (!maybe_value.has_value()) return ReduceResult::Fail();
 
   // Then, use the collected information to actually create nodes in the graph.
   // TODO(leszeks): Add support for unwinding graph modifications, so that we
   // can get rid of this two pass approach.
   broker()->dependencies()->DependOnElementsKinds(site);
-  ReduceResult result = BuildAllocateFastLiteral(*maybe_value, allocation_type);
+  ReduceResult result = BuildAllocateFastObject(*maybe_value, allocation_type);
   // TODO(leszeks): Don't eagerly clear the raw allocation, have the next side
   // effect clear it.
   ClearCurrentRawAllocation();
@@ -7648,6 +7741,7 @@ void MaglevGraphBuilder::VisitThrowReferenceErrorIfHole() {
 void MaglevGraphBuilder::VisitThrowSuperNotCalledIfHole() {
   // ThrowSuperNotCalledIfHole
   ValueNode* value = GetAccumulatorTagged();
+  if (CheckType(value, NodeType::kJSReceiver)) return;
   // Avoid the check if we know it is not the hole.
   if (IsConstantNode(value->opcode())) {
     if (IsTheHoleValue(value)) {
