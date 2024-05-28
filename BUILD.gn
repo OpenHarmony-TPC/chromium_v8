@@ -396,6 +396,8 @@ declare_args() {
   # iOS (non-simulator) does not have executable pages for 3rd party
   # applications yet so disable jit.
   v8_jitless = v8_enable_lite_mode || target_is_ios_device
+
+  v8_enable_jit_code_sign = false
 }
 
 # Derived defaults.
@@ -685,6 +687,13 @@ assert(!v8_enable_snapshot_compression || v8_use_zlib,
 
 v8_random_seed = "314159265"
 v8_toolset_for_shell = "host"
+
+if (is_ohos && v8_current_cpu == "arm64") {
+  import ("//build/config/ohos/config.gni")
+  if (product_name == "all") {
+    v8_enable_jit_code_sign = true
+  }
+}
 
 ###############################################################################
 # Configurations
@@ -1165,6 +1174,9 @@ config("features") {
   }
   if (v8_enable_wasm_simd256_revec) {
     defines += [ "V8_ENABLE_WASM_SIMD256_REVEC" ]
+  }
+  if (v8_enable_jit_code_sign) {
+    defines += [ "V8_ENABLE_JIT_CODE_SIGN" ]
   }
 }
 
@@ -2875,6 +2887,18 @@ v8_header_set("v8_flags") {
     ":v8_libbase",
     ":v8_shared_internal_headers",
   ]
+}
+
+# This is split out to isolate instructions on ARMv8.4
+v8_header_set("pac_sign_feature") {
+  sources = [
+    "src/codegen/arm64/pac-sign-ctx.h",
+    "src/codegen/arm64/pac-sign-ctx.cc",
+  ]
+  defines = [ "ARCH_PAC_SUPPORT" ]
+  cflags = [ "-march=armv8.4-a" ]
+  deps = [ ":v8_libbase" ]
+  configs = [ ":internal_config_base" ]
 }
 
 v8_header_set("v8_internal_headers") {
@@ -5566,6 +5590,18 @@ v8_source_set("v8_base_without_compiler") {
       "src/tracing/trace-categories.cc",
       "src/tracing/trace-categories.h",
     ]
+  }
+
+  if (v8_enable_jit_code_sign) {
+    sources += [
+      "src/codegen/arm64/jit-code-signer-base.h",
+      "src/codegen/arm64/jit-code-signer-base.cc",
+      "src/codegen/arm64/jit-code-signer-hybrid.h",
+      "src/codegen/arm64/jit-code-signer-hybrid.cc",
+      "src/codegen/arm64/jit-code-signer-helper.h",
+      "src/codegen/arm64/jit-code-signer-helper.cc",
+    ]
+    deps += [ ":pac_sign_feature" ]
   }
 }
 

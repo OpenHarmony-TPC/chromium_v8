@@ -28,7 +28,12 @@ class CachedAssemblerBuffer;
 class AssemblerBufferCache final {
  public:
   ~AssemblerBufferCache();
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  std::unique_ptr<AssemblerBuffer> GetAssemblerBuffer(int size,
+    CachedAssemblerBuffer *buffer = nullptr);
+#else
   std::unique_ptr<AssemblerBuffer> GetAssemblerBuffer(int size);
+#endif
 
  private:
   friend class CachedAssemblerBuffer;

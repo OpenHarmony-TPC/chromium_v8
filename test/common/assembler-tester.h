@@ -30,6 +30,12 @@ class TestingAssemblerBuffer : public AssemblerBuffer {
 
   ~TestingAssemblerBuffer() override { reservation_.Free(); }
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  JitCodeSignerBase *GetJitCodeSigner() const override {
+    return nullptr;
+  }
+#endif
+
   byte* start() const override {
     return reinterpret_cast<byte*>(reservation_.address());
   }

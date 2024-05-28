@@ -38,6 +38,11 @@
 #include "src/codegen/safepoint-table.h"
 #include "src/execution/frame-constants.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#include "src/codegen/arm64/jit-code-signer-base.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -392,6 +397,12 @@ void Assembler::Reset() {
   reloc_info_writer.Reposition(buffer_start_ + buffer_->size(), pc_);
   constpool_.Clear();
   next_veneer_pool_check_ = kMaxInt;
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  jit_code_signer_ = buffer_->GetJitCodeSigner();
+  TryReset(jit_code_signer_);
+  TryRegisterTmpBuffer(jit_code_signer_, reinterpret_cast<void *>(buffer_->start()));
+#endif
 }
 
 #if defined(V8_OS_WIN)
@@ -525,22 +536,36 @@ void Assembler::RemoveBranchFromLabelLinkChain(Instruction* branch,
 
   } else if (branch == next_link) {
     // The branch is the last (but not also the first) instruction in the chain.
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    prev_link->SetImmPCOffsetTarget(options(), prev_link, GetJitCodeSigner());
+#else
     prev_link->SetImmPCOffsetTarget(options(), prev_link);
-
+#endif
   } else {
     // The branch is in the middle of the chain.
     if (prev_link->IsTargetInImmPCOffsetRange(next_link)) {
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+      prev_link->SetImmPCOffsetTarget(options(), next_link, GetJitCodeSigner());
+#else
       prev_link->SetImmPCOffsetTarget(options(), next_link);
+#endif
     } else if (label_veneer != nullptr) {
       // Use the veneer for all previous links in the chain.
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+      prev_link->SetImmPCOffsetTarget(options(), prev_link, GetJitCodeSigner());
+#else
       prev_link->SetImmPCOffsetTarget(options(), prev_link);
-
+#endif
       end_of_chain = false;
       link = next_link;
       while (!end_of_chain) {
         next_link = link->ImmPCOffsetTarget();
         end_of_chain = (link == next_link);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+        link->SetImmPCOffsetTarget(options(), label_veneer, GetJitCodeSigner());
+#else
         link->SetImmPCOffsetTarget(options(), label_veneer);
+#endif
         link = next_link;
       }
     } else {
@@ -610,10 +635,19 @@ void Assembler::bind(Label* label) {
       // Internal references do not get patched to an instruction but directly
       // to an address.
       internal_reference_positions_.push_back(linkoffset);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+      TryPatchData(jit_code_signer_, linkoffset, reinterpret_cast<void *>(&pc_), kSystemPointerSize);
+#endif
       memcpy(link, &pc_, kSystemPointerSize);
     } else {
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+      link->SetImmPCOffsetTarget(options(),
+                                 reinterpret_cast<Instruction*>(pc_),
+                                 GetJitCodeSigner());
+#else
       link->SetImmPCOffsetTarget(options(),
                                  reinterpret_cast<Instruction*>(pc_));
+#endif
     }
 
     // Link the label to the previous link in the chain.
@@ -668,6 +702,11 @@ int Assembler::LinkAndGetByteOffsetTo(Label* label) {
     }
     // The instruction at pc is now the last link in the label's chain.
     label->link_to(pc_offset());
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    // the next insn containing offset may be patched
+    TrySkipNext(jit_code_signer_, 1);
+#endif
   }
 
   return offset;
@@ -1371,6 +1410,10 @@ void Assembler::ldr(const CPURegister& rt, const Operand& operand) {
   if (operand.IsHeapNumberRequest()) {
     BlockPoolsScope no_pool_before_ldr_of_heap_number_request(this);
     RequestHeapNumber(operand.heap_number_request());
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    // ldr insn containing heap number will be patched
+    TrySkipNext(jit_code_signer_, 2);
+#endif
     ldr(rt, operand.immediate_for_heap_number_request());
   } else {
     ldr(rt, operand.immediate());
@@ -3694,6 +3737,10 @@ void Assembler::dcptr(Label* label) {
     // In this case, label->pos() returns the offset of the label from the
     // start of the buffer.
     internal_reference_positions_.push_back(pc_offset());
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    // dc64 insn is 8 bytes
+    TrySkipNext(jit_code_signer_, 2);
+#endif
     dc64(reinterpret_cast<uintptr_t>(buffer_start_ + label->pos()));
   } else {
     int32_t offset;
@@ -3722,6 +3769,11 @@ void Assembler::dcptr(Label* label) {
     DCHECK(is_int32(offset));
     uint32_t high16 = unsigned_bitextract_32(31, 16, offset);
     uint32_t low16 = unsigned_bitextract_32(15, 0, offset);
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    // the next two brk insn will be patched
+    TrySkipNext(jit_code_signer_, 2);
+#endif
 
     brk(high16);
     brk(low16);
@@ -4474,6 +4526,9 @@ void Assembler::GrowBuffer() {
   reloc_info_writer.Reposition(reloc_info_writer.pos() + rc_delta,
                                reloc_info_writer.last_pc() + pc_delta);
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  TryRegisterTmpBuffer(jit_code_signer_, reinterpret_cast<void *>(buffer_start_));
+#endif
   // None of our relocation types are pc relative pointing outside the code
   // buffer nor pc absolute pointing inside the code buffer, so there is no need
   // to relocate any emitted relocation entries.
@@ -4483,6 +4538,10 @@ void Assembler::GrowBuffer() {
     Address address = reinterpret_cast<intptr_t>(buffer_start_) + pos;
     intptr_t internal_ref = ReadUnalignedValue<intptr_t>(address);
     internal_ref += pc_delta;
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TryPatchInstruction(jit_code_signer_, pos, static_cast<uint32_t>(internal_ref));
+#endif
     WriteUnalignedValue<intptr_t>(address, internal_ref);
   }
 
@@ -4589,7 +4648,11 @@ void ConstantPool::SetLoadOffsetToConstPoolEntry(int load_offset,
   Instruction* instr = assm_->InstructionAt(load_offset);
   // Instruction to patch must be 'ldr rd, [pc, #offset]' with offset == 0.
   DCHECK(instr->IsLdrLiteral() && instr->ImmLLiteral() == 0);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  instr->SetImmPCOffsetTarget(assm_->options(), entry_offset, assm_->GetJitCodeSigner());
+#else
   instr->SetImmPCOffsetTarget(assm_->options(), entry_offset);
+#endif
 }
 
 void ConstantPool::Check(Emission force_emit, Jump require_jump,
@@ -4745,7 +4808,11 @@ void Assembler::EmitVeneers(bool force_emit, bool need_protection,
 #endif
     Instruction* branch = InstructionAt(info.pc_offset_);
     Instruction* veneer = reinterpret_cast<Instruction*>(pc_);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    branch->SetImmPCOffsetTarget(options(), veneer, GetJitCodeSigner());
+#else
     branch->SetImmPCOffsetTarget(options(), veneer);
+#endif
     b(info.label_);  // This may end up pointing at yet another veneer later on.
     DCHECK_EQ(SizeOfCodeGeneratedSince(&veneer_size_check),
               static_cast<uint64_t>(kVeneerCodeSize));

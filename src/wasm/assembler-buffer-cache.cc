@@ -9,12 +9,28 @@
 #include "src/codegen/assembler.h"
 #include "src/wasm/wasm-engine.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#include "src/codegen/arm64/jit-code-signer-hybrid.h"
+#endif
+
 namespace v8::internal::wasm {
 
 class CachedAssemblerBuffer final : public AssemblerBuffer {
  public:
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  CachedAssemblerBuffer(AssemblerBufferCache* cache, base::AddressRegion region,
+    std::unique_ptr<JitCodeSignerBase> signer = nullptr)
+      : cache_(cache), region_(region), jit_code_signer_(std::move(signer)) {
+    if (IsSupportJitCodeSigner() && jit_code_signer_ == nullptr) {
+      jit_code_signer_ = std::make_unique<JitCodeSignerHybrid>();
+    }
+    TryRegisterTmpBuffer(jit_code_signer_.get(), reinterpret_cast<void *>(start()));
+  }
+#else
   CachedAssemblerBuffer(AssemblerBufferCache* cache, base::AddressRegion region)
       : cache_(cache), region_(region) {}
+#endif
 
   ~CachedAssemblerBuffer() override { cache_->Return(region_); }
 
@@ -25,12 +41,28 @@ class CachedAssemblerBuffer final : public AssemblerBuffer {
   int size() const override { return static_cast<int>(region_.size()); }
 
   std::unique_ptr<AssemblerBuffer> Grow(int new_size) override {
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    // remain this->jit_code_signer
+    return cache_->GetAssemblerBuffer(new_size, this);
+#else
     return cache_->GetAssemblerBuffer(new_size);
+#endif
   }
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  JitCodeSignerBase *GetJitCodeSigner() const override {
+    return jit_code_signer_.get();
+  }
+#endif
 
  private:
   AssemblerBufferCache* const cache_;
   const base::AddressRegion region_;
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  std::unique_ptr<JitCodeSignerBase> jit_code_signer_ = nullptr;
+  friend class AssemblerBufferCache;
+#endif
 };
 
 AssemblerBufferCache::~AssemblerBufferCache() {
@@ -39,8 +71,13 @@ AssemblerBufferCache::~AssemblerBufferCache() {
   }
 }
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+std::unique_ptr<AssemblerBuffer> AssemblerBufferCache::GetAssemblerBuffer(
+    int size, CachedAssemblerBuffer *buffer) {
+#else
 std::unique_ptr<AssemblerBuffer> AssemblerBufferCache::GetAssemblerBuffer(
     int size) {
+#endif
   DCHECK_LT(0, size);
   base::AddressRegion region = available_memory_.Allocate(size);
   if (region.is_empty()) {
@@ -56,7 +93,12 @@ std::unique_ptr<AssemblerBuffer> AssemblerBufferCache::GetAssemblerBuffer(
     region = available_memory_.Allocate(size);
     DCHECK(!region.is_empty());
   }
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  return std::make_unique<CachedAssemblerBuffer>(this, region,
+    buffer ? std::move(buffer->jit_code_signer_) : nullptr);
+#else
   return std::make_unique<CachedAssemblerBuffer>(this, region);
+#endif
 }
 
 void AssemblerBufferCache::Return(base::AddressRegion region) {

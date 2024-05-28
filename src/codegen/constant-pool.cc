@@ -6,6 +6,10 @@
 #include "src/codegen/assembler-arch.h"
 #include "src/codegen/assembler-inl.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -244,6 +248,9 @@ RelocInfoStatus ConstantPool::RecordKey(ConstantPoolKey key, int offset) {
     }
   }
   entries_.insert(std::make_pair(key, offset));
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  TrySkipNext(assm_->GetJitCodeSigner(), 1);
+#endif
 
   if (Entry32Count() + Entry64Count() > ConstantPool::kApproxMaxEntryCount) {
     // Request constant pool emission after the next instruction.
@@ -351,8 +358,14 @@ void ConstantPool::EmitEntries() {
 
 void ConstantPool::Emit(const ConstantPoolKey& key) {
   if (key.is_value32()) {
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TrySkipNext(assm_->GetJitCodeSigner(), 1);
+#endif
     assm_->dd(key.value32());
   } else {
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TrySkipNext(assm_->GetJitCodeSigner(), 2);
+#endif
     assm_->dq(key.value64());
   }
 }

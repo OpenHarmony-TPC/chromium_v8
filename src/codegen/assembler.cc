@@ -47,6 +47,11 @@
 #include "src/snapshot/snapshot.h"
 #include "src/utils/ostreams.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#include "src/codegen/arm64/jit-code-signer-hybrid.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -89,9 +94,21 @@ namespace {
 
 class DefaultAssemblerBuffer : public AssemblerBuffer {
  public:
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  explicit DefaultAssemblerBuffer(int size,
+       std::unique_ptr<JitCodeSignerBase> signer = nullptr)
+      : buffer_(base::OwnedVector<uint8_t>::NewForOverwrite(
+            std::max(AssemblerBase::kMinimalBufferSize, size))),
+        jit_code_signer_(std::move(signer)) {
+    if (IsSupportJitCodeSigner() && jit_code_signer_ == nullptr) {
+      jit_code_signer_ = std::make_unique<JitCodeSignerHybrid>();
+    }
+    TryRegisterTmpBuffer(jit_code_signer_.get(), reinterpret_cast<void *>(start()));
+#else
   explicit DefaultAssemblerBuffer(int size)
       : buffer_(base::OwnedVector<uint8_t>::NewForOverwrite(
             std::max(AssemblerBase::kMinimalBufferSize, size))) {
+#endif
 #ifdef DEBUG
     ZapCode(reinterpret_cast<Address>(buffer_.begin()), buffer_.size());
 #endif
@@ -103,11 +120,25 @@ class DefaultAssemblerBuffer : public AssemblerBuffer {
 
   std::unique_ptr<AssemblerBuffer> Grow(int new_size) override {
     DCHECK_LT(size(), new_size);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    return std::make_unique<DefaultAssemblerBuffer>(new_size, std::move(jit_code_signer_));
+#else
     return std::make_unique<DefaultAssemblerBuffer>(new_size);
+#endif
   }
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  JitCodeSignerBase *GetJitCodeSigner() const override {
+    return jit_code_signer_.get();
+  }
+#endif
 
  private:
   base::OwnedVector<uint8_t> buffer_;
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  std::unique_ptr<JitCodeSignerBase> jit_code_signer_ = nullptr;
+#endif
 };
 
 class ExternalAssemblerBufferImpl : public AssemblerBuffer {
@@ -126,9 +157,16 @@ class ExternalAssemblerBufferImpl : public AssemblerBuffer {
   void* operator new(std::size_t count);
   void operator delete(void* ptr) noexcept;
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  JitCodeSignerBase *GetJitCodeSigner() const override {
+    return nullptr;
+  }
+#endif
+
  private:
   byte* const start_;
   const int size_;
+  
 };
 
 static thread_local std::aligned_storage_t<sizeof(ExternalAssemblerBufferImpl),

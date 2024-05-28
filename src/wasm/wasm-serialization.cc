@@ -151,8 +151,13 @@ void SetWasmCalleeTag(RelocInfo* rinfo, uint32_t tag) {
                         static_cast<Address>(tag));
   } else {
     DCHECK(instr->IsBranchAndLink() || instr->IsUnconditionalBranch());
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    instr->SetBranchImmTarget(
+      reinterpret_cast<Instruction*>(rinfo->pc() + tag * kInstrSize), nullptr);
+#else
     instr->SetBranchImmTarget(
         reinterpret_cast<Instruction*>(rinfo->pc() + tag * kInstrSize));
+#endif
   }
 #else
   Address addr = static_cast<Address>(tag);

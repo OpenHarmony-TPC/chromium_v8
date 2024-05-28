@@ -12,6 +12,10 @@
 #include "src/common/globals.h"
 #include "src/utils/utils.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -418,6 +422,18 @@ class Instruction {
   // a byte offset, unscaled.
   static bool IsValidImmPCOffset(ImmBranchType branch_type, ptrdiff_t offset);
   bool IsTargetInImmPCOffsetRange(Instruction* target);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  // Patch a PC-relative offset to refer to 'target'. 'this' may be a branch or
+  // a PC-relative addressing instruction.
+  void SetImmPCOffsetTarget(const AssemblerOptions& options,
+                            Instruction* target,
+                            JitCodeSignerBase* patch_signer);
+  void SetUnresolvedInternalReferenceImmTarget(const AssemblerOptions& options,
+                                               Instruction* target,
+                                               JitCodeSignerBase* patch_signer);
+  // Patch a literal load instruction to load from 'source'.
+  void SetImmLLiteral(Instruction* source, JitCodeSignerBase* patch_signer);
+#else
   // Patch a PC-relative offset to refer to 'target'. 'this' may be a branch or
   // a PC-relative addressing instruction.
   void SetImmPCOffsetTarget(const AssemblerOptions& options,
@@ -426,6 +442,7 @@ class Instruction {
                                                Instruction* target);
   // Patch a literal load instruction to load from 'source'.
   void SetImmLLiteral(Instruction* source);
+#endif
 
   uintptr_t LiteralAddress() {
     int offset = ImmLLiteral() * kLoadLiteralScale;
@@ -459,8 +476,15 @@ class Instruction {
 
   static const int ImmPCRelRangeBitwidth = 21;
   static bool IsValidPCRelOffset(ptrdiff_t offset) { return is_int21(offset); }
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  void SetPCRelImmTarget(const AssemblerOptions& options, Instruction* target,
+                        JitCodeSignerBase* patch_signer);
+  V8_EXPORT_PRIVATE void SetBranchImmTarget(Instruction* target,
+                                            JitCodeSignerBase* patch_signer);
+#else
   void SetPCRelImmTarget(const AssemblerOptions& options, Instruction* target);
   V8_EXPORT_PRIVATE void SetBranchImmTarget(Instruction* target);
+#endif
 };
 
 // Simulator/Debugger debug instructions ---------------------------------------

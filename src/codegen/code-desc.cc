@@ -39,6 +39,10 @@ void CodeDesc::Initialize(CodeDesc* desc, Assembler* assembler,
 
   desc->origin = assembler;
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  desc->jit_code_signer = assembler->GetJitCodeSigner();
+#endif
+
   CodeDesc::Verify(desc);
 }
 
