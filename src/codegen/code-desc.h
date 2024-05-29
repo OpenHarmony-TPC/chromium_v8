@@ -7,6 +7,10 @@
 
 #include "src/common/globals.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -97,6 +101,10 @@ class CodeDesc {
   }
 
   Assembler* origin = nullptr;
+  
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  JitCodeSignerBase *jit_code_signer = nullptr;
+#endif
 };
 
 }  // namespace internal

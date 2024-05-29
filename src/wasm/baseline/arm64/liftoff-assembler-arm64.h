@@ -10,6 +10,10 @@
 #include "src/wasm/baseline/liftoff-assembler.h"
 #include "src/wasm/wasm-objects.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#endif
+
 namespace v8 {
 namespace internal {
 namespace wasm {
@@ -214,6 +218,9 @@ int LiftoffAssembler::PrepareStackFrame() {
   // how big the stack frame will be so we just emit a placeholder instruction.
   // PatchPrepareStackFrame will patch this in order to increase the stack
   // appropriately.
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  TrySkipNext(GetJitCodeSigner(), 1);
+#endif
   sub(sp, sp, 0);
   return offset;
 }
@@ -307,6 +314,9 @@ void LiftoffAssembler::PatchPrepareStackFrame(
 
   PatchingAssembler patching_assembler(AssemblerOptions{},
                                        buffer_start_ + offset, 1);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  patching_assembler.SetJitCodeSigner(GetJitCodeSigner());
+#endif
 
   if (V8_LIKELY(frame_size < 4 * KB)) {
     // This is the standard case for small frames: just subtract from SP and be

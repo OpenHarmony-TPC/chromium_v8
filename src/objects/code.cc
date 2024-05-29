@@ -80,8 +80,18 @@ void Code::CopyFromNoFlush(ByteArray reloc_info, Heap* heap,
 
   // Copy code and inline metadata.
   static_assert(InstructionStream::kOnHeapBodyIsContiguous);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  if (IsSupportJitCodeSigner()) {
+    CHECK(desc.jit_code_signer->ValidateCodeCopy(reinterpret_cast<Instr *>(instruction_start()),
+                        desc.buffer, desc.instr_size) == 0);
+  } else {
+    CopyBytes(reinterpret_cast<byte*>(instruction_start()), desc.buffer,
+              static_cast<size_t>(desc.instr_size));
+  }
+#else
   CopyBytes(reinterpret_cast<byte*>(instruction_start()), desc.buffer,
             static_cast<size_t>(desc.instr_size));
+#endif
   CopyBytes(reinterpret_cast<byte*>(instruction_start() + desc.instr_size),
             desc.unwinding_info, static_cast<size_t>(desc.unwinding_info_size));
   DCHECK_EQ(desc.body_size(), desc.instr_size + desc.unwinding_info_size);

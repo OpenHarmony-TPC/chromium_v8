@@ -28,6 +28,11 @@
 #include "src/diagnostics/unwinding-info-win64.h"
 #endif  // V8_OS_WIN
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#include "src/codegen/arm64/jit-code-signer-base.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -180,6 +185,12 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   ~Assembler() override;
 
   void AbortedCodeGeneration() override;
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  JitCodeSignerBase *GetJitCodeSigner() {
+    return jit_code_signer_;
+  }
+#endif
 
   // System functions ---------------------------------------------------------
   // Start generating code from the beginning of the buffer, discarding any code
@@ -3231,6 +3242,10 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
     static_assert(sizeof(instruction) == kInstrSize);
     DCHECK_LE(pc_ + sizeof(instruction), buffer_start_ + buffer_->size());
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TrySignInstruction(jit_code_signer_, pc_, instruction);
+#endif
+
     memcpy(pc_, &instruction, sizeof(instruction));
     pc_ += sizeof(instruction);
     CheckBuffer();
@@ -3243,6 +3258,9 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
     // TODO(all): Somehow register we have some data here. Then we can
     // disassemble it correctly.
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TrySignData(jit_code_signer_, pc_, data, size);
+#endif
     memcpy(pc_, data, size);
     pc_ += size;
     CheckBuffer();
@@ -3287,6 +3305,11 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // stream.
   static constexpr int kGap = 64;
   static_assert(AssemblerBase::kMinimalBufferSize >= 2 * kGap);
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  // Jit code signer for signing instruction
+  JitCodeSignerBase *jit_code_signer_ = nullptr;
+#endif
 
  public:
 #ifdef DEBUG
@@ -3400,6 +3423,9 @@ class PatchingAssembler : public Assembler {
   ~PatchingAssembler() {
     // Verify we have generated the number of instruction we expected.
     DCHECK_EQ(pc_offset() + kGap, buffer_->size());
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TrySetCompileMode(GetJitCodeSigner(), static_cast<int>(CompileMode::APPEND));
+#endif
   }
 
   // See definition of PatchAdrFar() for details.
@@ -3407,6 +3433,16 @@ class PatchingAssembler : public Assembler {
   static constexpr int kAdrFarPatchableNInstrs = kAdrFarPatchableNNops + 2;
   void PatchAdrFar(int64_t target_offset);
   void PatchSubSp(uint32_t immediate);
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  void SetJitCodeSigner(JitCodeSignerBase *signer) {
+    if (signer == nullptr) {
+      return;
+    }
+    jit_code_signer_ = reinterpret_cast<JitCodeSignerBase *>(signer);
+    TrySetCompileMode(jit_code_signer_, static_cast<int>(CompileMode::PATCH));
+  }
+#endif
 
  private:
   BlockPoolsScope block_constant_pool_emission_scope;

@@ -1097,8 +1097,18 @@ std::unique_ptr<WasmCode> NativeModule::AddCodeWithCodeSpace(
   const int code_comments_offset = desc.code_comments_offset;
   const int instr_size = desc.instr_size;
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  if (IsSupportJitCodeSigner()) {
+    CHECK(desc.jit_code_signer->ValidateCodeCopy(reinterpret_cast<Instr *>(
+      dst_code_bytes.begin()), desc.buffer, desc.instr_size) == 0);
+  } else {
+    memcpy(dst_code_bytes.begin(), desc.buffer,
+        static_cast<size_t>(desc.instr_size));
+  }
+#else
   memcpy(dst_code_bytes.begin(), desc.buffer,
          static_cast<size_t>(desc.instr_size));
+#endif
 
   // Apply the relocation delta by iterating over the RelocInfo.
   intptr_t delta = dst_code_bytes.begin() - desc.buffer;

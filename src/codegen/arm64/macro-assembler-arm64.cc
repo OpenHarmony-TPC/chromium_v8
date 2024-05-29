@@ -1015,6 +1015,10 @@ void MacroAssembler::Adr(const Register& rd, Label* label, AdrHint hint) {
     InstructionAccurateScope scope(this,
                                    PatchingAssembler::kAdrFarPatchableNInstrs);
     adr(rd, label);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TrySkipNext(GetJitCodeSigner(),
+      PatchingAssembler::kAdrFarPatchableNNops + 1);
+#endif
     for (int i = 0; i < PatchingAssembler::kAdrFarPatchableNNops; ++i) {
       nop(ADR_FAR_NOP);
     }

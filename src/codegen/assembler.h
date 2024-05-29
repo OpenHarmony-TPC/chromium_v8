@@ -57,6 +57,10 @@
 #include "src/objects/objects.h"
 #include "src/utils/ostreams.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#endif
+
 namespace v8 {
 
 // Forward declarations.
@@ -262,6 +266,10 @@ class AssemblerBuffer {
   // destructed), but not written.
   virtual std::unique_ptr<AssemblerBuffer> Grow(int new_size)
       V8_WARN_UNUSED_RESULT = 0;
+
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+  virtual JitCodeSignerBase *GetJitCodeSigner() const = 0;
+#endif
 };
 
 // Allocate an AssemblerBuffer which uses an existing buffer. This buffer cannot

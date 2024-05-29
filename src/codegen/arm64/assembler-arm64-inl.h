@@ -15,6 +15,10 @@
 #include "src/objects/objects-inl.h"
 #include "src/objects/smi.h"
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "src/codegen/arm64/jit-code-signer-helper.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -33,7 +37,12 @@ void RelocInfo::apply(intptr_t delta) {
       Address old_target =
           reinterpret_cast<Address>(instr->ImmPCOffsetTarget());
       Address new_target = old_target - delta;
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+      // the new target refs to address in jit memory, no need to re-sign
+      instr->SetBranchImmTarget(reinterpret_cast<Instruction*>(new_target), nullptr);
+#else
       instr->SetBranchImmTarget(reinterpret_cast<Instruction*>(new_target));
+#endif
     }
   }
 }
@@ -514,11 +523,21 @@ void Assembler::set_embedded_object_index_referenced_from(
     Address pc, EmbeddedObjectIndex data) {
   Instruction* instr = reinterpret_cast<Instruction*>(pc);
   if (instr->IsLdrLiteralX()) {
-    Memory<EmbeddedObjectIndex>(target_pointer_address_at(pc)) = data;
+    Address target = target_pointer_address_at(pc);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TryPatchData(jit_code_signer_, reinterpret_cast<void *>(target),
+      reinterpret_cast<void *>(&data), sizeof(data));
+#endif
+    Memory<EmbeddedObjectIndex>(target) = data;
   } else {
     DCHECK(instr->IsLdrLiteralW());
     DCHECK(is_uint32(data));
-    WriteUnalignedValue<uint32_t>(target_pointer_address_at(pc),
+    Address target = target_pointer_address_at(pc);
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    TryPatchInstruction(jit_code_signer_, reinterpret_cast<void *>(target),
+      static_cast<uint32_t>(data));
+#endif
+    WriteUnalignedValue<uint32_t>(target,
                                   static_cast<uint32_t>(data));
   }
 }
@@ -557,7 +576,12 @@ void Assembler::deserialization_set_special_target_at(Address location,
       // to zero instead.
       target = location;
     }
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    // the new target refs to address in jit memory, no need to re-sign
+    instr->SetBranchImmTarget(reinterpret_cast<Instruction*>(target), nullptr);
+#else
     instr->SetBranchImmTarget(reinterpret_cast<Instruction*>(target));
+#endif
     FlushInstructionCache(location, kInstrSize);
   } else {
     DCHECK_EQ(instr->InstructionBits(), 0);
@@ -593,7 +617,12 @@ void Assembler::set_target_address_at(Address pc, Address constant_pool,
       // to zero instead.
       target = pc;
     }
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+    // the new target refs to address in jit memory, no need to re-sign
+    instr->SetBranchImmTarget(reinterpret_cast<Instruction*>(target), nullptr);
+#else
     instr->SetBranchImmTarget(reinterpret_cast<Instruction*>(target));
+#endif
     if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
       FlushInstructionCache(pc, kInstrSize);
     }
