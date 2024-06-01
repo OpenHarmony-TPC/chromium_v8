@@ -47,7 +47,7 @@ inline bool HasOnlySimpleElements(Isolate* isolate, JSReceiver receiver) {
   DisallowGarbageCollection no_gc;
   PrototypeIterator iter(isolate, receiver, kStartAtReceiver);
   for (; !iter.IsAtEnd(); iter.Advance()) {
-    if (iter.GetCurrent().IsJSProxy()) return false;
+    if (!iter.GetCurrent().IsObject()) return false;
     JSObject current = iter.GetCurrent<JSObject>();
     if (!HasSimpleElements(current)) return false;
   }
