@@ -1718,7 +1718,7 @@ group("v8_maybe_icu_shared") {
   }
 }
 
-v8_header_set("torque_runtime_support_shared") {
+v8_header_set_shared("torque_runtime_support_shared") {
   visibility = [ ":*" ]
 
   sources = [ "../src/torque/runtime-support.h" ]
@@ -2195,7 +2195,7 @@ if (v8_enable_webassembly) {
 }
 
 if (v8_enable_webassembly) {
-  v8_static_library("wee8_shared") {
+  v8_static_library_shared("wee8_shared") {
     deps = [
       ":v8_base_shared",
       ":v8_libbase_shared",
@@ -2298,7 +2298,7 @@ template("run_torque_shared") {
 }
 
 if (current_toolchain == v8_snapshot_toolchain) {
-  v8_executable("mksnapshot_shared") {
+  v8_executable_shared("mksnapshot_shared") {
     visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
     sources = [
@@ -2342,7 +2342,7 @@ if (current_toolchain == v8_snapshot_toolchain) {
   }
 }
 
-v8_executable("torque-language-server_shared") {
+v8_executable_shared("torque-language-server_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   sources = [ "../src/torque/ls/torque-language-server.cc" ]
@@ -2374,7 +2374,7 @@ v8_executable("torque-language-server_shared") {
 }
 
 if (current_toolchain == v8_snapshot_toolchain) {
-  v8_executable("torque_shared") {
+  v8_executable_shared("torque_shared") {
     visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
     sources = [ "../src/torque/torque.cc" ]
@@ -2407,7 +2407,7 @@ if (current_toolchain == v8_snapshot_toolchain) {
 
 if (v8_enable_i18n_support_shared) {
   if (current_toolchain == v8_generator_toolchain) {
-    v8_executable("gen-regexp-special-case_shared") {
+    v8_executable_shared("gen-regexp-special-case_shared") {
       visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
       sources = [
@@ -2489,7 +2489,7 @@ if (v8_verify_torque_generation_invariance) {
   }
 }
 
-v8_source_set("torque_generated_initializers_shared") {
+v8_source_set_shared("torque_generated_initializers_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   deps = [
@@ -2521,7 +2521,7 @@ v8_source_set("torque_generated_initializers_shared") {
   configs = [ ":v8_features_shared", ":internal_config_shared" ]
 }
 
-v8_source_set("torque_generated_definitions_shared") {
+v8_source_set_shared("torque_generated_definitions_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   deps = [
@@ -2741,7 +2741,7 @@ if (v8_verify_deterministic_mksnapshot) {
   }
 }
 
-v8_source_set("v8_snapshot_shared") {
+v8_source_set_shared("v8_snapshot_shared") {
   # Let external targets depend on v8_snapshot.
   if (v8_use_external_startup_data_shared) {
     visibility = [ ":*" ]  # Targets in this file can depend on this.
@@ -2850,7 +2850,7 @@ action("v8_dump_build_config") {
   }
 }
 
-v8_source_set("v8_initializers_shared") {
+v8_source_set_shared("v8_initializers_shared") {
   visibility = [
     ":*",
     "test/cctest:*",
@@ -3013,7 +3013,7 @@ v8_source_set("v8_initializers_shared") {
   configs = [ ":v8_features_shared", ":internal_config_shared" ]
 }
 
-v8_source_set("v8_init_shared") {
+v8_source_set_shared("v8_init_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   deps = [
@@ -3046,7 +3046,7 @@ config("v8_header_features_shared") {
 
 # This is split out to be a non-code containing target that the Chromium browser
 # DLL can depend upon to get only a version string.
-v8_header_set("v8_version_shared") {
+v8_header_set_shared("v8_version_shared") {
   configs = [ ":internal_config_shared", ":v8_features_shared", ]
 
   sources = [
@@ -3056,7 +3056,7 @@ v8_header_set("v8_version_shared") {
   ]
 }
 
-v8_header_set("v8_config_headers_shared") {
+v8_header_set_shared("v8_config_headers_shared") {
   configs = [ ":internal_config_shared", ":v8_features_shared", ]
 
   sources = [
@@ -3075,7 +3075,7 @@ v8_header_set("v8_config_headers_shared") {
 
 # This is split out to be a non-code containing target that the Chromium browser
 # can depend upon to get basic v8 types.
-v8_header_set("v8_headers_shared") {
+v8_header_set_shared("v8_headers_shared") {
   configs = [ ":v8_features_shared", ":internal_config_shared" ]
   public_configs = [ ":headers_config_shared" ]
 
@@ -3175,7 +3175,7 @@ if (v8_generate_external_defines_header) {
   }
 }
 
-v8_header_set("v8_shared_internal_headers_shared") {
+v8_header_set_shared("v8_shared_internal_headers_shared") {
   visibility = [
     ":*",
     "test/*",
@@ -3195,7 +3195,7 @@ v8_header_set("v8_shared_internal_headers_shared") {
   ]
 }
 
-v8_header_set("v8_flags_shared") {
+v8_header_set_shared("v8_flags_shared") {
   visibility = [
     ":*",
     "tools/*",
@@ -3214,7 +3214,7 @@ v8_header_set("v8_flags_shared") {
   ]
 }
 
-v8_header_set("v8_internal_headers_shared") {
+v8_header_set_shared("v8_internal_headers_shared") {
   configs = [ ":v8_features_shared", ":internal_config_shared" ]
 
   sources = [
@@ -4849,7 +4849,7 @@ if (v8_enable_wasm_simd256_revec) {
 }
 
 if (current_toolchain == v8_generator_toolchain) {
-  v8_executable("bytecode_builtins_list_generator_shared") {
+  v8_executable_shared("bytecode_builtins_list_generator_shared") {
     visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
     include_dirs = [ "." ]
@@ -4887,7 +4887,7 @@ group("v8_compiler_for_mksnapshot_shared") {
   }
 }
 
-v8_source_set("v8_compiler_for_mksnapshot_source_set_shared") {
+v8_source_set_shared("v8_compiler_for_mksnapshot_source_set_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   sources = v8_compiler_sources
@@ -4934,7 +4934,7 @@ action("generate_bytecode_builtins_list_shared") {
 }
 
 # The src/compiler files with default behavior.
-v8_source_set("v8_compiler_shared") {
+v8_source_set_shared("v8_compiler_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   if (v8_enable_turbofan) {
@@ -4962,7 +4962,7 @@ v8_source_set("v8_compiler_shared") {
 }
 
 # The src/compiler files with default optimization behavior.
-v8_source_set("v8_turboshaft_shared") {
+v8_source_set_shared("v8_turboshaft_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   sources = [
@@ -5024,7 +5024,7 @@ group("v8_tracing_shared") {
   }
 }
 
-v8_source_set("v8_base_without_compiler_shared") {
+v8_source_set_shared("v8_base_without_compiler_shared") {
   # Only targets in this file and gcmole can depend on this.
   visibility = [
     ":*",
@@ -5953,7 +5953,7 @@ group("v8_base_shared") {
   }
 }
 
-v8_source_set("torque_ls_base_shared") {
+v8_source_set_shared("torque_ls_base_shared") {
   sources = [
     "../src/torque/ls/globals.h",
     "../src/torque/ls/json-parser.cc",
@@ -5989,7 +5989,7 @@ v8_source_set("torque_ls_base_shared") {
   }
 }
 
-v8_source_set("torque_base_shared") {
+v8_source_set_shared("torque_base_shared") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   sources = [
@@ -6081,7 +6081,7 @@ v8_source_set("torque_base_shared") {
   }
 }
 
-v8_source_set("v8_bigint_shared") {
+v8_source_set_shared("v8_bigint_shared") {
   sources = [
     "../src/bigint/bigint-internal.cc",
     "../src/bigint/bigint-internal.h",
@@ -6112,7 +6112,7 @@ v8_source_set("v8_bigint_shared") {
   configs = [ ":internal_config_shared", ":v8_features_shared", ]
 }
 
-v8_header_set("v8_heap_base_headers_shared") {
+v8_header_set_shared("v8_heap_base_headers_shared") {
   sources = [
     "../src/heap/base/active-system-pages.h",
     "../src/heap/base/basic-slot-set.h",
@@ -6125,7 +6125,7 @@ v8_header_set("v8_heap_base_headers_shared") {
   public_deps = [ ":v8_libbase_shared" ]
 }
 
-v8_source_set("v8_heap_base_shared") {
+v8_source_set_shared("v8_heap_base_shared") {
   sources = [
     "../src/heap/base/active-system-pages.cc",
     "../src/heap/base/stack.cc",
@@ -6172,7 +6172,7 @@ v8_source_set("v8_heap_base_shared") {
 
 # This is split out to be a non-code containing target that the Chromium browser
 # can depend upon to get basic cppgc types.
-v8_header_set("cppgc_headers_shared") {
+v8_header_set_shared("cppgc_headers_shared") {
   configs = [ ":v8_features_shared", ":internal_config_shared" ]
   public_configs = [
     ":v8_header_features_shared",
@@ -6237,7 +6237,7 @@ v8_header_set("cppgc_headers_shared") {
   public_deps = [ ":v8_config_headers_shared" ]
 }
 
-v8_source_set("cppgc_base_shared") {
+v8_source_set_shared("cppgc_base_shared") {
   visibility = [ ":*" ]
 
   sources = [
@@ -6381,16 +6381,17 @@ config("internal_config_base_shard") {
   ]
 }
 
-v8_shared_library("v8_shared") {
+v8_shared_library_shared("v8_shared") {
   public_deps = [
     ":v8_base_shared",
     ":v8_snapshot_shared",
+    ":copy_v8_include",
   ]
 
   public_configs = [ ":external_config_shared" ]
 }
 
-v8_component("v8_libbase_shared") {
+v8_component_shared("v8_libbase_shared") {
   sources = [
     "../src/base/address-region.h",
     "../src/base/atomic-utils.h",
@@ -6678,7 +6679,7 @@ if (v8_use_libm_trig_functions_shared) {
   }
 }
 
-v8_component("v8_libplatform_shared") {
+v8_component_shared("v8_libplatform_shared") {
   sources = [
     "//base/trace_event/common/trace_event_common.h",
     "../include/libplatform/libplatform-export.h",
@@ -7078,7 +7079,7 @@ if (!build_with_chromium && v8_use_perfetto) {
     }
   }  # host_toolchain
 
-  v8_component("v8_libperfetto_shared") {
+  v8_component_shared("v8_libperfetto_shared") {
     configs = [ ":v8_features_shared", ":v8_tracing_config_shared" ]
     public_configs = [ "//third_party/perfetto/gn:public_config" ]
     deps = [
@@ -7099,3 +7100,9 @@ if (!build_with_chromium && v8_use_perfetto) {
     ]
   }
 }  # if (!build_with_chromium && v8_use_perfetto)
+
+action("copy_v8_include") {
+  script = "../tools/cp_v8_include.py"
+  report_file = "$target_gen_dir/v8-include.txt"
+  outputs = [ report_file ]
+}

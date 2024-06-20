@@ -215,9 +215,14 @@ v8_add_configs = [
   v8_path_prefix + ":toolchain",
 ]
 
+v8_add_configs_shared = [
+  v8_path_prefix + ":toolchain",
+]
+
 if (is_debug && !v8_optimized_debug) {
   v8_remove_configs += [ "//build/config/compiler:default_optimization" ]
   v8_add_configs += [ "//build/config/compiler:no_optimize" ]
+  v8_add_configs_shared += [ "//build/config/compiler:no_optimize" ]
 } else {
   v8_remove_configs += [ "//build/config/compiler:default_optimization" ]
 
@@ -225,8 +230,10 @@ if (is_debug && !v8_optimized_debug) {
   # between "optimize_speed" and "optimize_max".
   if (is_posix && !is_android && !using_sanitizer) {
     v8_add_configs += [ "//build/config/compiler:optimize_speed" ]
+    v8_add_configs_shared += [ "//build/config/compiler:optimize_speed" ]
   } else {
     v8_add_configs += [ "//build/config/compiler:optimize_max" ]
+    v8_add_configs_shared += [ "//build/config/compiler:optimize_max" ]
   }
 }
 
@@ -241,10 +248,13 @@ if (v8_symbol_level != symbol_level) {
   v8_remove_configs += [ "//build/config/compiler:default_symbols" ]
   if (v8_symbol_level == 0) {
     v8_add_configs += [ "//build/config/compiler:no_symbols" ]
+    v8_add_configs_shared += [ "//build/config/compiler:no_symbols" ]
   } else if (v8_symbol_level == 1) {
     v8_add_configs += [ "//build/config/compiler:minimal_symbols" ]
+    v8_add_configs_shared += [ "//build/config/compiler:minimal_symbols" ]
   } else if (v8_symbol_level == 2) {
     v8_add_configs += [ "//build/config/compiler:symbols" ]
+    v8_add_configs_shared += [ "//build/config/compiler:symbols" ]
   } else {
     assert(false)
   }
@@ -254,11 +264,13 @@ if ((is_posix || is_fuchsia) &&
     (v8_enable_backtrace || v8_monolithic || v8_expose_symbols)) {
   v8_remove_configs += [ "//build/config/gcc:symbol_visibility_hidden" ]
   v8_add_configs += [ "//build/config/gcc:symbol_visibility_default" ]
+  v8_add_configs_shared += [ "//build/config/gcc:symbol_visibility_default" ]
 }
 
 # On MIPS gcc_target_rpath and ldso_path might be needed for all builds.
 if (target_cpu == "mips64el" || target_cpu == "mips64") {
   v8_add_configs += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
+  v8_add_configs_shared += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
 }
 
 if (!build_with_chromium && is_clang) {
@@ -269,6 +281,7 @@ if (!build_with_chromium && is_clang) {
 if (ohos_nweb_ex_config_name != "") {
   v8_remove_configs += [ "//build/config:ohos_nweb_ex_def_main" ]
   v8_add_configs += [ "//build/config:ohos_nweb_ex_def_other" ]
+  v8_add_configs_shared += [ "//build/config:ohos_nweb_ex_def_other" ]
 }  #endif  // OHOS_NWEB_EX
 
 # All templates should be kept in sync.
@@ -297,11 +310,46 @@ template("v8_source_set") {
   }
 }
 
+# All templates should be kept in sync.
+template("v8_source_set_shared") {
+  if (defined(invoker.split_count) && invoker.split_count > 1 &&
+      defined(v8_static_library) && v8_static_library && is_win) {
+    link_target_type = "split_static_library"
+  } else if (defined(v8_static_library) && v8_static_library) {
+    link_target_type = "static_library"
+  } else {
+    link_target_type = "source_set"
+  }
+  target(link_target_type, target_name) {
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "configs",
+                             "remove_configs",
+                           ])
+    configs -= v8_remove_configs
+    configs += v8_add_configs_shared
+    if (defined(invoker.remove_configs)) {
+      configs -= invoker.remove_configs
+    }
+    configs += invoker.configs
+  }
+}
+
 template("v8_header_set") {
   source_set(target_name) {
     forward_variables_from(invoker, "*", [ "configs" ])
     configs -= v8_remove_configs
     configs += v8_add_configs
+    configs += invoker.configs
+  }
+}
+
+template("v8_header_set_shared") {
+  source_set(target_name) {
+    forward_variables_from(invoker, "*", [ "configs" ])
+    configs -= v8_remove_configs
+    configs += v8_add_configs_shared
     configs += invoker.configs
   }
 }
@@ -316,6 +364,28 @@ template("v8_executable") {
                            ])
     configs -= v8_remove_configs
     configs += v8_add_configs
+    if (defined(invoker.remove_configs)) {
+      configs -= invoker.remove_configs
+    }
+    configs += invoker.configs
+    if (is_linux || is_chromeos) {
+      # For enabling ASLR.
+      ldflags = [ "-pie" ]
+    }
+    deps += [ v8_path_prefix + ":v8_dump_build_config" ]
+  }
+}
+
+template("v8_executable_shared") {
+  executable(target_name) {
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "configs",
+                             "remove_configs",
+                           ])
+    configs -= v8_remove_configs
+    configs += v8_add_configs_shared
     if (defined(invoker.remove_configs)) {
       configs -= invoker.remove_configs
     }
@@ -346,6 +416,24 @@ template("v8_component") {
   }
 }
 
+template("v8_component_shared") {
+  component(target_name) {
+    output_name = target_name
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "configs",
+                             "remove_configs",
+                           ])
+    configs -= v8_remove_configs
+    configs += v8_add_configs_shared
+    if (defined(invoker.remove_configs)) {
+      configs -= invoker.remove_configs
+    }
+    configs += invoker.configs
+  }
+}
+
 template("v8_shared_library") {
   shared_library(target_name) {
     forward_variables_from(invoker,
@@ -365,6 +453,25 @@ template("v8_shared_library") {
   }
 }
 
+template("v8_shared_library_shared") {
+  shared_library(target_name) {
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "configs",
+                             "remove_configs",
+                           ])
+    configs -= v8_remove_configs
+    configs += v8_add_configs_shared
+    if (defined(invoker.remove_configs)) {
+      configs -= invoker.remove_configs
+    }
+    if (defined(invoker.configs)) {
+      configs += invoker.configs
+    }
+  }
+}
+
 template("v8_static_library") {
   static_library(target_name) {
     complete_static_lib = true
@@ -372,6 +479,17 @@ template("v8_static_library") {
     configs -= v8_remove_configs
     configs -= [ "//build/config/compiler:thin_archive" ]
     configs += v8_add_configs
+    configs += invoker.configs
+  }
+}
+
+template("v8_static_library_shared") {
+  static_library(target_name) {
+    complete_static_lib = true
+    forward_variables_from(invoker, "*", [ "configs" ])
+    configs -= v8_remove_configs
+    configs -= [ "//build/config/compiler:thin_archive" ]
+    configs += v8_add_configs_shared
     configs += invoker.configs
   }
 }
