@@ -174,7 +174,7 @@ config("inspector_config_shared") {
   include_dirs = [ "../../include" ]
 }
 
-v8_header_set("inspector_test_headers_shared") {
+v8_header_set_shared("inspector_test_headers_shared") {
   configs = [ ":inspector_config_shared" ]
 
   public_deps = [ "../../v8_shared:v8_headers_shared" ]
@@ -182,7 +182,7 @@ v8_header_set("inspector_test_headers_shared") {
   sources = [ "test-interface.h" ]
 }
 
-v8_source_set("inspector_string_conversions_shared") {
+v8_source_set_shared("inspector_string_conversions_shared") {
   sources = [
     "v8-string-conversions.cc",
     "v8-string-conversions.h",
@@ -191,7 +191,7 @@ v8_source_set("inspector_string_conversions_shared") {
   deps = [ "../../v8_shared:v8_libbase_shared" ]
 }
 
-v8_source_set("inspector_shared") {
+v8_source_set_shared("inspector_shared") {
   deps = [
     ":inspector_string_conversions_shared",
     "../../v8_shared:v8_tracing_shared",
@@ -270,4 +270,3 @@ v8_source_set("inspector_shared") {
     "value-mirror.h",
   ]
 }
-
