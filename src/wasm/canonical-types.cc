@@ -4,6 +4,7 @@
 
 #include "src/wasm/canonical-types.h"
 
+#include "src/init/v8.h"
 #include "src/wasm/wasm-engine.h"
 
 namespace v8 {
@@ -12,6 +13,19 @@ namespace wasm {
 
 TypeCanonicalizer* GetTypeCanonicalizer() {
   return GetWasmEngine()->type_canonicalizer();
+}
+
+// We currently store canonical indices in {ValueType} instances, so they
+// must fit into the range of valid module-relative (non-canonical type
+// indices.
+// TODO(jkummerow): Raise this limit, to make long-lived WasmEngines scale
+// better. Plan: stop constructing ValueTypes from canonical type indices.
+static constexpr size_t kMaxCanonicalTypes = kV8MaxWasmTypes;
+
+void TypeCanonicalizer::CheckMaxCanonicalIndex() const {
+  if (canonical_supertypes_.size() > kMaxCanonicalTypes) {
+    V8::FatalProcessOutOfMemory(nullptr, "too many canonicalized types");
+  }
 }
 
 void TypeCanonicalizer::AddRecursiveGroup(WasmModule* module, uint32_t size) {
@@ -45,6 +59,7 @@ void TypeCanonicalizer::AddRecursiveGroup(WasmModule* module, uint32_t size,
     uint32_t first_canonical_index =
         static_cast<uint32_t>(canonical_supertypes_.size());
     canonical_supertypes_.resize(first_canonical_index + size);
+    CheckMaxCanonicalIndex();
     for (uint32_t i = 0; i < size; i++) {
       CanonicalType& canonical_type = group.types[i];
       // Compute the canonical index of the supertype: If it is relative, we
