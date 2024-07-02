@@ -101,6 +101,7 @@ uint32_t TypeCanonicalizer::AddRecursiveGroup(const FunctionSig* sig) {
     group.types[0].is_relative_supertype = false;
     canonical_groups_.emplace(group, canonical_index);
     canonical_supertypes_.emplace_back(kNoSuperType);
+    DCHECK_LE(canonical_supertypes_.size(), kMaxCanonicalTypes);
   }
   return canonical_index;
 }
