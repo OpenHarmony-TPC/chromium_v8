@@ -103,6 +103,10 @@ bool g_hard_abort = false;
 
 const char* g_gc_fake_mmap = nullptr;
 
+#if OHOS_JS_ENGINE
+#define MAP_JIT 0x1000
+#endif
+
 DEFINE_LAZY_LEAKY_OBJECT_GETTER(RandomNumberGenerator,
                                 GetPlatformRandomNumberGenerator)
 static LazyMutex rng_mutex = LAZY_MUTEX_INITIALIZER;
@@ -140,7 +144,7 @@ int GetFlagsForMemoryPermission(OS::MemoryPermission access,
     flags |= MAP_LAZY;
 #endif  // V8_OS_QNX
   }
-#if V8_OS_DARWIN
+#if V8_OS_DARWIN || OHOS_JS_ENGINE
   // MAP_JIT is required to obtain writable and executable pages when the
   // hardened runtime/memory protection is enabled, which is optional (via code
   // signing) on Intel-based Macs but mandatory on Apple silicon ones. See also

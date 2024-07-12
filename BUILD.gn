@@ -398,6 +398,7 @@ declare_args() {
   v8_jitless = v8_enable_lite_mode || target_is_ios_device
 
   v8_enable_jit_code_sign = false
+  v8_enable_ohos_js_engine = true
 }
 
 # Derived defaults.
@@ -1177,6 +1178,9 @@ config("features") {
   }
   if (v8_enable_jit_code_sign) {
     defines += [ "V8_ENABLE_JIT_CODE_SIGN" ]
+  }
+  if (v8_enable_ohos_js_engine) {
+    defines += [ "OHOS_JS_ENGINE" ]
   }
 }
 

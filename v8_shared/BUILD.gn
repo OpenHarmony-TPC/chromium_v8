@@ -378,6 +378,11 @@ v8_value_deserializer_hard_fail = false
 v8_jitless = v8_enable_lite_mode || target_is_ios_device
 v8_undefine_fortify_source = true
 
+v8_enable_jit_code_sign = false
+
+# enable ohos js engine v8 features
+v8_enable_ohos_js_engine = true
+
 # Derived defaults.
 if (cppgc_enable_verify_heap == "") {
   cppgc_enable_verify_heap = v8_enable_debugging_features || dcheck_always_on
@@ -665,6 +670,13 @@ assert(!v8_enable_snapshot_compression || v8_use_zlib,
 
 v8_random_seed = "314159265"
 v8_toolset_for_shell = "host"
+
+if (is_ohos && v8_current_cpu == "arm64") {
+  import ("//build/config/ohos/config.gni")
+  if (product_name == "all") {
+    v8_enable_jit_code_sign = true
+  }
+}
 
 config("internal_config_base_shared") {
   # Only targets in this file and its subdirs can depend on this.
@@ -1119,6 +1131,12 @@ config("v8_features_shared") {
   }
   if (v8_enable_wasm_simd256_revec) {
     defines += [ "V8_ENABLE_WASM_SIMD256_REVEC" ]
+  }
+  if (v8_enable_jit_code_sign) {
+    defines += [ "V8_ENABLE_JIT_CODE_SIGN" ]
+  }
+  if (v8_enable_ohos_js_engine) {
+    defines += [ "OHOS_JS_ENGINE" ]
   }
 }
 
@@ -3212,6 +3230,18 @@ v8_header_set_shared("v8_flags_shared") {
     ":v8_libbase_shared",
     ":v8_shared_internal_headers_shared",
   ]
+}
+
+# This is split out to isolate instructions on ARMv8.4
+v8_header_set("pac_sign_feature_shared") {
+  sources = [
+    "src/codegen/arm64/pac-sign-ctx.h",
+    "src/codegen/arm64/pac-sign-ctx.cc",
+  ]
+  defines = [ "ARCH_PAC_SUPPORT" ]
+  cflags = [ "-march=armv8.4-a" ]
+  deps = [ ":v8_libbase_shared" ]
+  configs = [ ":internal_config_base_shared" ]
 }
 
 v8_header_set_shared("v8_internal_headers_shared") {
@@ -5939,6 +5969,18 @@ v8_source_set_shared("v8_base_without_compiler_shared") {
       "../src/tracing/trace-categories.cc",
       "../src/tracing/trace-categories.h",
     ]
+  }
+
+  if (v8_enable_jit_code_sign) {
+    sources += [
+      "../src/codegen/arm64/jit-code-signer-base.h",
+      "../src/codegen/arm64/jit-code-signer-base.cc",
+      "../src/codegen/arm64/jit-code-signer-hybrid.h",
+      "../src/codegen/arm64/jit-code-signer-hybrid.cc",
+      "../src/codegen/arm64/jit-code-signer-helper.h",
+      "../src/codegen/arm64/jit-code-signer-helper.cc",
+    ]
+    deps += [ ":pac_sign_feature_shared" ]
   }
 }
 
