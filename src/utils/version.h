@@ -35,6 +35,11 @@ class V8_EXPORT Version {
   // Calculate the V8 version string.
   static void GetString(base::Vector<char> str);
 
+#ifdef OHOS_JS_ENGINE
+  static int GetInner() { return inner_; }
+  static void GetVersionWithInner(base::Vector<char> str);
+#endif
+
   // Calculate the SONAME for the V8 shared library.
   static void GetSONAME(base::Vector<char> str);
 
@@ -46,6 +51,9 @@ class V8_EXPORT Version {
   static int minor_;
   static int build_;
   static int patch_;
+#ifdef OHOS_JS_ENGINE
+  static int inner_;
+#endif
   static const char* embedder_;
   static bool candidate_;
   static const char* soname_;
