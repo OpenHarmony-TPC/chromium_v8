@@ -671,7 +671,7 @@ assert(!v8_enable_snapshot_compression || v8_use_zlib,
 v8_random_seed = "314159265"
 v8_toolset_for_shell = "host"
 
-if (is_ohos && v8_current_cpu == "arm64") {
+if (is_ohos && v8_current_cpu == "arm64" && !v8_enable_ohos_js_engine) {
   import ("//build/config/ohos/config.gni")
   if (product_name == "all") {
     v8_enable_jit_code_sign = true
