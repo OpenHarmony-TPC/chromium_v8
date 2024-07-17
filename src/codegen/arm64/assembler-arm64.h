@@ -3424,7 +3424,7 @@ class PatchingAssembler : public Assembler {
     // Verify we have generated the number of instruction we expected.
     DCHECK_EQ(pc_offset() + kGap, buffer_->size());
 #ifdef V8_ENABLE_JIT_CODE_SIGN
-    TrySetCompileMode(GetJitCodeSigner(), static_cast<int>(CompileMode::APPEND));
+    ReleaseJitCodeSigner();
 #endif
   }
 
@@ -3441,6 +3441,13 @@ class PatchingAssembler : public Assembler {
     }
     jit_code_signer_ = reinterpret_cast<JitCodeSignerBase *>(signer);
     TrySetCompileMode(jit_code_signer_, static_cast<int>(CompileMode::PATCH));
+  }
+
+  void ReleaseJitCodeSigner()  {
+    if (jit_code_signer_ != nullptr) {
+      TrySetCompileMode(jit_code_signer_, static_cast<int>(CompileMode::APPEND));
+      jit_code_signer_ = nullptr;
+    }
   }
 #endif
 
