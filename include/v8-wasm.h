@@ -86,6 +86,13 @@ class V8_EXPORT WasmMemoryObject : public Object {
   static void CheckCast(Value* object);
 };
 
+// All the tiers of Wasm execution.
+enum class WasmExecutionTier : int8_t {
+  kNone,
+  kLiftoff,
+  kTurbofan,
+};
+
 // An instance of WebAssembly.Module.
 class V8_EXPORT WasmModuleObject : public Object {
  public:
@@ -103,6 +110,19 @@ class V8_EXPORT WasmModuleObject : public Object {
    * shared by several module objects.
    */
   CompiledWasmModule GetCompiledModule();
+
+  /**
+   * Compile a Wasm function of the specified index with the specified tier.
+   */
+  bool CompileFunction(Isolate* isolate, uint32_t function_index,
+                       WasmExecutionTier tier);
+
+  /**
+   * Deserialize or compile Wasm module.
+   */
+  static MaybeLocal<WasmModuleObject> DeserializeOrCompile(
+      Isolate* isolate, MemorySpan<const uint8_t> wire_bytes,
+      MemorySpan<const uint8_t> wasm_cache, bool& cacheRejected);
 
   /**
    * Compile a Wasm module from the provided uncompiled bytes.
