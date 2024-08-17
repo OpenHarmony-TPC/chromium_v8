@@ -8725,6 +8725,9 @@ bool WasmModuleObject::CompileFunction(Isolate* v8_isolate,
   i::wasm::GetWasmEngine()->CompileFunction(i_isolate->counters(),
                                             module->native_module(),
                                             function_index, executionTier);
+  if (native_module->compilation_state()->failed()) {
+    return false;
+  }
   return true;
 #else
   Utils::ApiCheck(false, "WasmModuleObject::CompileFunction",
