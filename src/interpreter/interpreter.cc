@@ -292,6 +292,9 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::DoFinalizeJobImpl(
   }
 
 #ifdef DEBUG
+  if (parse_info()->literal()->shared_function_info().is_null()) {
+    parse_info()->literal()->set_shared_function_info(shared_info);
+  }
   CheckAndPrintBytecodeMismatch(
       isolate, handle(Script::cast(shared_info->script()), isolate), bytecodes);
 #endif
