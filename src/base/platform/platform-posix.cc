@@ -104,8 +104,52 @@ bool g_hard_abort = false;
 const char* g_gc_fake_mmap = nullptr;
 
 #if OHOS_JS_ENGINE
-#define MAP_JIT 0x1000
+#define MAP_JIT 0x1040
 #endif
+
+#ifdef V8_HOST_ARCH_ARM64
+static long Syscall(unsigned long n, unsigned long a,
+                    unsigned long b, unsigned long c,
+                    unsigned long d, unsigned long e,
+                    unsigned long f) {
+  register unsigned long x8 asm("x8") = n;
+  register unsigned long x0 asm("x0") = a;
+  register unsigned long x1 asm("x1") = b;
+  register unsigned long x2 asm("x2") = c;
+  register unsigned long x3 asm("x3") = d;
+  register unsigned long x4 asm("x4") = e;
+  register unsigned long x5 asm("x5") = f;
+  asm volatile("svc 0"
+               : "=r"(x0)
+               : "r"(x8), "0"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
+               : "memory", "cc");
+  return x0;
+}
+#endif
+
+static inline void* InlineMmap(void *addr, size_t len, int prot, int flags, int fd,
+                        off_t offset) {
+#ifdef V8_HOST_ARCH_ARM64
+  long res =
+      Syscall(SYS_mmap, (unsigned long)addr, len, prot, flags, fd, offset);
+  if (res < 0) {
+    errno = (int)res;
+    return MAP_FAILED;
+  } else {
+    return (void*)res;
+  }
+#else
+  return mmap(addr, len, prot, flags, fd, offset);
+#endif
+}
+
+static inline int InlineMprotect(void *addr, size_t len, int prot) {
+#ifdef V8_HOST_ARCH_ARM64
+  return (int)Syscall(SYS_mprotect, (unsigned long)addr, len, prot, 0, 0, 0);
+#else
+  return mprotect(addr, len, prot);
+#endif
+}
 
 DEFINE_LAZY_LEAKY_OBJECT_GETTER(RandomNumberGenerator,
                                 GetPlatformRandomNumberGenerator)
@@ -144,7 +188,7 @@ int GetFlagsForMemoryPermission(OS::MemoryPermission access,
     flags |= MAP_LAZY;
 #endif  // V8_OS_QNX
   }
-#if V8_OS_DARWIN || OHOS_JS_ENGINE
+#if V8_OS_MACOSX || (OHOS_JS_ENGINE && V8_HOST_ARCH_ARM64)
   // MAP_JIT is required to obtain writable and executable pages when the
   // hardened runtime/memory protection is enabled, which is optional (via code
   // signing) on Intel-based Macs but mandatory on Apple silicon ones. See also
@@ -160,7 +204,7 @@ void* Allocate(void* hint, size_t size, OS::MemoryPermission access,
                PageType page_type) {
   int prot = GetProtectionFromMemoryPermission(access);
   int flags = GetFlagsForMemoryPermission(access, page_type);
-  void* result = mmap(hint, size, prot, flags, kMmapFd, kMmapFdOffset);
+  void* result = InlineMmap(hint, size, prot, flags, kMmapFd, kMmapFdOffset);
   if (result == MAP_FAILED) return nullptr;
 #if ENABLE_HUGEPAGE
   if (result != nullptr && size >= kHugePageSize) {
@@ -456,7 +500,7 @@ void* OS::AllocateShared(void* hint, size_t size, MemoryPermission access,
   DCHECK_EQ(0, size % AllocatePageSize());
   int prot = GetProtectionFromMemoryPermission(access);
   int fd = FileDescriptorFromSharedMemoryHandle(handle);
-  void* result = mmap(hint, size, prot, MAP_SHARED, fd, offset);
+  void* result = InlineMmap(hint, size, prot, MAP_SHARED, fd, offset);
   if (result == MAP_FAILED) return nullptr;
   return result;
 }
@@ -481,7 +525,7 @@ bool OS::SetPermissions(void* address, size_t size, MemoryPermission access) {
   DCHECK_EQ(0, size % CommitPageSize());
 
   int prot = GetProtectionFromMemoryPermission(access);
-  int ret = mprotect(address, size, prot);
+  int ret = InlineMprotect(address, size, prot);
 
   // Any failure that's not OOM likely indicates a bug in the caller (e.g.
   // using an invalid mapping) so attempt to catch that here to facilitate
@@ -522,7 +566,7 @@ void OS::SetDataReadOnly(void* address, size_t size) {
   CHECK_EQ(0, reinterpret_cast<uintptr_t>(address) % CommitPageSize());
   CHECK_EQ(0, size % CommitPageSize());
 
-  if (mprotect(address, size, PROT_READ) != 0) {
+  if (InlineMprotect(address, size, PROT_READ) != 0) {
     FATAL("Failed to protect data memory at %p +%zu; error %d\n", address, size,
           errno);
   }
@@ -589,7 +633,7 @@ bool OS::DecommitPages(void* address, size_t size) {
   // shall be removed, as if by an appropriate call to munmap(), before the new
   // mapping is established." As a consequence, the memory will be
   // zero-initialized on next access.
-  void* ret = mmap(address, size, PROT_NONE,
+  void* ret = InlineMmap(address, size, PROT_NONE,
                    MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (V8_UNLIKELY(ret == MAP_FAILED)) {
     CHECK_EQ(ENOMEM, errno);
@@ -760,7 +804,7 @@ OS::MemoryMappedFile* OS::MemoryMappedFile::open(const char* name,
             flags = MAP_SHARED;
           }
           void* const memory =
-              mmap(OS::GetRandomMmapAddr(), size, prot, flags, fileno(file), 0);
+              InlineMmap(OS::GetRandomMmapAddr(), size, prot, flags, fileno(file), 0);
           if (memory != MAP_FAILED) {
             return new PosixMemoryMappedFile(file, memory, size);
           }
@@ -779,8 +823,8 @@ OS::MemoryMappedFile* OS::MemoryMappedFile::create(const char* name,
     if (size == 0) return new PosixMemoryMappedFile(file, nullptr, 0);
     size_t result = fwrite(initial, 1, size, file);
     if (result == size && !ferror(file)) {
-      void* memory = mmap(OS::GetRandomMmapAddr(), result,
-                          PROT_READ | PROT_WRITE, MAP_SHARED, fileno(file), 0);
+      void* memory = InlineMmap(OS::GetRandomMmapAddr(), result,
+                                PROT_READ | PROT_WRITE, MAP_SHARED, fileno(file), 0);
       if (memory != MAP_FAILED) {
         return new PosixMemoryMappedFile(file, memory, result);
       }
@@ -1031,14 +1075,14 @@ bool AddressSpaceReservation::AllocateShared(void* address, size_t size,
   DCHECK(Contains(address, size));
   int prot = GetProtectionFromMemoryPermission(access);
   int fd = FileDescriptorFromSharedMemoryHandle(handle);
-  return mmap(address, size, prot, MAP_SHARED | MAP_FIXED, fd, offset) !=
+  return InlineMmap(address, size, prot, MAP_SHARED | MAP_FIXED, fd, offset) !=
          MAP_FAILED;
 }
 #endif  // !defined(V8_OS_DARWIN)
 
 bool AddressSpaceReservation::FreeShared(void* address, size_t size) {
   DCHECK(Contains(address, size));
-  return mmap(address, size, PROT_NONE, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+  return InlineMmap(address, size, PROT_NONE, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
               -1, 0) == address;
 }
 
