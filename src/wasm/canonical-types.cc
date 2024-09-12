@@ -15,11 +15,21 @@ TypeCanonicalizer* GetTypeCanonicalizer() {
   return GetWasmEngine()->type_canonicalizer();
 }
 
-// We currently store canonical indices in {ValueType} instances, so they
-// must fit into the range of valid module-relative (non-canonical type
-// indices.
-// TODO(jkummerow): Raise this limit, to make long-lived WasmEngines scale
-// better. Plan: stop constructing ValueTypes from canonical type indices.
+// Inside the TypeCanonicalizer, we use ValueType instances constructed
+// from canonical type indices, so we can't let them get bigger than what
+// we have storage space for. Code outside the TypeCanonicalizer already
+// supports up to Smi range for canonical type indices.
+// TODO(jkummerow): Raise this limit. Possible options:
+// - increase the size of ValueType::HeapTypeField, using currently-unused bits.
+// - change the encoding of ValueType: one bit says whether it's a ref type,
+// the other bits then encode the index or the kind of non-ref type.
+// - refactor the TypeCanonicalizer's internals to no longer use ValueTypes
+// and related infrastructure, and use a wider encoding of canonicalized
+// type indices only here.
+// - wait for 32-bit platforms to no longer be relevant, and increase the
+// size of ValueType to 64 bits.
+// None of this seems urgent, as we have no evidence of the current limit
+// being an actual limitation in practice.
 static constexpr size_t kMaxCanonicalTypes = kV8MaxWasmTypes;
 
 void TypeCanonicalizer::CheckMaxCanonicalIndex() const {
@@ -110,6 +120,8 @@ ValueType TypeCanonicalizer::CanonicalizeValueType(
     const WasmModule* module, ValueType type,
     uint32_t recursive_group_start) const {
   if (!type.has_index()) return type;
+  static_assert(kMaxCanonicalTypes <= (1u << ValueType::kHeapTypeBits));
+
   return type.ref_index() >= recursive_group_start
              ? ValueType::CanonicalWithRelativeIndex(
                    type.kind(), type.ref_index() - recursive_group_start)
