@@ -1140,7 +1140,6 @@ StackCheckKind StackCheckKindOfJSStackCheck(const Operator* op) {
 void JSGenericLowering::LowerJSStackCheck(Node* node) {
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
-
   StackCheckKind stack_check_kind = StackCheckKindOfJSStackCheck(node->op());
 
   Node* check;
@@ -1159,6 +1158,7 @@ void JSGenericLowering::LowerJSStackCheck(Node* node) {
                          jsgraph()->ExternalConstant(
                              ExternalReference::address_of_jslimit(isolate())),
                          jsgraph()->IntPtrConstant(0), effect, control);
+
     check = effect = graph()->NewNode(
         machine()->StackPointerGreaterThan(stack_check_kind), limit, effect);
   }

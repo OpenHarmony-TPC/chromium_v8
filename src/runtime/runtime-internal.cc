@@ -347,17 +347,20 @@ RUNTIME_FUNCTION(Runtime_StackGuard) {
   }
 
   return isolate->stack_guard()->HandleInterrupts(
-    StackGuard::InterruptLevel::kAnyEffect);
+      StackGuard::InterruptLevel::kAnyEffect);
 }
+
 RUNTIME_FUNCTION(Runtime_HandleNoHeapWritesInterrupts) {
   SealHandleScope shs(isolate);
   DCHECK_EQ(0, args.length());
   TRACE_EVENT0("v8.execute", "V8.StackGuard");
+
   // First check if this is a real stack overflow.
   StackLimitCheck check(isolate);
   if (check.JsHasOverflowed()) {
     return isolate->StackOverflow();
   }
+
   return isolate->stack_guard()->HandleInterrupts(
       StackGuard::InterruptLevel::kNoHeapWrites);
 }
