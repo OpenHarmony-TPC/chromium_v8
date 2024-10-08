@@ -410,6 +410,7 @@ if (pgo_exists_flag) {
 } else {
   v8_builtins_profiling_log_file = "default"
 }
+print("Using v8_builtins_profiling from: ")
 print(v8_builtins_profiling_log_file)
 
 if (cppgc_enable_verify_heap == "") {
