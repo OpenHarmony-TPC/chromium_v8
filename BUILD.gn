@@ -5616,7 +5616,10 @@ v8_source_set("v8_base_without_compiler") {
       "src/codegen/arm64/jit-code-signer-helper.h",
       "src/codegen/arm64/jit-code-signer-helper.cc",
     ]
-    deps += [ ":pac_sign_feature" ]
+    deps += [
+      ":pac_sign_feature",
+      "//third_party:huawei_securec",
+    ]
   }
 }
 
