@@ -201,6 +201,7 @@ declare_args() {
   # 5. Build again with v8_builtins_profiling_log_file set to the file created
   #    in step 3 or 4.
   v8_builtins_profiling_log_file = "default"
+  pgo_exists_flag = false
 
   # Enables various testing features.
   v8_enable_test_features = ""
