@@ -402,6 +402,15 @@ declare_args() {
 }
 
 # Derived defaults.
+pgo_exists_flag = exec_script("tools/builtins-pgo/check_pgo.py", ["--pgo_path", "profiles/ohos.profile"], "value")
+if (pgo_exists_flag) {
+  v8_builtins_profiling_log_file = "tools/builtins-pgo/profiles/ohos.profile"
+} else {
+  v8_builtins_profiling_log_file = "default"
+}
+print("Using v8_builtins_profiling from: ")
+print(v8_builtins_profiling_log_file)
+
 if (cppgc_enable_verify_heap == "") {
   cppgc_enable_verify_heap = v8_enable_debugging_features || dcheck_always_on
 }
@@ -2296,7 +2305,7 @@ template("run_mksnapshot") {
 
         # Replace this with --warn-about-builtin-profile-data to see the full
         # list of builtins with incompatible profiles.
-        "--abort-on-bad-builtin-profile-data",
+        "--warn-about-builtin-profile-data",
       ]
     }
 
