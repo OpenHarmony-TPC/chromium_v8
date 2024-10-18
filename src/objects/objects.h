@@ -693,8 +693,9 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
     }
   };
 
-  // For use with std::unordered_set/unordered_map when using both
-  // InstructionStream and non-InstructionStream objects as keys.
+  // For use with std::unordered_set/unordered_map when one of the objects may
+  // be located outside the main pointer compression cage, for example in
+  // trusted space. In this case, we must use full pointer comparison.
   struct KeyEqualSafe {
     bool operator()(const Object a, const Object b) const {
       return a.SafeEquals(b);

@@ -96,7 +96,7 @@ class DefaultAssemblerBuffer : public AssemblerBuffer {
  public:
 #ifdef V8_ENABLE_JIT_CODE_SIGN
   explicit DefaultAssemblerBuffer(int size,
-       std::unique_ptr<JitCodeSignerBase> signer = nullptr)
+      std::unique_ptr<JitCodeSignerBase> signer = nullptr)
       : buffer_(base::OwnedVector<uint8_t>::NewForOverwrite(
             std::max(AssemblerBase::kMinimalBufferSize, size))),
         jit_code_signer_(std::move(signer)) {
@@ -166,7 +166,7 @@ class ExternalAssemblerBufferImpl : public AssemblerBuffer {
  private:
   byte* const start_;
   const int size_;
-  
+
 };
 
 static thread_local std::aligned_storage_t<sizeof(ExternalAssemblerBufferImpl),

@@ -21,8 +21,8 @@ namespace v8 {
 namespace internal {
 
 enum CTXConfig {
-    SIGN_AND_AUTH,  // auth context when signing
-    SIGN_NO_AUTH, //no auth context when signing
+    SIGN_AND_AUTH,   // auth context when signing
+    SIGN_NO_AUTH, // no auth context when signing
 };
 
 enum ContextType {

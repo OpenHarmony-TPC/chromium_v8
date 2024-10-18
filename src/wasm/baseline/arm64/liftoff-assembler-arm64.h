@@ -342,9 +342,9 @@ void LiftoffAssembler::PatchPrepareStackFrame(
   // Emit the unconditional branch in the function prologue (from {offset} to
   // {pc_offset()}).
   patching_assembler.b((pc_offset() - offset) >> kInstrSizeLog2);
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  patching_assembler.ReleaseJitCodeSigner();
-#endif
+ #ifdef  V8_ENABLE_JIT_CODE_SIGN
+   patching_assembler.ReleaseJitCodeSigner();
+ #endif
 
   // If the frame is bigger than the stack, we throw the stack overflow
   // exception unconditionally. Thereby we can avoid the integer overflow

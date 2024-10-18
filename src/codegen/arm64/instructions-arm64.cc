@@ -257,8 +257,8 @@ void Instruction::SetImmPCOffsetTarget(const AssemblerOptions& options,
 
 #ifdef V8_ENABLE_JIT_CODE_SIGN
 void Instruction::SetPCRelImmTarget(const AssemblerOptions& options,
-                                       Instruction* target,
-                                       JitCodeSignerBase* patch_signer) {
+                                    Instruction* target,
+                                    JitCodeSignerBase* patch_signer) {
 #else
 void Instruction::SetPCRelImmTarget(const AssemblerOptions& options,
                                     Instruction* target) {
@@ -322,7 +322,7 @@ void Instruction::SetBranchImmTarget(Instruction* target) {
   }
   Instr insn = Mask(~imm_mask) | branch_imm;
 #ifdef V8_ENABLE_JIT_CODE_SIGN
-  TryPatchInstruction(patch_signer, reinterpret_cast<void*>(this), insn);
+  TryPatchInstruction(patch_signer, reinterpret_cast<void *>(this), insn);
 #endif
   SetInstructionBits(insn);
 }
@@ -353,7 +353,7 @@ void Instruction::SetUnresolvedInternalReferenceImmTarget(
 
 #ifdef V8_ENABLE_JIT_CODE_SIGN
 void Instruction::SetImmLLiteral(Instruction* source,
-    JitCodeSignerBase* patch_signer) {
+  JitCodeSignerBase* patch_signer) {
 #else
 void Instruction::SetImmLLiteral(Instruction* source) {
 #endif
@@ -366,7 +366,7 @@ void Instruction::SetImmLLiteral(Instruction* source) {
 
   Instr insn = Mask(~mask) | imm;
 #ifdef V8_ENABLE_JIT_CODE_SIGN
-  TryPatchInstruction(patch_signer, reinterpret_cast<void*>(this), insn);
+  TryPatchInstruction(patch_signer, reinterpret_cast<void *>(this), insn);
 #endif
   SetInstructionBits(insn);
 }

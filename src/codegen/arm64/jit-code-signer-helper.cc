@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 #include <cstdio>
-#include <sys/auxv.h>
 #include <asm/hwcap.h>
+#include <sys/syscall.h>
 #include "src/codegen/arm64/jit-code-signer-helper.h"
 #include "src/codegen/arm64/jit-code-signer-base.h"
 #include "src/codegen/arm64/jit-code-signer-hybrid.h"
@@ -22,24 +22,37 @@
 namespace v8 {
 namespace internal {
 
-enum class JitCodeSignerStatus {
-    UNINITIALIZED,
-    SUPPORT,
-    UNSUPPORT
-};
+#define JITFORT_PRCTL_OPTION 0x6a6974
+#define JITFORT_CPU_FEATURES 7
 
-static JitCodeSignerStatus g_jitCodeSignerStatus = JitCodeSignerStatus::UNINITIALIZED;
+static inline long Syscall(
+    unsigned long n, unsigned long a, unsigned long b,
+    unsigned long c, unsigned long d, unsigned long e)
+{
+    register unsigned long x8 __asm__("x8") = n;
+    register unsigned long x0 __asm__("x0") = a;
+    register unsigned long x1 __asm__("x1") = b;
+    register unsigned long x2 __asm__("x2") = c;
+    register unsigned long x3 __asm__("x3") = d;
+    register unsigned long x4 __asm__("x4") = e;
+    asm volatile("svc 0" : "=r"(x0) : "r"(x8), "0"(x0), "r"(x1), \
+        "r"(x2), "r"(x3), "r"(x4) : "memory", "cc");
+    return x0;
+}
+ 
+static long inline PrctlWrapper(
+    int op, unsigned long a, unsigned long b = 0)
+{
+    return Syscall(SYS_prctl, op, a, b, 0, 0);
+}
 
 bool IsSupportJitCodeSigner() {
-    if (g_jitCodeSignerStatus == JitCodeSignerStatus::UNINITIALIZED) {
-        unsigned long hwcaps = getauxval(AT_HWCAP);
-        if ((hwcaps & HWCAP_PACA) && (hwcaps & HWCAP_PACG)) {
-            g_jitCodeSignerStatus = JitCodeSignerStatus::SUPPORT;
-        } else {
-            g_jitCodeSignerStatus = JitCodeSignerStatus::UNSUPPORT;
-        }
+    unsigned long hwcaps = static_cast<unsigned long>(PrctlWrapper(
+        JITFORT_PRCTL_OPTION, JITFORT_CPU_FEATURES, 0));
+    if ((hwcaps & HWCAP_PACA) && (hwcaps & HWCAP_PACG)) {
+        return true;
     }
-    return g_jitCodeSignerStatus == JitCodeSignerStatus::SUPPORT;
+    return false;
 }
 
 void TryRegisterTmpBuffer(JitCodeSignerBase *jit_code_signer, void *tmp_buffer)
@@ -120,7 +133,7 @@ void TryValidateCodeCopy(JitCodeSignerBase *jit_code_signer, void *jit_memory,
     void *tmp_buffer, int size) {
     if (jit_code_signer != nullptr) {
         V8_LIKELY(jit_code_signer->ValidateCodeCopy(reinterpret_cast<Instr *>(jit_memory),
-           tmp_buffer, size));
+            tmp_buffer, size));
     }
 }
 }

@@ -146,6 +146,7 @@ Reduction WasmLoadElimination::ReduceWasmStructGet(Node* node) {
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
 
+  if (object->opcode() == IrOpcode::kDead) return NoChange();
   AbstractState const* state = node_states_.Get(effect);
   if (state == nullptr) return NoChange();
 
@@ -168,16 +169,11 @@ Reduction WasmLoadElimination::ReduceWasmStructGet(Node* node) {
       !(is_mutable ? state->immutable_state : state->mutable_state)
            .LookupField(field_info.field_index, object)
            .IsEmpty()) {
-    Node* unreachable =
-        graph()->NewNode(jsgraph()->common()->Unreachable(), effect, control);
-    MachineRepresentation rep =
-        field_info.type->field(field_info.field_index).machine_representation();
-    Node* dead_value =
-        graph()->NewNode(jsgraph()->common()->DeadValue(rep), unreachable);
-    NodeProperties::SetType(dead_value, NodeProperties::GetType(node));
-    ReplaceWithValue(node, dead_value, unreachable, control);
+    ReplaceWithValue(node, dead(), dead(), dead());
+    MergeControlToEnd(graph(), common(),
+                      graph()->NewNode(common()->Throw(), effect, control));
     node->Kill();
-    return Replace(dead_value);
+    return Replace(dead());
   }
   // If the input type is not (ref null? none) or bottom and we don't have type
   // inconsistencies, then the result type must be valid.
@@ -217,6 +213,7 @@ Reduction WasmLoadElimination::ReduceWasmStructSet(Node* node) {
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
 
+  if (object->opcode() == IrOpcode::kDead) return NoChange();
   AbstractState const* state = node_states_.Get(effect);
   if (state == nullptr) return NoChange();
 
@@ -240,11 +237,11 @@ Reduction WasmLoadElimination::ReduceWasmStructSet(Node* node) {
       !(is_mutable ? state->immutable_state : state->mutable_state)
            .LookupField(field_info.field_index, object)
            .IsEmpty()) {
-    Node* unreachable =
-        graph()->NewNode(jsgraph()->common()->Unreachable(), effect, control);
-    ReplaceWithValue(node, unreachable, unreachable, control);
+    ReplaceWithValue(node, dead(), dead(), dead());
+    MergeControlToEnd(graph(), common(),
+                      graph()->NewNode(common()->Throw(), effect, control));
     node->Kill();
-    return Replace(unreachable);
+    return Replace(dead());
   }
 
   if (is_mutable) {
@@ -302,6 +299,7 @@ Reduction WasmLoadElimination::ReduceWasmArrayInitializeLength(Node* node) {
   Node* value = NodeProperties::GetValueInput(node, 1);
   Node* effect = NodeProperties::GetEffectInput(node);
 
+  if (object->opcode() == IrOpcode::kDead) return NoChange();
   AbstractState const* state = node_states_.Get(effect);
   if (state == nullptr) return NoChange();
 
@@ -321,6 +319,7 @@ Reduction WasmLoadElimination::ReduceStringPrepareForGetCodeunit(Node* node) {
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
 
+  if (object->opcode() == IrOpcode::kDead) return NoChange();
   AbstractState const* state = node_states_.Get(effect);
   if (state == nullptr) return NoChange();
 
@@ -484,6 +483,12 @@ WasmLoadElimination::AbstractState const* WasmLoadElimination::ComputeLoopState(
     if (visited.insert(current).second) {
       if (current->opcode() == IrOpcode::kWasmStructSet) {
         Node* object = NodeProperties::GetValueInput(current, 0);
+	    if (object->opcode() == IrOpcode::kDead ||
+            object->opcode() == IrOpcode::kDeadValue) {
+          // We are in dead code. Bail out with no mutable state.
+          return zone()->New<AbstractState>(HalfState(zone()),
+                                            state->immutable_state);
+        }
         WasmFieldInfo field_info = OpParameter<WasmFieldInfo>(current->op());
         bool is_mutable = field_info.type->mutability(field_info.field_index);
         if (is_mutable) {
@@ -529,6 +534,7 @@ WasmLoadElimination::WasmLoadElimination(Editor* editor, JSGraph* jsgraph,
       empty_state_(zone),
       node_states_(jsgraph->graph()->NodeCount(), zone),
       jsgraph_(jsgraph),
+      dead_(jsgraph->Dead()),
       zone_(zone) {}
 
 CommonOperatorBuilder* WasmLoadElimination::common() const {

@@ -83,10 +83,10 @@ void Code::CopyFromNoFlush(ByteArray reloc_info, Heap* heap,
 #ifdef V8_ENABLE_JIT_CODE_SIGN
   if (IsSupportJitCodeSigner()) {
     CHECK(desc.jit_code_signer->ValidateCodeCopy(reinterpret_cast<Instr *>(instruction_start()),
-                        desc.buffer, desc.instr_size) == 0);
+      desc.buffer, desc.instr_size) == 0);
   } else {
     CopyBytes(reinterpret_cast<byte*>(instruction_start()), desc.buffer,
-              static_cast<size_t>(desc.instr_size));
+          static_cast<size_t>(desc.instr_size));
   }
 #else
   CopyBytes(reinterpret_cast<byte*>(instruction_start()), desc.buffer,

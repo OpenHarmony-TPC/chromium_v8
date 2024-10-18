@@ -15,7 +15,6 @@
 #include "src/codegen/arm64/jit-code-signer-base.h"
 
 #include <sstream>
-
 namespace v8 {
 namespace internal {
 
@@ -54,7 +53,7 @@ int JitCodeSignerBase::SignInstruction(void *buffer, Instr insn)
         return PatchInstruction(buffer, insn);
     }
     return CS_SUCCESS;
-
+    
 }
 
 int JitCodeSignerBase::SignData(void *buffer, const void *const data, uint32_t size)
@@ -149,7 +148,7 @@ bool JitCodeSignerBase::ConvertPatchOffsetToIndex(const int offset, int &cur_ind
     if (static_cast<size_t>(cur_index) >= sign_table_.size()) {
 #ifdef JIT_CODE_SIGN_DEBUGGABLE
         LOG_ERROR("Offset is out of range, index = %d, signTable size = %zu",
-                 cur_index, sign_table_.size());
+            cur_index, sign_table_.size());
 #endif
         return false;
     }
@@ -165,14 +164,14 @@ int32_t JitCodeSignerBase::CheckDataCopy(Instr *jit_memory, void *tmp_buffer, in
         return CS_ERR_TMP_BUFFER;
     }
 
-    //update tmp buffer
+    // update tmp buffer
     tmp_buffer_ = tmp_buffer;
 
     if (((size & UNALIGNMENT_MASK) != 0) ||
-       (static_cast<uint32_t>(size) > sign_table_.size() * INSTRUCTION_SIZE)) {
+        (static_cast<uint32_t>(size) > sign_table_.size() * INSTRUCTION_SIZE)) {
 #ifdef JIT_CODE_SIGN_DEBUGGABLE
         LOG_ERROR("Range invalid, size = %d, table size = %zu",
-        size, sign_table_.size());
+            size, sign_table_.size());
 #endif
         return CS_ERR_JIT_SIGN_SIZE;
     }

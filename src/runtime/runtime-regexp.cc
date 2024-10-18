@@ -1155,7 +1155,20 @@ Handle<JSObject> ConstructNamedCaptureGroupsObject(
     Handle<Object> capture_value(f_get_capture(capture_ix), isolate);
     DCHECK(capture_value->IsUndefined(isolate) || capture_value->IsString());
 
-    JSObject::AddProperty(isolate, groups, capture_name, capture_value, NONE);
+    LookupIterator it(isolate, groups, capture_name, groups,
+                      LookupIterator::OWN_SKIP_INTERCEPTOR);
+    if (it.IsFound()) {
+      DCHECK(v8_flags.js_regexp_duplicate_named_groups);
+      if (!capture_value->IsUndefined(isolate)) {
+        DCHECK(IsUndefined(*it.GetDataValue(), isolate));
+        CHECK(Object::SetDataProperty(&it, capture_value).ToChecked());
+      }
+    } else {
+      CHECK(Object::AddDataProperty(&it, capture_value, NONE,
+                                    Just(ShouldThrow::kThrowOnError),
+                                    StoreOrigin::kNamed)
+                .IsJust());
+    }
   }
 
   return groups;

@@ -621,8 +621,8 @@ DeoptFrame MaglevGraphBuilder::GetDeoptFrameForLazyDeoptHelper(
 
   // Currently only support builtin continuations for bytecodes that write to
   // the accumulator
-  DCHECK(
-      interpreter::Bytecodes::WritesAccumulator(iterator_.current_bytecode()));
+  DCHECK(interpreter::Bytecodes::WritesOrClobbersAccumulator(
+      iterator_.current_bytecode()));
   return BuiltinContinuationDeoptFrame(
       continuation_scope->continuation(), {}, GetContext(),
       // Mark the accumulator dead in parent frames since we know that the
@@ -4635,7 +4635,7 @@ void MaglevGraphBuilder::VisitFindNonDefaultConstructorOrConstruct() {
             TryGetConstant(new_target);
         if (kind == FunctionKind::kDefaultBaseConstructor) {
           ValueNode* object;
-            if (new_target_function && new_target_function->IsJSFunction() &&
+          if (new_target_function && new_target_function->IsJSFunction() &&
                 HasValidInitialMap(new_target_function->AsJSFunction(),
                                    current_function)) {
             object = BuildAllocateFastObject(

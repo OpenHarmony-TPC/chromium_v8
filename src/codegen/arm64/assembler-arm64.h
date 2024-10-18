@@ -3307,7 +3307,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   static_assert(AssemblerBase::kMinimalBufferSize >= 2 * kGap);
 
 #ifdef V8_ENABLE_JIT_CODE_SIGN
-  // Jit code signer for signing instruction
+  // Jit code signer for signing instructions
   JitCodeSignerBase *jit_code_signer_ = nullptr;
 #endif
 
@@ -3443,7 +3443,7 @@ class PatchingAssembler : public Assembler {
     TrySetCompileMode(jit_code_signer_, static_cast<int>(CompileMode::PATCH));
   }
 
-  void ReleaseJitCodeSigner()  {
+  void ReleaseJitCodeSigner() {
     if (jit_code_signer_ != nullptr) {
       TrySetCompileMode(jit_code_signer_, static_cast<int>(CompileMode::APPEND));
       jit_code_signer_ = nullptr;

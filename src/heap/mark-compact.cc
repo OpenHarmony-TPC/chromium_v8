@@ -2292,7 +2292,11 @@ void MarkCompactCollector::MarkTransitiveClosureLinear() {
            GCTracer::Scope::MC_MARK_WEAK_CLOSURE_EPHEMERON_LINEAR);
   // This phase doesn't support parallel marking.
   DCHECK(heap()->concurrent_marking()->IsStopped());
-  std::unordered_multimap<HeapObject, HeapObject, Object::Hasher> key_to_values;
+  // We must use the full pointer comparison here as this map will be queried
+  // with objects from different cages (e.g. code- or trusted cage).
+  std::unordered_multimap<HeapObject, HeapObject, Object::Hasher,
+                          Object::KeyEqualSafe>
+      key_to_values;
   Ephemeron ephemeron;
 
   DCHECK(
@@ -2410,21 +2414,8 @@ std::pair<size_t, size_t> MarkCompactCollector::ProcessMarkingWorklist(
 
   while (local_marking_worklists()->Pop(&object) ||
          local_marking_worklists()->PopOnHold(&object)) {
-    // Left trimming may result in grey or black filler objects on the marking
-    // worklist. Ignore these objects.
-    if (object.IsFreeSpaceOrFiller(cage_base)) {
-      // Due to copying mark bits and the fact that grey and black have their
-      // first bit set, one word fillers are always black.
-      DCHECK_IMPLIES(object.map(cage_base) ==
-                         ReadOnlyRoots(isolate).one_pointer_filler_map(),
-                     marking_state()->IsMarked(object));
-      // Other fillers may be black or grey depending on the color of the object
-      // that was trimmed.
-      DCHECK_IMPLIES(object.map(cage_base) !=
-                         ReadOnlyRoots(isolate).one_pointer_filler_map(),
-                     marking_state()->IsMarked(object));
-      continue;
-    }
+    // The marking worklist should never contain filler objects.
+    CHECK(!object.IsFreeSpaceOrFiller(cage_base));
     DCHECK(object.IsHeapObject());
     DCHECK(heap()->Contains(object));
     DCHECK(!(marking_state()->IsUnmarked(object)));
