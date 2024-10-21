@@ -372,6 +372,8 @@ class NfaInterpreter {
   //   the current input index. All remaining `active_threads_` are discarded.
   void RunActiveThread(InterpreterThread t) {
     while (true) {
+      SBXCHECK_GE(t.pc, 0);
+      SBXCHECK_LT(t.pc, bytecode_.length());
       if (IsPcProcessed(t.pc)) return;
       MarkPcProcessed(t.pc);
 

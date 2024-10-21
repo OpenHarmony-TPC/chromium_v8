@@ -249,6 +249,7 @@ RelocInfoStatus ConstantPool::RecordKey(ConstantPoolKey key, int offset) {
   }
   entries_.insert(std::make_pair(key, offset));
 #ifdef V8_ENABLE_JIT_CODE_SIGN
+  // insn contains info will relocate
   TrySkipNext(assm_->GetJitCodeSigner(), 1);
 #endif
 

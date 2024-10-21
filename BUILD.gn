@@ -2903,7 +2903,7 @@ v8_header_set("v8_flags") {
   ]
 }
 
-# This is split out to isolate instructions on ARMv8.4
+# This is split out to ioslate intructions on armv8.4
 v8_header_set("pac_sign_feature") {
   sources = [
     "src/codegen/arm64/pac-sign-ctx.h",

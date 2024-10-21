@@ -1261,6 +1261,7 @@ Type JSType(Type type) {
 }  // namespace
 
 Type OperationTyper::SameValue(Type lhs, Type rhs) {
+  if (lhs.IsNone() || rhs.IsNone()) return Type::None();
   if (!JSType(lhs).Maybe(JSType(rhs))) return singleton_false();
   if (lhs.Is(Type::NaN())) {
     if (rhs.Is(Type::NaN())) return singleton_true();

@@ -1458,8 +1458,6 @@ Maybe<bool> JSReceiver::ValidateAndApplyPropertyDescriptor(
     Maybe<ShouldThrow> should_throw, Handle<Name> property_name) {
   // We either need a LookupIterator, or a property name.
   DCHECK((it == nullptr) != property_name.is_null());
-  Handle<JSObject> object;
-  if (it != nullptr) object = Handle<JSObject>::cast(it->GetReceiver());
   bool desc_is_data_descriptor = PropertyDescriptor::IsDataDescriptor(desc);
   bool desc_is_accessor_descriptor =
       PropertyDescriptor::IsAccessorDescriptor(desc);
@@ -3592,6 +3590,7 @@ void JSObject::AddProperty(Isolate* isolate, Handle<JSObject> object,
 #ifdef DEBUG
   uint32_t index;
   DCHECK(!object->IsJSProxy());
+  DCHECK(!object->IsWasmObject());
   DCHECK(!name->AsArrayIndex(&index));
   Maybe<PropertyAttributes> maybe = GetPropertyAttributes(&it);
   DCHECK(maybe.IsJust());
@@ -5175,7 +5174,7 @@ Maybe<bool> JSObject::SetPrototype(Isolate* isolate, Handle<JSObject> object,
     DCHECK(!object->IsAccessCheckNeeded());
   }
 
-  // Silently ignore the change if value is not a JSObject or null.
+  // Silently ignore the change if value is not a JSReceiver or null.
   // SpiderMonkey behaves this way.
   if (!value->IsJSReceiver() && !value->IsNull(isolate)) return Just(true);
 

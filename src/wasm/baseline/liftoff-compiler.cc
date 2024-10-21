@@ -1262,7 +1262,7 @@ class LiftoffCompiler {
     // pre-analysis of the function.
     __ SpillLocals();
 
-    __ PrepareLoopArgs(loop->start_merge.arity);
+    __ SpillLoopArgs(loop->start_merge.arity);
 
     // Loop labels bind at the beginning of the block.
     __ bind(loop->label.get());
@@ -1882,7 +1882,7 @@ class LiftoffCompiler {
       }
       case kExprExternExternalize: {
         LiftoffRegList pinned;
-        LiftoffRegister ref = pinned.set(__ PopToRegister(pinned));
+        LiftoffRegister ref = pinned.set(__ PopToModifiableRegister(pinned));
         LiftoffRegister null = __ GetUnusedRegister(kGpReg, pinned);
         LoadNullValueForCompare(null.gp(), pinned, kWasmAnyRef);
         Label label;

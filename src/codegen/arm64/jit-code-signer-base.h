@@ -67,7 +67,7 @@ public:
     int32_t SignData(const void *data, uint32_t size);
     int32_t PatchInstruction(void *jit_buffer, Instr insn);
     int32_t PatchData(int offset, const void *const data, uint32_t size);
-    int32_t PatchData(void *buffer, const void *const data, uint32_t size); 
+    int32_t PatchData(void *buffer, const void *const data, uint32_t size);
 
 protected:
     bool ConvertPatchOffsetToIndex(const int offset, int &cur_index);

@@ -165,7 +165,7 @@ int32_t ExperimentalRegExp::ExecRaw(Isolate* isolate,
                                     int32_t* output_registers,
                                     int32_t output_register_count,
                                     int32_t subject_index) {
-  DCHECK(v8_flags.enable_experimental_regexp_engine);
+  CHECK(v8_flags.enable_experimental_regexp_engine);
   DisallowGarbageCollection no_gc;
 
   if (v8_flags.trace_experimental_regexp_engine) {
@@ -262,7 +262,7 @@ int32_t ExperimentalRegExp::OneshotExecRaw(Isolate* isolate,
                                            int32_t* output_registers,
                                            int32_t output_register_count,
                                            int32_t subject_index) {
-  DCHECK(v8_flags.enable_experimental_regexp_engine_on_excessive_backtracks);
+  CHECK(v8_flags.enable_experimental_regexp_engine_on_excessive_backtracks);
 
   if (v8_flags.trace_experimental_regexp_engine) {
     StdoutStream{} << "Experimental execution (oneshot) of regexp "

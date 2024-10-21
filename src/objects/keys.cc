@@ -314,9 +314,8 @@ void TrySettingEmptyEnumCache(JSReceiver object) {
   Map map = object.map();
   DCHECK_EQ(kInvalidEnumCacheSentinel, map.EnumLength());
   if (!map.OnlyHasSimpleProperties()) return;
-  if (map.IsJSProxyMap()) return;
+  DCHECK(map.IsJSObjectMap());  // Implied by {OnlyHasSimpleProperties}.
   if (map.NumberOfEnumerableProperties() > 0) return;
-  DCHECK(object.IsJSObject());
   map.SetEnumLength(0);
 }
 

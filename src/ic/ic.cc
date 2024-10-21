@@ -1788,7 +1788,7 @@ MaybeHandle<Object> StoreIC::Store(Handle<Object> object, Handle<Name> name,
   // present. We can also skip this for private names since they are not
   // bound by configurability or extensibility checks, and errors would've
   // been thrown if the private field already exists in the object.
-  if (IsAnyDefineOwn() && !name->IsPrivateName() && !object->IsJSProxy() &&
+  if (IsAnyDefineOwn() && !name->IsPrivateName() && object->IsJSObject() &&
       !Handle<JSObject>::cast(object)->HasNamedInterceptor()) {
     Maybe<bool> can_define = JSObject::CheckIfCanDefineAsConfigurable(
         isolate(), &it, value, Nothing<ShouldThrow>());
@@ -2262,15 +2262,16 @@ Handle<Object> KeyedStoreIC::StoreElementHandler(
           receiver_map->MayHaveReadOnlyElementsInPrototypeChain(isolate()),
       IsStoreInArrayLiteralIC());
 
-  if (receiver_map->IsJSProxyMap()) {
+  if (!receiver_map->IsJSObjectMap()) {
     // DefineKeyedOwnIC, which is used to define computed fields in instances,
-    // should be handled by the slow stub.
-    if (IsDefineKeyedOwnIC()) {
-      TRACE_HANDLER_STATS(isolate(), KeyedStoreIC_SlowStub);
-      return StoreHandler::StoreSlow(isolate(), store_mode);
+    // should handled by the slow stub below instead of the proxy stub.
+    if (receiver_map->IsJSProxyMap() && !IsDefineKeyedOwnIC()) {
+      return StoreHandler::StoreProxy(isolate());
     }
 
-    return StoreHandler::StoreProxy(isolate());
+    // Wasm objects or other kind of special objects go through the slow stub.
+    TRACE_HANDLER_STATS(isolate(), KeyedStoreIC_SlowStub);
+    return StoreHandler::StoreSlow(isolate(), store_mode);
   }
 
   // TODO(ishell): move to StoreHandler::StoreElement().
@@ -2490,14 +2491,12 @@ MaybeHandle<Object> KeyedStoreIC::Store(Handle<Object> object,
     Handle<JSReceiver> receiver = Handle<JSReceiver>::cast(object);
     old_receiver_map = handle(receiver->map(), isolate());
     is_arguments = receiver->IsJSArgumentsObject();
-    bool is_proxy = receiver->IsJSProxy();
+    bool is_jsobject  = receiver->IsJSObject();
     size_t index;
     key_is_valid_index = IntPtrKeyToSize(maybe_index, receiver, &index);
-    if (!is_arguments && !is_proxy) {
-      if (key_is_valid_index) {
+    if (is_jsobject && !is_arguments && key_is_valid_index) {
         Handle<JSObject> receiver_object = Handle<JSObject>::cast(object);
         store_mode = GetStoreMode(receiver_object, index);
-      }
     }
   }
 

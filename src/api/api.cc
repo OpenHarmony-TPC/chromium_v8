@@ -4583,15 +4583,7 @@ Maybe<bool> v8::Object::CreateDataProperty(v8::Local<v8::Context> context,
 
   i::PropertyKey lookup_key(i_isolate, key_obj);
   i::LookupIterator it(i_isolate, self, lookup_key, i::LookupIterator::OWN);
-  if (self->IsJSProxy()) {
-    ENTER_V8(i_isolate, context, Object, CreateDataProperty, Nothing<bool>(),
-             i::HandleScope);
-    Maybe<bool> result =
-        i::JSReceiver::CreateDataProperty(&it, value_obj, Just(i::kDontThrow));
-    has_pending_exception = result.IsNothing();
-    RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
-    return result;
-  } else {
+  if (self->IsJSObject()) {
     ENTER_V8_NO_SCRIPT(i_isolate, context, Object, CreateDataProperty,
                        Nothing<bool>(), i::HandleScope);
     Maybe<bool> result =
@@ -4600,6 +4592,14 @@ Maybe<bool> v8::Object::CreateDataProperty(v8::Local<v8::Context> context,
     RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
     return result;
   }
+  // JSProxy or WasmObject or other non-JSObject.
+  ENTER_V8(i_isolate, context, Object, CreateDataProperty, Nothing<bool>(),
+            i::HandleScope);
+  Maybe<bool> result =
+      i::JSReceiver::CreateDataProperty(&it, value_obj, Just(i::kDontThrow));
+  has_pending_exception = result.IsNothing();
+  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+  return result;
 }
 
 Maybe<bool> v8::Object::CreateDataProperty(v8::Local<v8::Context> context,
@@ -4610,15 +4610,7 @@ Maybe<bool> v8::Object::CreateDataProperty(v8::Local<v8::Context> context,
   i::Handle<i::Object> value_obj = Utils::OpenHandle(*value);
 
   i::LookupIterator it(i_isolate, self, index, self, i::LookupIterator::OWN);
-  if (self->IsJSProxy()) {
-    ENTER_V8(i_isolate, context, Object, CreateDataProperty, Nothing<bool>(),
-             i::HandleScope);
-    Maybe<bool> result =
-        i::JSReceiver::CreateDataProperty(&it, value_obj, Just(i::kDontThrow));
-    has_pending_exception = result.IsNothing();
-    RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
-    return result;
-  } else {
+  if (self->IsJSObject()) {
     ENTER_V8_NO_SCRIPT(i_isolate, context, Object, CreateDataProperty,
                        Nothing<bool>(), i::HandleScope);
     Maybe<bool> result =
@@ -4627,6 +4619,14 @@ Maybe<bool> v8::Object::CreateDataProperty(v8::Local<v8::Context> context,
     RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
     return result;
   }
+  // JSProxy or WasmObject or other non-JSObject.
+  ENTER_V8(i_isolate, context, Object, CreateDataProperty, Nothing<bool>(),
+            i::HandleScope);
+  Maybe<bool> result =
+      i::JSReceiver::CreateDataProperty(&it, value_obj, Just(i::kDontThrow));
+  has_pending_exception = result.IsNothing();
+  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+  return result;
 }
 
 struct v8::PropertyDescriptor::PrivateData {
@@ -4737,15 +4737,7 @@ Maybe<bool> v8::Object::DefineOwnProperty(v8::Local<v8::Context> context,
   desc.set_configurable(!(attributes & v8::DontDelete));
   desc.set_value(value_obj);
 
-  if (self->IsJSProxy()) {
-    ENTER_V8(i_isolate, context, Object, DefineOwnProperty, Nothing<bool>(),
-             i::HandleScope);
-    Maybe<bool> success = i::JSReceiver::DefineOwnProperty(
-        i_isolate, self, key_obj, &desc, Just(i::kDontThrow));
-    // Even though we said kDontThrow, there might be accessors that do throw.
-    RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
-    return success;
-  } else {
+  if (self->IsJSObject()) {
     // If it's not a JSProxy, i::JSReceiver::DefineOwnProperty should never run
     // a script.
     ENTER_V8_NO_SCRIPT(i_isolate, context, Object, DefineOwnProperty,
@@ -4755,6 +4747,14 @@ Maybe<bool> v8::Object::DefineOwnProperty(v8::Local<v8::Context> context,
     RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
     return success;
   }
+  // JSProxy or WasmObject or other non-JSObject.
+  ENTER_V8(i_isolate, context, Object, DefineOwnProperty, Nothing<bool>(),
+            i::HandleScope);
+  Maybe<bool> success = i::JSReceiver::DefineOwnProperty(
+      i_isolate, self, key_obj, &desc, Just(i::kDontThrow));
+  // Even though we said kDontThrow, there might be accessors that do throw.
+  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+  return success;
 }
 
 Maybe<bool> v8::Object::DefineProperty(v8::Local<v8::Context> context,
@@ -4781,6 +4781,15 @@ Maybe<bool> v8::Object::SetPrivate(Local<Context> context, Local<Private> key,
   auto self = Utils::OpenHandle(this);
   auto key_obj = Utils::OpenHandle(reinterpret_cast<Name*>(*key));
   auto value_obj = Utils::OpenHandle(*value);
+  if (self->IsJSObject()) {
+    auto js_object = i::Handle<i::JSObject>::cast(self);
+    i::LookupIterator it(i_isolate, js_object, key_obj, js_object);
+    has_pending_exception = i::JSObject::DefineOwnPropertyIgnoreAttributes(
+                                &it, value_obj, i::DONT_ENUM)
+                                .is_null();
+    RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+    return Just(true);
+  }
   if (self->IsJSProxy()) {
     i::PropertyDescriptor desc;
     desc.set_writable(true);
@@ -4791,13 +4800,8 @@ Maybe<bool> v8::Object::SetPrivate(Local<Context> context, Local<Private> key,
         i_isolate, i::Handle<i::JSProxy>::cast(self),
         i::Handle<i::Symbol>::cast(key_obj), &desc, Just(i::kDontThrow));
   }
-  auto js_object = i::Handle<i::JSObject>::cast(self);
-  i::LookupIterator it(i_isolate, js_object, key_obj, js_object);
-  has_pending_exception = i::JSObject::DefineOwnPropertyIgnoreAttributes(
-                              &it, value_obj, i::DONT_ENUM)
-                              .is_null();
-  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
-  return Just(true);
+  // Wasm object, or other kind of special object not supported here.
+  return Just(false);
 }
 
 MaybeLocal<Value> v8::Object::Get(Local<v8::Context> context,
@@ -5075,6 +5079,7 @@ Maybe<bool> v8::Object::Delete(Local<Context> context, Local<Value> key) {
   } else {
     // If it's not a JSProxy, i::Runtime::DeleteObjectProperty should never run
     // a script.
+    DCHECK(self->IsJSObject() || self->IsWasmObject());
     ENTER_V8_NO_SCRIPT(i_isolate, context, Object, Delete, Nothing<bool>(),
                        i::HandleScope);
     Maybe<bool> result = i::Runtime::DeleteObjectProperty(
@@ -5495,7 +5500,7 @@ bool v8::Object::IsApiWrapper() const {
 }
 
 bool v8::Object::IsUndetectable() const {
-  auto self = i::Handle<i::JSObject>::cast(Utils::OpenHandle(this));
+  auto self = Utils::OpenHandle(this);
   return self->IsUndetectable();
 }
 
@@ -6452,7 +6457,7 @@ void v8::Object::SetAlignedPointerInInternalField(int index, void* value) {
 void v8::Object::SetAlignedPointerInInternalFields(int argc, int indices[],
                                                    void* values[]) {
   i::Handle<i::JSReceiver> obj = Utils::OpenHandle(this);
-
+  if (!obj->IsJSObject()) return;
   i::DisallowGarbageCollection no_gc;
   const char* location = "v8::Object::SetAlignedPointerInInternalFields()";
   i::JSObject js_obj = i::JSObject::cast(*obj);
@@ -8635,8 +8640,7 @@ MaybeLocal<WasmModuleObject> WasmModuleObject::FromCompiledModule(
       i::wasm::GetWasmEngine()->ImportNativeModule(
           i_isolate, compiled_module.native_module_,
           base::VectorOf(compiled_module.source_url()));
-  return Local<WasmModuleObject>::Cast(
-      Utils::ToLocal(i::Handle<i::JSObject>::cast(module_object)));
+  return Utils::ToLocal(module_object);
 #else
   UNREACHABLE();
 #endif  // V8_ENABLE_WEBASSEMBLY
@@ -8651,7 +8655,7 @@ MaybeLocal<WasmModuleObject> WasmModuleObject::Compile(
   if (!i::wasm::IsWasmCodegenAllowed(i_isolate, i_isolate->native_context())) {
     return MaybeLocal<WasmModuleObject>();
   }
-  i::MaybeHandle<i::JSObject> maybe_compiled;
+  i::MaybeHandle<i::WasmModuleObject> maybe_compiled;
   {
     i::wasm::ErrorThrower thrower(i_isolate, "WasmModuleObject::Compile()");
     auto enabled_features = i::wasm::WasmFeatures::FromIsolate(i_isolate);
@@ -8664,10 +8668,72 @@ MaybeLocal<WasmModuleObject> WasmModuleObject::Compile(
     i_isolate->OptionalRescheduleException(false);
     return MaybeLocal<WasmModuleObject>();
   }
-  return Local<WasmModuleObject>::Cast(
-      Utils::ToLocal(maybe_compiled.ToHandleChecked()));
+  return Utils::ToLocal(maybe_compiled.ToHandleChecked());
 #else
   Utils::ApiCheck(false, "WasmModuleObject::Compile",
+                  "WebAssembly support is not enabled");
+  UNREACHABLE();
+#endif  // V8_ENABLE_WEBASSEMBLY
+}
+
+MaybeLocal<WasmModuleObject> WasmModuleObject::DeserializeOrCompile(
+    Isolate* v8_isolate, MemorySpan<const uint8_t> wire_bytes,
+    MemorySpan<const uint8_t> wasm_cache_data, bool& cacheRejected) {
+#if V8_ENABLE_WEBASSEMBLY
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+  i::MaybeHandle<i::WasmModuleObject> maybe_mdoule =
+      i::wasm::DeserializeNativeModule(
+          i_isolate,
+          base::Vector<const uint8_t>(wasm_cache_data.data(),
+                                      wasm_cache_data.size()),
+          base::Vector<const uint8_t>(wire_bytes.data(), wire_bytes.size()),
+          {});
+  cacheRejected = maybe_mdoule.is_null();
+  if (!cacheRejected) {
+    // Deserialize successfully
+    return Local<WasmModuleObject>::Cast(Utils::ToLocal(
+        i::Handle<i::JSObject>::cast(maybe_mdoule.ToHandleChecked())));
+  }
+  return Compile(v8_isolate, wire_bytes);
+#else
+  Utils::ApiCheck(false, "WasmModuleObject::DeserializeOrCompile",
+                  "WebAssembly support is not enabled");
+  UNREACHABLE();
+#endif  // V8_ENABLE_WEBASSEMBLY
+}
+
+bool WasmModuleObject::CompileFunction(Isolate* v8_isolate,
+                                       uint32_t function_index,
+                                       WasmExecutionTier tier) {
+#if V8_ENABLE_WEBASSEMBLY
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+  auto module = i::Handle<i::WasmModuleObject>::cast(Utils::OpenHandle(this));
+  auto* native_module = module->native_module();
+  uint32_t num_imported_functions = native_module->num_imported_functions();
+  uint32_t num_functions = native_module->num_functions();
+  // Check function index out of range.
+  if (function_index < num_imported_functions || function_index >= num_functions) {
+    return false;
+  }
+
+  // Update the static_assert once i::wasm::ExecutionTier changed.
+  static_assert(static_cast<uint8_t>(v8::WasmExecutionTier::kNone) ==
+                static_cast<uint8_t>(i::wasm::ExecutionTier::kNone));
+  static_assert(static_cast<uint8_t>(v8::WasmExecutionTier::kLiftoff) ==
+                static_cast<uint8_t>(i::wasm::ExecutionTier::kLiftoff));
+  static_assert(static_cast<uint8_t>(v8::WasmExecutionTier::kTurbofan) ==
+                static_cast<uint8_t>(i::wasm::ExecutionTier::kTurbofan));
+  auto executionTier =
+      static_cast<i::wasm::ExecutionTier>(static_cast<uint8_t>(tier));
+  i::wasm::GetWasmEngine()->CompileFunction(i_isolate->counters(),
+                                            module->native_module(),
+                                            function_index, executionTier);
+  if (native_module->compilation_state()->failed()) {
+    return false;
+  }
+  return true;
+#else
+  Utils::ApiCheck(false, "WasmModuleObject::CompileFunction",
                   "WebAssembly support is not enabled");
   UNREACHABLE();
 #endif  // V8_ENABLE_WEBASSEMBLY
@@ -10458,7 +10524,8 @@ bool MicrotasksScope::IsRunningMicrotasks(Isolate* v8_isolate) {
   return microtask_queue->IsRunningMicrotasks();
 }
 
-String::Utf8Value::Utf8Value(v8::Isolate* v8_isolate, v8::Local<v8::Value> obj)
+String::Utf8Value::Utf8Value(v8::Isolate* v8_isolate, v8::Local<v8::Value> obj,
+                             WriteOptions options)
     : str_(nullptr), length_(0) {
   if (obj.IsEmpty()) return;
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
@@ -10470,7 +10537,7 @@ String::Utf8Value::Utf8Value(v8::Isolate* v8_isolate, v8::Local<v8::Value> obj)
   if (!obj->ToString(context).ToLocal(&str)) return;
   length_ = str->Utf8Length(v8_isolate);
   str_ = i::NewArray<char>(length_ + 1);
-  str->WriteUtf8(v8_isolate, str_);
+  str->WriteUtf8(v8_isolate, str_, -1, nullptr, options);
 }
 
 String::Utf8Value::~Utf8Value() { i::DeleteArray(str_); }

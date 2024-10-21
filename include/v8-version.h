@@ -14,7 +14,7 @@
 #define V8_PATCH_LEVEL 25
 
 #ifdef OHOS_JS_ENGINE
-#define V8_INNER_VERSION 6
+#define V8_INNER_VERSION 3
 #endif
 
 // Use 1 for candidates and 0 otherwise.

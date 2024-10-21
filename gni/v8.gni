@@ -33,7 +33,7 @@ declare_args() {
   # Use external files for startup data blobs:
   # the JS builtins sources and the start snapshot.
   v8_use_external_startup_data = ""
-  
+
   # v8_use_external_startup_data shared version.
   v8_use_external_startup_data_shared = false
 

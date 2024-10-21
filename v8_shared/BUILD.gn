@@ -1741,7 +1741,7 @@ v8_header_set_shared("torque_runtime_support_shared") {
 
   sources = [ "../src/torque/runtime-support.h" ]
 
-  configs = [ ":v8_features_shared", ":internal_config_shared" ]
+  configs = [ ":internal_config_shared", ":v8_features_shared" ]
 }
 
 torque_files = [
@@ -2803,7 +2803,7 @@ v8_source_set_shared("v8_snapshot_shared") {
 }
 
 action("v8_dump_build_config") {
-  script = "tools/testrunner/utils/dump_build_config.py"
+  script = "../tools/testrunner/utils/dump_build_config.py"
   outputs = [ "$root_out_dir/../v8_build_config.json" ]
   is_DEBUG_defined = v8_enable_debugging_features || dcheck_always_on
   is_full_debug = v8_enable_debugging_features && !v8_optimized_debug
@@ -5902,7 +5902,7 @@ v8_source_set_shared("v8_base_without_compiler_shared") {
   ]
 
   if (v8_enable_i18n_support_shared) {
-    deps += [ "//v8:run_gen-regexp-special-case" ]
+    deps += [ ":run_gen-regexp-special-case_shared" ]
     sources += [ "$target_gen_dir/src/regexp/special-case.cc" ]
     if (is_win) {
       deps += [ "$v8_icu_path:icudata" ]

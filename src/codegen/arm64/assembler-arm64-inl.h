@@ -535,7 +535,7 @@ void Assembler::set_embedded_object_index_referenced_from(
     Address target = target_pointer_address_at(pc);
 #ifdef V8_ENABLE_JIT_CODE_SIGN
     TryPatchInstruction(jit_code_signer_, reinterpret_cast<void *>(target),
-      static_cast<uint32_t>(data));
+    static_cast<uint32_t>(data));
 #endif
     WriteUnalignedValue<uint32_t>(target,
                                   static_cast<uint32_t>(data));

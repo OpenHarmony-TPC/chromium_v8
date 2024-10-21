@@ -40,7 +40,6 @@ v8_source_set_shared("crdtp_shared") {
   deps = [ ":crdtp_platform_shared" ]
 }
 
-# A small adapter library which only :crdtp_shared may depend on.
 v8_source_set_shared("crdtp_platform_shared") {
   visibility = [ ":crdtp_shared" ]
   sources = [

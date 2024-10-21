@@ -70,9 +70,9 @@ int32_t JitCodeSignerHybrid::PatchInstruction(int offset, Instr insn)
 {
 #ifdef JIT_CODE_SIGN_DEBUGGABLE
     if (std::find(skipped_offset_.begin(), skipped_offset_.end(), offset)
-       == skipped_offset_.end()) {
-       LOG_ERROR("Update no skipped instruction failed at offset" \
-           "= %x", offset);
+        == skipped_offset_.end()) {
+        LOG_ERROR("Update no skipped instruction failed at offset" \
+            "= %x", offset);
     }
 #endif
     int cur_index = 0;
@@ -102,7 +102,7 @@ int32_t JitCodeSignerHybrid::ValidateSubCode(Instr *jit_memory, PACSignCtx &veri
         uint32_t signature = verify_ctx.Update(*insn_ptr);
         if (signature != sign_table_[index]) {
 #ifdef JIT_CODE_SIGN_DEBUGGABLE
-            LOG_ERROR("Validate insn (%8x) failed at offset = %x, "\
+            LOG_ERROR("Validate insn (%8x) failed at offset = %x, " \
                 "signature(%x) != wanted(%{pucblic}x)",
                 *(insn_ptr), index * INSTRUCTION_SIZE, signature, sign_table_[index]);
 #endif
@@ -156,7 +156,7 @@ int32_t JitCodeSignerHybrid::ValidateCodeCopy(Instr *jit_memory,
 
     if (ValidateSubCode(jit_memory, verify_ctx, tmp_buffer_,
         offset, size - offset) != CS_SUCCESS) {
-            return CS_ERR_VALIDATE_CODE;
+        return CS_ERR_VALIDATE_CODE;
     }
     return CS_SUCCESS;
 }

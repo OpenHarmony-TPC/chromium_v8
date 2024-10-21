@@ -761,7 +761,7 @@ void WebAssemblyModule(const v8::FunctionCallbackInfo<v8::Value>& info) {
   }
 
   v8::ReturnValue<v8::Value> return_value = info.GetReturnValue();
-  return_value.Set(Utils::ToLocal(i::Handle<i::JSObject>::cast(module_obj)));
+  return_value.Set(Utils::ToLocal(module_obj));
 }
 
 // WebAssembly.Module.imports(module) -> Array<Import>

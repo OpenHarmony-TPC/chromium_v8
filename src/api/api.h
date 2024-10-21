@@ -132,7 +132,8 @@ class RegisteredExtension {
   V(ToLocalPrimitive, Object, Primitive)               \
   V(FixedArrayToLocal, FixedArray, FixedArray)         \
   V(PrimitiveArrayToLocal, FixedArray, PrimitiveArray) \
-  V(ToLocal, ScriptOrModule, ScriptOrModule)
+  V(ToLocal, ScriptOrModule, ScriptOrModule)             \
+  IF_WASM(V, ToLocal, WasmModuleObject, WasmModuleObject)
 
 #define OPEN_HANDLE_LIST(V)                    \
   V(Template, TemplateInfo)                    \
