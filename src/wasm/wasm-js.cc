@@ -188,8 +188,8 @@ GET_FIRST_ARGUMENT_AS(Tag)
 #undef GET_FIRST_ARGUMENT_AS
 
 i::wasm::ModuleWireBytes GetFirstArgumentAsBytes(
-    const v8::FunctionCallbackInfo<v8::Value>& info, ErrorThrower* thrower,
-    bool* is_shared) {
+    const v8::FunctionCallbackInfo<v8::Value>& info, size_t max_length,
+    ErrorThrower* thrower, bool* is_shared) {
   DCHECK(i::ValidateCallbackInfo(info));
   const uint8_t* start = nullptr;
   size_t length = 0;
@@ -220,7 +220,6 @@ i::wasm::ModuleWireBytes GetFirstArgumentAsBytes(
   if (length == 0) {
     thrower->CompileError("BufferSource argument is empty");
   }
-  size_t max_length = i::wasm::max_module_size();
   if (length > max_length) {
     // The spec requires a CompileError for implementation-defined limits, see
     // https://webassembly.github.io/spec/js-api/index.html#limits.
@@ -533,7 +532,8 @@ void WebAssemblyCompile(const v8::FunctionCallbackInfo<v8::Value>& info) {
       new AsyncCompilationResolver(isolate, context, promise_resolver));
 
   bool is_shared = false;
-  auto bytes = GetFirstArgumentAsBytes(info, &thrower, &is_shared);
+  auto bytes = GetFirstArgumentAsBytes(info, i::wasm::max_module_size(),
+                                       &thrower, &is_shared);
   if (thrower.error()) {
     resolver->OnCompilationFailed(thrower.Reify());
     return;
@@ -558,8 +558,11 @@ void WasmStreamingCallbackForTesting(
       v8::WasmStreaming::Unpack(info.GetIsolate(), info.Data());
 
   bool is_shared = false;
+  // We don't check the buffer length up front, to allow d8 to test that the
+  // streaming decoder implementation handles overly large inputs correctly.
+  size_t unlimited = std::numeric_limits<size_t>::max();
   i::wasm::ModuleWireBytes bytes =
-      GetFirstArgumentAsBytes(info, &thrower, &is_shared);
+      GetFirstArgumentAsBytes(info, unlimited, &thrower, &is_shared);
   if (thrower.error()) {
     streaming->Abort(Utils::ToLocal(thrower.Reify()));
     return;
@@ -652,7 +655,8 @@ void WebAssemblyValidate(const v8::FunctionCallbackInfo<v8::Value>& info) {
   ScheduledErrorThrower thrower(i_isolate, "WebAssembly.validate()");
 
   bool is_shared = false;
-  auto bytes = GetFirstArgumentAsBytes(info, &thrower, &is_shared);
+  auto bytes = GetFirstArgumentAsBytes(info, i::wasm::max_module_size(),
+                                       &thrower, &is_shared);
 
   v8::ReturnValue<v8::Value> return_value = info.GetReturnValue();
 
@@ -724,7 +728,8 @@ void WebAssemblyModule(const v8::FunctionCallbackInfo<v8::Value>& info) {
   }
 
   bool is_shared = false;
-  auto bytes = GetFirstArgumentAsBytes(info, &thrower, &is_shared);
+  auto bytes = GetFirstArgumentAsBytes(info, i::wasm::max_module_size(),
+                                       &thrower, &is_shared);
 
   if (thrower.error()) {
     return;
@@ -1022,7 +1027,8 @@ void WebAssemblyInstantiate(const v8::FunctionCallbackInfo<v8::Value>& info) {
   }
 
   bool is_shared = false;
-  auto bytes = GetFirstArgumentAsBytes(info, &thrower, &is_shared);
+  auto bytes = GetFirstArgumentAsBytes(info, i::wasm::max_module_size(),
+                                       &thrower, &is_shared);
   if (thrower.error()) {
     resolver->OnInstantiationFailed(thrower.Reify());
     return;
