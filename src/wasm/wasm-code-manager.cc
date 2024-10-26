@@ -48,6 +48,10 @@
 #include "src/diagnostics/unwinding-info-win64.h"
 #endif  // V8_OS_WIN64
 
+#ifdef V8_ENABLE_JIT_CODE_SIGN
+#include "third_party/bounds_checking_function/include/securec.h"
+#endif
+
 #define TRACE_HEAP(...)                                       \
   do {                                                        \
     if (v8_flags.trace_wasm_native_heap) PrintF(__VA_ARGS__); \
@@ -1102,8 +1106,10 @@ std::unique_ptr<WasmCode> NativeModule::AddCodeWithCodeSpace(
     CHECK(desc.jit_code_signer->ValidateCodeCopy(reinterpret_cast<Instr *>(
       dst_code_bytes.begin()), desc.buffer, desc.instr_size) == 0);
   } else {
-    memcpy(dst_code_bytes.begin(), desc.buffer,
-        static_cast<size_t>(desc.instr_size));
+    if (memcpy_s(dst_code_bytes.begin(), dst_code_bytes.size(), desc.buffer,
+        static_cast<size_t>(desc.instr_size)) != EOK) {
+      return nullptr;
+    }
   }
 #else
   memcpy(dst_code_bytes.begin(), desc.buffer,
