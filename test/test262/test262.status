@@ -1105,9 +1105,6 @@
   'built-ins/Date/prototype/setUTCMonth/arg-coercion-order': [FAIL],
   'built-ins/Date/prototype/setUTCSeconds/arg-coercion-order': [FAIL],
 
-  # https://bugs.chromium.org/p/v8/issues/detail?id=12681
-  'built-ins/Array/prototype/push/set-length-zero-array-length-is-non-writable': [FAIL],
-
   # https://bugs.chromium.org/p/v8/issues/detail?id=13791
   'intl402/NumberFormat/constructor-roundingIncrement': [FAIL],
 
