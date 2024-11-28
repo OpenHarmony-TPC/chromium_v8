@@ -531,6 +531,14 @@ class V8_EXPORT FunctionTemplate : public Template {
   void Inherit(Local<FunctionTemplate> parent);
 
   /**
+   * Causes the function template to inherit from a parent function.
+   * This means the function's prototype.__proto__ is set to the parent
+   * function's prototype. If the parent function is not an ApiFunction,
+   * return false.
+   **/
+   bool Inherit(Local<Function> parent);
+
+  /**
    * A PrototypeTemplate is the template used to create the prototype object
    * of the function created by this template.
    */
