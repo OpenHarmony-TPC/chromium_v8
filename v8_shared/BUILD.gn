@@ -1140,10 +1140,7 @@ config("v8_features_shared") {
   }
 }
 
-config("toolchain") {
-  # Only targets in this file and its subdirs can depend on this.
-  visibility = [ "./*" ]
-
+config("toolchain_shared") {
   defines = []
   cflags = []
   ldflags = []
@@ -1350,8 +1347,6 @@ config("toolchain") {
     defines += [ "ENABLE_VERIFY_CSA" ]
   }
 
-  v8_enable_runtime_call_stats = true
-
   if (v8_enable_runtime_call_stats) {
     defines += [ "V8_RUNTIME_CALL_STATS" ]
   }
@@ -1396,6 +1391,18 @@ config("toolchain") {
       # have the expected reasonable behaviour.
       "-Wno-invalid-offsetof",
     ]
+  }
+
+  if (is_ohos) {
+    cflags += [
+      "-flto",
+      "-fomit-frame-pointer"
+    ]
+    ldflags += [ "-flto" ]
+    import("//ohos_sdk/ohos_sdk.gni")
+    ldflags += [ "../../ohos_sdk/native/$ohos_sdk_version/sysroot/usr/lib/aarch64-linux-ohos/libhilog_ndk.z.so" ]
+    include_dirs = [ "../../ohos_sdk/native/$ohos_sdk_version/sysroot/usr/include/hilog" ]
+    defines += [ "USING_OHOS" ]
   }
 
   if (is_win) {
