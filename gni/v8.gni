@@ -216,7 +216,7 @@ v8_add_configs = [
 ]
 
 v8_add_configs_shared = [
-  v8_path_prefix + ":toolchain",
+  v8_path_prefix + "v8_shared:toolchain_shared",
 ]
 
 if (is_debug && !v8_optimized_debug) {

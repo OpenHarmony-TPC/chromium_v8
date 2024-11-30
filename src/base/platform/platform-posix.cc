@@ -42,6 +42,11 @@
 #include "src/base/platform/time.h"
 #include "src/base/utils/random-number-generator.h"
 
+#ifdef USING_OHOS
+#include "src/utils/hilog.h"
+#define HILOG_MAXSIZE 4096
+#endif
+
 #ifdef V8_FAST_TLS_SUPPORTED
 #include <atomic>
 #endif
@@ -987,6 +992,10 @@ void OS::PrintError(const char* format, ...) {
 void OS::VPrintError(const char* format, va_list args) {
 #if defined(ANDROID) && !defined(V8_ANDROID_LOG_STDOUT)
   __android_log_vprint(ANDROID_LOG_ERROR, LOG_TAG, format, args);
+#elif defined(USING_OHOS)
+  char buffer[HILOG_MAXSIZE];
+  (void)VSNPrintF(buffer, HILOG_MAXSIZE, format, args);
+  HilogPrint(ERROR, "%{public}s", buffer);
 #else
   vfprintf(stderr, format, args);
 #endif
