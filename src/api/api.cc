@@ -1510,6 +1510,19 @@ void FunctionTemplate::Inherit(v8::Local<FunctionTemplate> value) {
                                              Utils::OpenHandle(*value));
 }
 
+bool FunctionTemplate::Inherit(v8::Local<Function> parentFunc) {
+  i::Handle<i::JSFunction> i_function =
+    i::Handle<i::JSFunction>::cast(v8::Utils::OpenHandle(*parentFunc));
+  if (!i_function->shared().IsApiFunction()) {
+    return false;
+  }
+  auto info = Utils::OpenHandle(this);
+  i::Isolate* i_isolate = info->GetIsolate();
+  i::Handle<i::FunctionTemplateInfo> funcInfo(i_function->shared().get_api_func_data(), i_isolate);
+  Inherit(v8::Utils::ToLocal(funcInfo));
+  return true;
+}
+
 Local<FunctionTemplate> FunctionTemplate::New(
     Isolate* v8_isolate, FunctionCallback callback, v8::Local<Value> data,
     v8::Local<Signature> signature, int length, ConstructorBehavior behavior,
