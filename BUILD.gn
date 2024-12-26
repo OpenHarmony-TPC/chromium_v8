@@ -1409,14 +1409,6 @@ config("toolchain") {
     defines += [ "V8_RUNTIME_CALL_STATS" ]
   }
 
-  if (is_ohos) {
-    cflags += [
-      "-flto",
-      "-fomit-frame-pointer"
-    ]
-    ldflags += [ "-flto" ]
-  }
-
   if (v8_no_inline) {
     if (is_win) {
       cflags += [ "/Ob0" ]
