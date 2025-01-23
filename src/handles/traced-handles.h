@@ -32,7 +32,7 @@ class V8_EXPORT_PRIVATE TracedHandles final {
   static Object MarkConservatively(Address* inner_location,
                                    Address* traced_node_block_base,
                                    MarkMode mark_mode);
-
+  static bool IsZap(Address* location);
   explicit TracedHandles(Isolate*);
   ~TracedHandles();
 

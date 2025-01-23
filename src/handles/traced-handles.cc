@@ -47,7 +47,11 @@ class TracedNode final {
 
   bool is_root() const { return IsRoot::decode(flags_); }
   void set_root(bool v) { flags_ = IsRoot::update(flags_, v); }
-
+#ifdef V8_HOST_ARCH_64_BIT
+   bool is_in_use() const {
+     return IsInUse::decode(flags_);
+   }
+#else
   template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   bool is_in_use() const {
     if constexpr (access_mode == AccessMode::NON_ATOMIC) {
@@ -58,6 +62,8 @@ class TracedNode final {
             std::memory_order_relaxed);
     return IsInUse::decode(flags);
   }
+  #endif
+
   void set_is_in_use(bool v) { flags_ = IsInUse::update(flags_, v); }
 
   bool is_in_young_list() const { return IsInYoungList::decode(flags_); }
@@ -70,7 +76,19 @@ class TracedNode final {
     next_free_index_ = next_free_index;
   }
   void set_class_id(uint16_t class_id) { class_id_ = class_id; }
+#ifdef V8_HOST_ARCH_64_BIT
+  void set_markbit() {
+    is_marked_.store(true, std::memory_order_relaxed);
+  }
 
+  bool markbit() const {
+    return is_marked_.load(std::memory_order_relaxed);
+  }
+
+  bool IsMetadataCleared() const { return flags_ == 0 && !markbit(); }
+
+  void clear_markbit() { is_marked_.store(false, std::memory_order_relaxed); }
+#else
   template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   void set_markbit() {
     if constexpr (access_mode == AccessMode::NON_ATOMIC) {
@@ -96,6 +114,7 @@ class TracedNode final {
   }
 
   void clear_markbit() { flags_ = Markbit::update(flags_, false); }
+#endif
 
   bool has_old_host() const { return HasOldHost::decode(flags_); }
   void set_has_old_host(bool v) { flags_ = HasOldHost::update(flags_, v); }
@@ -122,11 +141,14 @@ class TracedNode final {
   using IsInUse = base::BitField8<bool, 0, 1>;
   using IsInYoungList = IsInUse::Next<bool, 1>;
   using IsRoot = IsInYoungList::Next<bool, 1>;
+#ifdef V8_HOST_ARCH_64_BIT
+  using HasOldHost = IsRoot::Next<bool, 1>;
+#else
   // The markbit is the exception as it can be set from the main and marker
   // threads at the same time.
   using Markbit = IsRoot::Next<bool, 1>;
   using HasOldHost = Markbit::Next<bool, 1>;
-
+#endif
   Address object_ = kNullAddress;
   union {
     // When a node is in use, the user can specify a class id.
@@ -136,7 +158,14 @@ class TracedNode final {
   };
   IndexType index_;
   uint8_t flags_ = 0;
+#ifdef V8_HOST_ARCH_64_BIT
+  std::atomic<bool> is_marked_ = false;
+#endif
 };
+
+#ifdef V8_HOST_ARCH_64_BIT
+  static_assert(sizeof(TracedNode) <= 2 * kSystemPointerSize);
+#endif
 
 TracedNode::TracedNode(IndexType index, IndexType next_free_index)
     : next_free_index_(next_free_index), index_(index) {
@@ -185,7 +214,13 @@ void TracedNode::Release() {
   DCHECK(!is_root());
   DCHECK(!markbit());
   DCHECK(!has_old_host());
+#ifdef V8_HOST_ARCH_64_BIT
+  clear_markbit();
   set_raw_object(kGlobalHandleZapValue);
+  DCHECK(IsMetadataCleared());
+#else
+  set_raw_object(kGlobalHandleZapValue);
+#endif
 }
 
 template <typename T, typename NodeAccessor>
@@ -745,7 +780,11 @@ void TracedHandlesImpl::Move(TracedNode& from_node, Address** from,
   DCHECK_EQ(*from, *to);
   if (is_marking_) {
     // Write barrier needs to cover node as well as object.
+#ifdef V8_HOST_ARCH_64_BIT
+    to_node->set_markbit();
+#else
     to_node->set_markbit<AccessMode::ATOMIC>();
+#endif
     WriteBarrier::MarkingFromGlobalHandle(to_node->object());
   } else if (auto* cpp_heap = GetCppHeapIfUnifiedYoungGC(isolate_)) {
     const bool object_is_young_and_not_yet_recorded =
@@ -1129,7 +1168,11 @@ Object MarkObject(Object obj, TracedNode& node,
   if (mark_mode == TracedHandles::MarkMode::kOnlyYoung &&
       !node.is_in_young_list())
     return Smi::zero();
+#ifdef V8_HOST_ARCH_64_BIT
+  node.set_markbit();
+#else
   node.set_markbit<AccessMode::ATOMIC>();
+#endif
   // Being in the young list, the node may still point to an old object, in
   // which case we want to keep the node marked, but not follow the reference.
   if (mark_mode == TracedHandles::MarkMode::kOnlyYoung &&
@@ -1147,7 +1190,12 @@ Object TracedHandles::Mark(Address* location, MarkMode mark_mode) {
       Object(reinterpret_cast<std::atomic<Address>*>(location)->load(
           std::memory_order_acquire));
   auto* node = TracedNode::FromLocation(location);
+
+#ifdef V8_HOST_ARCH_64_BIT
+  DCHECK(node->is_in_use());
+#else
   DCHECK(node->is_in_use<AccessMode::ATOMIC>());
+#endif
   return MarkObject(object, *node, mark_mode);
 }
 
@@ -1163,10 +1211,18 @@ Object TracedHandles::MarkConservatively(Address* inner_location,
       reinterpret_cast<TracedNode*>(traced_node_block_base)[index];
   // `MarkConservatively()` runs concurrently with marking code. Reading
   // state concurrently to setting the markbit is safe.
+#ifdef V8_HOST_ARCH_64_BIT
+  if (!node.is_in_use()) return Smi::zero();
+#else
   if (!node.is_in_use<AccessMode::ATOMIC>()) return Smi::zero();
+#endif
   return MarkObject(node.object(), node, mark_mode);
 }
 
 bool TracedHandles::HasYoung() const { return impl_->HasYoung(); }
 
+bool TracedHandles::IsZap(Address* location) {
+  Address obj = TracedNode::FromLocation(location)->raw_object();
+  return obj == kGlobalHandleZapValue;
+}
 }  // namespace v8::internal
