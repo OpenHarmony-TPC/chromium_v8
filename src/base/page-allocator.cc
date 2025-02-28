@@ -44,7 +44,8 @@ void* PageAllocator::GetRandomMmapAddr() {
 
 void* PageAllocator::AllocatePages(void* hint, size_t size, size_t alignment,
                                    PageAllocator::Permission access) {
-#if !V8_HAS_PTHREAD_JIT_WRITE_PROTECT && !V8_HAS_BECORE_JIT_WRITE_PROTECT && !OHOS_JS_ENGINE
+#if !V8_HAS_PTHREAD_JIT_WRITE_PROTECT && !V8_HAS_BECORE_JIT_WRITE_PROTECT && \
+    !V8_HAS_JIT_FORT_PROTECT
   // kNoAccessWillJitLater is only used on Apple Silicon. Map it to regular
   // kNoAccess on other platforms, so code doesn't have to handle both enum
   // values.

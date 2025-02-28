@@ -45,8 +45,8 @@ class MemoryProtectionTest : public TestWithNativeContext {
   WasmCode* code() const { return code_; }
 
   bool code_is_protected() {
-    return V8_HAS_PTHREAD_JIT_WRITE_PROTECT ||
-           V8_HAS_BECORE_JIT_WRITE_PROTECT || uses_pku();
+    return V8_HAS_PTHREAD_JIT_WRITE_PROTECT ||  V8_HAS_BECORE_JIT_WRITE_PROTECT ||
+           V8_HAS_JIT_FORT_PROTECT || uses_pku();
   }
 
   void WriteToCode() { code_->instructions()[0] = 0; }
@@ -67,7 +67,8 @@ class MemoryProtectionTest : public TestWithNativeContext {
 
   bool uses_pku() {
     // M1 always uses MAP_JIT.
-    if (V8_HAS_PTHREAD_JIT_WRITE_PROTECT || V8_HAS_BECORE_JIT_WRITE_PROTECT) {
+    if (V8_HAS_PTHREAD_JIT_WRITE_PROTECT || V8_HAS_BECORE_JIT_WRITE_PROTECT ||
+        V8_HAS_JIT_FORT_PROTECT) {
       return false;
     }
     return WasmCodeManager::HasMemoryProtectionKeySupport();
@@ -245,7 +246,8 @@ TEST_P(ParameterizedMemoryProtectionTestWithSignalHandling, TestSignalHandler) {
   // handler.
   bool expect_crash = write_in_signal_handler && code_is_protected() &&
                       ((!V8_HAS_PTHREAD_JIT_WRITE_PROTECT &&
-                        !V8_HAS_BECORE_JIT_WRITE_PROTECT) ||
+                        !V8_HAS_BECORE_JIT_WRITE_PROTECT &&
+                        !V8_HAS_JIT_FORT_PROTECT) ||
                        !open_write_scope);
   if (expect_crash) {
     // Avoid {ASSERT_DEATH_IF_SUPPORTED}, because it only accepts a regex as

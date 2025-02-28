@@ -302,7 +302,7 @@ const size_t kShortBuiltinCallsOldSpaceSizeThreshold = size_t{2} * GB;
 //    deleted while the cage is still alive then attempt to configure
 //    permissions of pages that were previously set to RWX will fail.
 //
-#if V8_HAS_PTHREAD_JIT_WRITE_PROTECT && \
+#if (V8_HAS_PTHREAD_JIT_WRITE_PROTECT || V8_HAS_JIT_FORT_PROTECT) && \
     !(defined(V8_COMPRESS_POINTERS) && !defined(V8_EXTERNAL_CODE_SPACE))
 #define V8_HEAP_USE_PTHREAD_JIT_WRITE_PROTECT true
 #else
