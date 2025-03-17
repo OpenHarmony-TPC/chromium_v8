@@ -26,17 +26,19 @@ class PersistentValueMap;
 class Value;
 
 namespace api_internal {
-V8_EXPORT internal::Address* Eternalize(v8::Isolate* isolate, Value* handle);
+V8_EXPORT JSVM_EXPORT internal::Address* Eternalize(v8::Isolate* isolate,
+                                                    Value* handle);
 V8_EXPORT internal::Address* CopyGlobalReference(internal::Address* from);
-V8_EXPORT void DisposeGlobal(internal::Address* global_handle);
-V8_EXPORT void MakeWeak(internal::Address** location_addr);
-V8_EXPORT void* ClearWeak(internal::Address* location);
-V8_EXPORT void AnnotateStrongRetainer(internal::Address* location,
-                                      const char* label);
-V8_EXPORT internal::Address* GlobalizeReference(internal::Isolate* isolate,
-                                                internal::Address value);
-V8_EXPORT void MoveGlobalReference(internal::Address** from,
-                                   internal::Address** to);
+V8_EXPORT JSVM_EXPORT void DisposeGlobal(internal::Address* global_handle);
+V8_EXPORT JSVM_EXPORT void MakeWeak(internal::Address** location_addr);
+V8_EXPORT JSVM_EXPORT void* ClearWeak(internal::Address* location);
+V8_EXPORT JSVM_EXPORT void AnnotateStrongRetainer(internal::Address* location,
+                                                  const char* label);
+V8_EXPORT JSVM_EXPORT internal::Address* GlobalizeReference(
+    internal::Isolate* isolate,
+    internal::Address value);
+V8_EXPORT JSVM_EXPORT void MoveGlobalReference(internal::Address** from,
+                                               internal::Address** to);
 }  // namespace api_internal
 
 /**
@@ -69,9 +71,11 @@ class Eternal : public IndirectHandleBase {
 };
 
 namespace api_internal {
-V8_EXPORT void MakeWeak(internal::Address* location, void* data,
-                        WeakCallbackInfo<void>::Callback weak_callback,
-                        WeakCallbackType type);
+V8_EXPORT JSVM_EXPORT void MakeWeak(
+    internal::Address* location,
+    void* data,
+    WeakCallbackInfo<void>::Callback weak_callback,
+    WeakCallbackType type);
 }  // namespace api_internal
 
 /**

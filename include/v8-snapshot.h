@@ -13,7 +13,7 @@ namespace v8 {
 
 class Object;
 
-class V8_EXPORT StartupData {
+class V8_EXPORT JSVM_EXPORT StartupData {
  public:
   /**
    * Whether the data created can be rehashed and and the hash seed can be
@@ -77,7 +77,7 @@ using DeserializeEmbedderFieldsCallback = DeserializeInternalFieldsCallback;
  * will also destroy the Isolate. Experimental language features, including
  * those available by default, are not available while creating a snapshot.
  */
-class V8_EXPORT SnapshotCreator {
+class V8_EXPORT JSVM_EXPORT SnapshotCreator {
  public:
   enum class FunctionCodeHandling { kClear, kKeep };
 

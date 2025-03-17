@@ -20,7 +20,7 @@ class Isolate;
 /**
  * An instance of the built-in array constructor (ECMA-262, 15.4.2).
  */
-class V8_EXPORT Array : public Object {
+class V8_EXPORT JSVM_EXPORT Array : public Object {
  public:
   uint32_t Length() const;
 
@@ -34,7 +34,8 @@ class V8_EXPORT Array : public Object {
    * Creates a JavaScript array out of a Local<Value> array in C++
    * with a known length.
    */
-  static Local<Array> New(Isolate* isolate, Local<Value>* elements,
+  static Local<Array> New(Isolate* isolate,
+                          Local<Value>* elements,
                           size_t length);
   V8_INLINE static Array* Cast(Value* value) {
 #ifdef V8_ENABLE_CHECKS
@@ -51,7 +52,7 @@ class V8_EXPORT Array : public Object {
 /**
  * An instance of the built-in Map constructor (ECMA-262, 6th Edition, 23.1.1).
  */
-class V8_EXPORT Map : public Object {
+class V8_EXPORT JSVM_EXPORT Map : public Object {
  public:
   size_t Size() const;
   void Clear();
@@ -91,7 +92,7 @@ class V8_EXPORT Map : public Object {
 /**
  * An instance of the built-in Set constructor (ECMA-262, 6th Edition, 23.2.1).
  */
-class V8_EXPORT Set : public Object {
+class V8_EXPORT JSVM_EXPORT Set : public Object {
  public:
   size_t Size() const;
   void Clear();

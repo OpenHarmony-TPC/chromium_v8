@@ -17,7 +17,7 @@ class SharedArrayBuffer;
  * A base class for an instance of TypedArray series of constructors
  * (ES6 draft 15.13.6).
  */
-class V8_EXPORT TypedArray : public ArrayBufferView {
+class V8_EXPORT JSVM_EXPORT TypedArray : public ArrayBufferView {
  public:
   /*
    * The largest typed array size that can be constructed using New.
@@ -48,7 +48,7 @@ class V8_EXPORT TypedArray : public ArrayBufferView {
 /**
  * An instance of Uint8Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Uint8Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Uint8Array : public TypedArray {
  public:
   static Local<Uint8Array> New(Local<ArrayBuffer> array_buffer,
                                size_t byte_offset, size_t length);
@@ -69,7 +69,7 @@ class V8_EXPORT Uint8Array : public TypedArray {
 /**
  * An instance of Uint8ClampedArray constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Uint8ClampedArray : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Uint8ClampedArray : public TypedArray {
  public:
   static Local<Uint8ClampedArray> New(Local<ArrayBuffer> array_buffer,
                                       size_t byte_offset, size_t length);
@@ -91,7 +91,7 @@ class V8_EXPORT Uint8ClampedArray : public TypedArray {
 /**
  * An instance of Int8Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Int8Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Int8Array : public TypedArray {
  public:
   static Local<Int8Array> New(Local<ArrayBuffer> array_buffer,
                               size_t byte_offset, size_t length);
@@ -112,7 +112,7 @@ class V8_EXPORT Int8Array : public TypedArray {
 /**
  * An instance of Uint16Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Uint16Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Uint16Array : public TypedArray {
  public:
   static Local<Uint16Array> New(Local<ArrayBuffer> array_buffer,
                                 size_t byte_offset, size_t length);
@@ -133,7 +133,7 @@ class V8_EXPORT Uint16Array : public TypedArray {
 /**
  * An instance of Int16Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Int16Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Int16Array : public TypedArray {
  public:
   static Local<Int16Array> New(Local<ArrayBuffer> array_buffer,
                                size_t byte_offset, size_t length);
@@ -154,7 +154,7 @@ class V8_EXPORT Int16Array : public TypedArray {
 /**
  * An instance of Uint32Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Uint32Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Uint32Array : public TypedArray {
  public:
   static Local<Uint32Array> New(Local<ArrayBuffer> array_buffer,
                                 size_t byte_offset, size_t length);
@@ -175,7 +175,7 @@ class V8_EXPORT Uint32Array : public TypedArray {
 /**
  * An instance of Int32Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Int32Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Int32Array : public TypedArray {
  public:
   static Local<Int32Array> New(Local<ArrayBuffer> array_buffer,
                                size_t byte_offset, size_t length);
@@ -196,7 +196,7 @@ class V8_EXPORT Int32Array : public TypedArray {
 /**
  * An instance of Float32Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Float32Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Float32Array : public TypedArray {
  public:
   static Local<Float32Array> New(Local<ArrayBuffer> array_buffer,
                                  size_t byte_offset, size_t length);
@@ -217,7 +217,7 @@ class V8_EXPORT Float32Array : public TypedArray {
 /**
  * An instance of Float64Array constructor (ES6 draft 15.13.6).
  */
-class V8_EXPORT Float64Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT Float64Array : public TypedArray {
  public:
   static Local<Float64Array> New(Local<ArrayBuffer> array_buffer,
                                  size_t byte_offset, size_t length);
@@ -238,7 +238,7 @@ class V8_EXPORT Float64Array : public TypedArray {
 /**
  * An instance of BigInt64Array constructor.
  */
-class V8_EXPORT BigInt64Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT BigInt64Array : public TypedArray {
  public:
   static Local<BigInt64Array> New(Local<ArrayBuffer> array_buffer,
                                   size_t byte_offset, size_t length);
@@ -259,7 +259,7 @@ class V8_EXPORT BigInt64Array : public TypedArray {
 /**
  * An instance of BigUint64Array constructor.
  */
-class V8_EXPORT BigUint64Array : public TypedArray {
+class V8_EXPORT JSVM_EXPORT BigUint64Array : public TypedArray {
  public:
   static Local<BigUint64Array> New(Local<ArrayBuffer> array_buffer,
                                    size_t byte_offset, size_t length);

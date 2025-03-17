@@ -206,7 +206,7 @@ class V8_EXPORT OutputStream {
  * CpuProfile contains a CPU profile in a form of top-down call tree
  * (from main() down to functions that do all the work).
  */
-class V8_EXPORT CpuProfile {
+class V8_EXPORT JSVM_EXPORT CpuProfile {
  public:
   enum SerializationFormat {
     kJSON = 0  // See format description near 'Serialize' method.
@@ -354,7 +354,7 @@ class V8_EXPORT DiscardedSamplesDelegate {
 /**
  * Optional profiling attributes.
  */
-class V8_EXPORT CpuProfilingOptions {
+class V8_EXPORT JSVM_EXPORT CpuProfilingOptions {
  public:
   // Indicates that the sample buffer size should not be explicitly limited.
   static const unsigned kNoSampleLimit = UINT_MAX;
@@ -402,7 +402,7 @@ class V8_EXPORT CpuProfilingOptions {
  * Interface for controlling CPU profiling. Instance of the
  * profiler can be created using v8::CpuProfiler::New method.
  */
-class V8_EXPORT CpuProfiler {
+class V8_EXPORT JSVM_EXPORT CpuProfiler {
  public:
   /**
    * Creates a new CPU profiler for the |isolate|. The isolate must be
@@ -628,7 +628,7 @@ class V8_EXPORT HeapGraphNode {
 /**
  * HeapSnapshots record the state of the JS heap at some moment.
  */
-class V8_EXPORT HeapSnapshot {
+class V8_EXPORT JSVM_EXPORT HeapSnapshot {
  public:
   enum SerializationFormat {
     kJSON = 0  // See format description near 'Serialize' method.
@@ -685,7 +685,6 @@ class V8_EXPORT HeapSnapshot {
   void Serialize(OutputStream* stream,
                  SerializationFormat format = kJSON) const;
 };
-
 
 /**
  * An interface for reporting progress and controlling long-running
@@ -925,7 +924,7 @@ class V8_EXPORT EmbedderGraph {
  * Interface for controlling heap profiling. Instance of the
  * profiler can be retrieved using v8::Isolate::GetHeapProfiler.
  */
-class V8_EXPORT HeapProfiler {
+class V8_EXPORT JSVM_EXPORT HeapProfiler {
  public:
   enum SamplingFlags {
     kSamplingNoFlags = 0,

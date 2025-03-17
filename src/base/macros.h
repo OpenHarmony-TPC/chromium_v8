@@ -394,14 +394,13 @@ bool is_inbounds(float_t v) {
 #else  // V8_OS_WIN
 
 // Setup for Linux shared library export.
-#if V8_HAS_ATTRIBUTE_VISIBILITY
-#ifdef BUILDING_V8_SHARED
+#if V8_HAS_ATTRIBUTE_VISIBILITY && defined(BUILDING_V8_SHARED_PRIVATE) && \
+    !defined(OHOS_JS_ENGINE)
 #define V8_EXPORT_PRIVATE __attribute__((visibility("default")))
+#define V8_EXPORT_ENUM V8_EXPORT_PRIVATE
 #else
 #define V8_EXPORT_PRIVATE
-#endif
-#else
-#define V8_EXPORT_PRIVATE
+#define V8_EXPORT_ENUM
 #endif
 
 #endif  // V8_OS_WIN
