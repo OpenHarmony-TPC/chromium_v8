@@ -27,6 +27,7 @@
 #include "src/sandbox/sandbox.h"
 #include "src/snapshot/snapshot.h"
 #include "src/tracing/tracing-category-observer.h"
+#include "src/logging/ohlog.h"
 
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/wasm/wasm-engine.h"
@@ -200,6 +201,10 @@ void V8::Initialize() {
   if (v8_flags.jitless && !v8_flags.correctness_fuzzer_suppressions) {
     DISABLE_FLAG(expose_wasm);
   }
+#endif
+
+#ifdef USING_OHOS_WEB
+  StreamHilog("PGO is on");
 #endif
 
   // When fuzzing and concurrent compilation is enabled, disable Turbofan
