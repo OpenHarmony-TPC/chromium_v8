@@ -15,7 +15,7 @@ namespace v8 {
 
 namespace api_internal {
 // Called when ToChecked is called on an empty Maybe.
-V8_EXPORT void FromJustIsNothing();
+V8_EXPORT JSVM_EXPORT void FromJustIsNothing();
 }  // namespace api_internal
 
 /**
