@@ -1409,6 +1409,10 @@ config("toolchain") {
     defines += [ "V8_RUNTIME_CALL_STATS" ]
   }
 
+  if (is_ohos) {
+    defines += [ "USING_OHOS_WEB" ]
+  }
+
   if (v8_no_inline) {
     if (is_win) {
       cflags += [ "/Ob0" ]
@@ -3445,6 +3449,7 @@ v8_header_set("v8_internal_headers") {
     "src/logging/runtime-call-stats-scope.h",
     "src/logging/runtime-call-stats.h",
     "src/logging/tracing-flags.h",
+    "src/logging/ohlog.h",
     "src/numbers/conversions-inl.h",
     "src/numbers/conversions.h",
     "src/numbers/hash-seed-inl.h",
@@ -4939,6 +4944,7 @@ v8_source_set("v8_base_without_compiler") {
     "src/logging/metrics.cc",
     "src/logging/runtime-call-stats.cc",
     "src/logging/tracing-flags.cc",
+    "src/logging/ohlog.cc",
     "src/numbers/conversions.cc",
     "src/numbers/math-random.cc",
     "src/objects/abstract-code.cc",
@@ -5612,6 +5618,11 @@ v8_source_set("v8_base_without_compiler") {
       ":pac_sign_feature",
       "//third_party:huawei_securec",
     ]
+  }
+
+    if (is_ohos) {
+    include_dirs = [ "../ohos_nweb/src" ]
+    deps += [ "../ohos_nweb:nweb_hilog" ]
   }
 }
 
