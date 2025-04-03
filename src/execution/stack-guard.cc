@@ -4,16 +4,21 @@
 
 #include "src/execution/stack-guard.h"
 
-#include "src/baseline/baseline-batch-compiler.h"
+#include "src/base/atomicops.h"
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
 #include "src/execution/interrupts-scope.h"
 #include "src/execution/isolate.h"
+#include "src/execution/protectors-inl.h"
 #include "src/execution/simulator.h"
 #include "src/logging/counters.h"
 #include "src/objects/backing-store.h"
 #include "src/roots/roots-inl.h"
 #include "src/tracing/trace-event.h"
 #include "src/utils/memcopy.h"
+
+#ifdef V8_ENABLE_SPARKPLUG
+#include "src/baseline/baseline-batch-compiler.h"
+#endif
 
 #ifdef V8_ENABLE_MAGLEV
 #include "src/maglev/maglev-concurrent-dispatcher.h"
@@ -46,9 +51,14 @@ void StackGuard::update_interrupt_requests_and_stack_limits(
 
 void StackGuard::SetStackLimit(uintptr_t limit) {
   ExecutionAccess access(isolate_);
+  SetStackLimitInternal(access, limit,
+                        SimulatorStack::JsLimitFromCLimit(isolate_, limit));
+}
+
+void StackGuard::SetStackLimitInternal(const ExecutionAccess& lock,
+                                       uintptr_t limit, uintptr_t jslimit) {
   // If the current limits are special (e.g. due to a pending interrupt) then
   // leave them alone.
-  uintptr_t jslimit = SimulatorStack::JsLimitFromCLimit(isolate_, limit);
   if (thread_local_.jslimit() == thread_local_.real_jslimit_) {
     thread_local_.set_jslimit(jslimit);
   }
@@ -57,6 +67,28 @@ void StackGuard::SetStackLimit(uintptr_t limit) {
   }
   thread_local_.real_climit_ = limit;
   thread_local_.real_jslimit_ = jslimit;
+}
+
+void StackGuard::SetStackLimitForStackSwitching(uintptr_t limit) {
+  uintptr_t climit = SimulatorStack::ShouldSwitchCStackForWasmStackSwitching()
+                         ? limit
+                         : thread_local_.real_climit_;
+  // Try to compare and swap the new jslimit and climit without the
+  // ExecutionAccess lock.
+  uintptr_t old_jslimit = base::Relaxed_CompareAndSwap(
+      &thread_local_.jslimit_, thread_local_.real_jslimit_, limit);
+  USE(old_jslimit);
+  DCHECK_IMPLIES(old_jslimit != thread_local_.real_jslimit_,
+                 old_jslimit == kInterruptLimit);
+  uintptr_t old_climit = base::Relaxed_CompareAndSwap(
+      &thread_local_.climit_, thread_local_.real_climit_, climit);
+  USE(old_climit);
+  DCHECK_IMPLIES(old_climit != thread_local_.real_climit_,
+                 old_climit == kInterruptLimit);
+
+  // Either way, set the real limits. This does not require synchronization.
+  thread_local_.real_climit_ = climit;
+  thread_local_.real_jslimit_ = limit;
 }
 
 void StackGuard::AdjustStackLimitForSimulator() {
@@ -180,10 +212,10 @@ int StackGuard::FetchAndClearInterrupts(InterruptLevel level) {
     // interrupts.
     mask = TERMINATE_EXECUTION;
   }
+
   int result = static_cast<int>(thread_local_.interrupt_flags_ & mask);
   thread_local_.interrupt_flags_ &= ~mask;
   update_interrupt_requests_and_stack_limits(access);
-
   return result;
 }
 
@@ -255,7 +287,7 @@ class V8_NODISCARD ShouldBeZeroOnReturnScope final {
 
 }  // namespace
 
-Object StackGuard::HandleInterrupts(InterruptLevel level) {
+Tagged<Object> StackGuard::HandleInterrupts(InterruptLevel level) {
   TRACE_EVENT0("v8.execute", "V8.HandleInterrupts");
 
 #if DEBUG
@@ -269,7 +301,7 @@ Object StackGuard::HandleInterrupts(InterruptLevel level) {
 
   // Fetch and clear interrupt bits in one go. See comments inside the method
   // for special handling of TERMINATE_EXECUTION.
- int interrupt_flags = FetchAndClearInterrupts(level);
+  int interrupt_flags = FetchAndClearInterrupts(level);
 
   // All interrupts should be fully processed when returning from this method.
   ShouldBeZeroOnReturnScope should_be_zero_on_return(&interrupt_flags);
@@ -282,6 +314,10 @@ Object StackGuard::HandleInterrupts(InterruptLevel level) {
   if (TestAndClear(&interrupt_flags, GC_REQUEST)) {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.gc"), "V8.GCHandleGCRequest");
     isolate_->heap()->HandleGCRequest();
+  }
+
+  if (TestAndClear(&interrupt_flags, START_INCREMENTAL_MARKING)) {
+    isolate_->heap()->StartIncrementalMarkingOnInterrupt();
   }
 
   if (TestAndClear(&interrupt_flags, GLOBAL_SAFEPOINT)) {
@@ -319,11 +355,13 @@ Object StackGuard::HandleInterrupts(InterruptLevel level) {
     isolate_->optimizing_compile_dispatcher()->InstallOptimizedFunctions();
   }
 
+#ifdef V8_ENABLE_SPARKPLUG
   if (TestAndClear(&interrupt_flags, INSTALL_BASELINE_CODE)) {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                  "V8.FinalizeBaselineConcurrentCompilation");
     isolate_->baseline_batch_compiler()->InstallBatch();
   }
+#endif  // V8_ENABLE_SPARKPLUG
 
 #ifdef V8_ENABLE_MAGLEV
   if (TestAndClear(&interrupt_flags, INSTALL_MAGLEV_CODE)) {
@@ -338,6 +376,16 @@ Object StackGuard::HandleInterrupts(InterruptLevel level) {
     // Callbacks must be invoked outside of ExecutionAccess lock.
     isolate_->InvokeApiInterruptCallbacks();
   }
+
+#ifdef V8_RUNTIME_CALL_STATS
+  // Runtime call stats can be enabled at any via Chrome tracing and since
+  // there's no global list of active Isolates this seems to be the only
+  // simple way to invalidate the protector.
+  if (TracingFlags::is_runtime_stats_enabled() &&
+      Protectors::IsNoProfilingIntact(isolate_)) {
+    Protectors::InvalidateNoProfiling(isolate_);
+  }
+#endif
 
   isolate_->counters()->stack_interrupts()->Increment();
 

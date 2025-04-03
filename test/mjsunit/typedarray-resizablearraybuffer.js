@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-rab-gsab --allow-natives-syntax
-// Flags: --harmony-array-find-last
+// Flags: --allow-natives-syntax --harmony-array-find-last --js-float16array
 
 "use strict";
 
@@ -8368,5 +8367,26 @@ SortCallbackGrows(ArraySortHelper);
 
     // This should not throw.
     new ctor(rab);
+  }
+})();
+
+
+(function SetValueToNumberResizesToInBounds() {
+  for (let ctor of ctors) {
+    const rab = CreateResizableArrayBuffer(0,
+                                           1 * ctor.BYTES_PER_ELEMENT);
+    const lengthTracking = new ctor(rab, 0);
+
+    const evil = { valueOf: () => {
+      // Resize so that `lengthTracking` is no longer OOB.
+      rab.resize(1 * ctor.BYTES_PER_ELEMENT);
+      if (IsBigIntTypedArray(lengthTracking)) {
+        return 2n;
+      }
+      return 2;
+    }};
+
+    lengthTracking[0] = evil;
+    assertEquals([2], ToNumbers(lengthTracking));
   }
 })();

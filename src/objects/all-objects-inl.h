@@ -13,7 +13,6 @@
 #include "src/objects/allocation-site-scopes-inl.h"
 #include "src/objects/api-callbacks-inl.h"
 #include "src/objects/arguments-inl.h"
-#include "src/objects/bigint-inl.h"
 #include "src/objects/call-site-info-inl.h"
 #include "src/objects/cell-inl.h"
 #include "src/objects/code-inl.h"
@@ -41,6 +40,7 @@
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-atomics-synchronization-inl.h"
 #include "src/objects/js-collection-inl.h"
+#include "src/objects/js-disposable-stack-inl.h"
 #include "src/objects/js-function-inl.h"
 #include "src/objects/js-generator-inl.h"
 #include "src/objects/js-iterator-helpers-inl.h"
@@ -92,6 +92,7 @@
 #include "src/objects/templates-inl.h"
 #include "src/objects/torque-defined-classes-inl.h"
 #include "src/objects/transitions-inl.h"
+#include "src/objects/trusted-object-inl.h"
 #include "src/objects/turbofan-types-inl.h"
 #include "src/objects/turboshaft-types-inl.h"
 

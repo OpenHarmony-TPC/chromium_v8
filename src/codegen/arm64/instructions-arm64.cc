@@ -5,14 +5,23 @@
 #if V8_TARGET_ARCH_ARM64
 
 #include "src/codegen/arm64/instructions-arm64.h"
-#include "src/codegen/arm64/assembler-arm64-inl.h"
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-#include "src/codegen/arm64/jit-code-signer-helper.h"
-#endif
+#include "src/codegen/arm64/assembler-arm64-inl.h"
+#include "src/common/code-memory-access-inl.h"
 
 namespace v8 {
 namespace internal {
+
+void Instruction::SetInstructionBits(Instr new_instr,
+                                     WritableJitAllocation* jit_allocation) {
+  // Usually this is aligned, but when de/serializing that's not guaranteed.
+  if (jit_allocation) {
+    jit_allocation->WriteUnalignedValue(reinterpret_cast<Address>(this),
+                                        new_instr);
+  } else {
+    base::WriteUnalignedValue(reinterpret_cast<Address>(this), new_instr);
+  }
+}
 
 bool Instruction::IsLoad() const {
   if (Mask(LoadStoreAnyFMask) != LoadStoreAnyFixed) {
@@ -157,18 +166,17 @@ double Instruction::ImmNEONFP64() const {
   return Imm8ToFP64(ImmNEONabcdefgh());
 }
 
-unsigned CalcLSDataSize(LoadStoreOp op) {
-  DCHECK_EQ(static_cast<unsigned>(LSSize_offset + LSSize_width),
-            kInstrSize * 8);
-  unsigned size = static_cast<Instr>(op) >> LSSize_offset;
+unsigned CalcLSDataSizeLog2(LoadStoreOp op) {
+  DCHECK_EQ(LSSize_offset + LSSize_width, kInstrSize * 8);
+  unsigned size_log2 = static_cast<Instr>(op) >> LSSize_offset;
   if ((op & LSVector_mask) != 0) {
     // Vector register memory operations encode the access size in the "size"
     // and "opc" fields.
-    if ((size == 0) && ((op & LSOpc_mask) >> LSOpc_offset) >= 2) {
-      size = kQRegSizeLog2;
+    if (size_log2 == 0 && ((op & LSOpc_mask) >> LSOpc_offset) >= 2) {
+      size_log2 = kQRegSizeLog2;
     }
   }
-  return size;
+  return size_log2;
 }
 
 unsigned CalcLSPairDataSize(LoadStorePairOp op) {
@@ -214,55 +222,32 @@ Instruction* Instruction::ImmPCOffsetTarget() {
   return InstructionAtOffset(ImmPCOffset());
 }
 
-bool Instruction::IsValidImmPCOffset(ImmBranchType branch_type,
-                                     ptrdiff_t offset) {
-  DCHECK_EQ(offset % kInstrSize, 0);
-  return is_intn(offset / kInstrSize, ImmBranchRangeBitwidth(branch_type));
-}
-
 bool Instruction::IsTargetInImmPCOffsetRange(Instruction* target) {
   return IsValidImmPCOffset(BranchType(), DistanceTo(target));
 }
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-void Instruction::SetImmPCOffsetTarget(const AssemblerOptions& options,
-                                       Instruction* target,
-                                       JitCodeSignerBase* patch_signer) {
-  if (IsPCRelAddressing()) {
-    SetPCRelImmTarget(options, target, patch_signer);
-  } else if (BranchType() != UnknownBranchType) {
-    SetBranchImmTarget(target, patch_signer);
-  } else if (IsUnresolvedInternalReference()) {
-    SetUnresolvedInternalReferenceImmTarget(options, target, patch_signer);
-  } else {
-    // Load literal (offset from PC).
-    SetImmLLiteral(target, patch_signer);
-  }
-}
-#else
-void Instruction::SetImmPCOffsetTarget(const AssemblerOptions& options,
+void Instruction::SetImmPCOffsetTarget(Zone* zone, AssemblerOptions options,
                                        Instruction* target) {
   if (IsPCRelAddressing()) {
-    SetPCRelImmTarget(options, target);
-  } else if (BranchType() != UnknownBranchType) {
-    SetBranchImmTarget(target);
+    SetPCRelImmTarget(zone, options, target);
+  } else if (IsCondBranchImm()) {
+    SetBranchImmTarget<CondBranchType>(target);
+  } else if (IsUncondBranchImm()) {
+    SetBranchImmTarget<UncondBranchType>(target);
+  } else if (IsCompareBranch()) {
+    SetBranchImmTarget<CompareBranchType>(target);
+  } else if (IsTestBranch()) {
+    SetBranchImmTarget<TestBranchType>(target);
   } else if (IsUnresolvedInternalReference()) {
-    SetUnresolvedInternalReferenceImmTarget(options, target);
+    SetUnresolvedInternalReferenceImmTarget(zone, options, target);
   } else {
     // Load literal (offset from PC).
     SetImmLLiteral(target);
   }
 }
-#endif
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-void Instruction::SetPCRelImmTarget(const AssemblerOptions& options,
-                                       Instruction* target,
-                                       JitCodeSignerBase* patch_signer) {
-#else
-void Instruction::SetPCRelImmTarget(const AssemblerOptions& options,
+void Instruction::SetPCRelImmTarget(Zone* zone, AssemblerOptions options,
                                     Instruction* target) {
-#endif
   // ADRP is not supported, so 'this' must point to an ADR instruction.
   DCHECK(IsAdr());
 
@@ -270,71 +255,16 @@ void Instruction::SetPCRelImmTarget(const AssemblerOptions& options,
   Instr imm;
   if (Instruction::IsValidPCRelOffset(target_offset)) {
     imm = Assembler::ImmPCRelAddress(static_cast<int>(target_offset));
-    Instr insn = Mask(~ImmPCRel_mask) | imm;
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    TryPatchInstruction(patch_signer, reinterpret_cast<void*>(this), insn);
-#endif
-    SetInstructionBits(insn);
+    SetInstructionBits(Mask(~ImmPCRel_mask) | imm);
   } else {
-    PatchingAssembler patcher(options, reinterpret_cast<byte*>(this),
+    PatchingAssembler patcher(zone, options, reinterpret_cast<uint8_t*>(this),
                               PatchingAssembler::kAdrFarPatchableNInstrs);
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    patcher.SetJitCodeSigner(patch_signer);
-#endif
     patcher.PatchAdrFar(target_offset);
   }
 }
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-void Instruction::SetBranchImmTarget(Instruction* target,
-                                    JitCodeSignerBase* patch_signer) {
-#else
-void Instruction::SetBranchImmTarget(Instruction* target) {
-#endif
-  DCHECK(IsAligned(DistanceTo(target), kInstrSize));
-  DCHECK(IsValidImmPCOffset(BranchType(), DistanceTo(target)));
-  int offset = static_cast<int>(DistanceTo(target) >> kInstrSizeLog2);
-  Instr branch_imm = 0;
-  uint32_t imm_mask = 0;
-  switch (BranchType()) {
-    case CondBranchType: {
-      branch_imm = Assembler::ImmCondBranch(offset);
-      imm_mask = ImmCondBranch_mask;
-      break;
-    }
-    case UncondBranchType: {
-      branch_imm = Assembler::ImmUncondBranch(offset);
-      imm_mask = ImmUncondBranch_mask;
-      break;
-    }
-    case CompareBranchType: {
-      branch_imm = Assembler::ImmCmpBranch(offset);
-      imm_mask = ImmCmpBranch_mask;
-      break;
-    }
-    case TestBranchType: {
-      branch_imm = Assembler::ImmTestBranch(offset);
-      imm_mask = ImmTestBranch_mask;
-      break;
-    }
-    default:
-      UNREACHABLE();
-  }
-  Instr insn = Mask(~imm_mask) | branch_imm;
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  TryPatchInstruction(patch_signer, reinterpret_cast<void*>(this), insn);
-#endif
-  SetInstructionBits(insn);
-}
-
-#ifdef V8_ENABLE_JIT_CODE_SIGN
 void Instruction::SetUnresolvedInternalReferenceImmTarget(
-    const AssemblerOptions& options, Instruction* target,
-    JitCodeSignerBase* patch_signer) {
-#else
-void Instruction::SetUnresolvedInternalReferenceImmTarget(
-    const AssemblerOptions& options, Instruction* target) {
-#endif
+    Zone* zone, AssemblerOptions options, Instruction* target) {
   DCHECK(IsUnresolvedInternalReference());
   DCHECK(IsAligned(DistanceTo(target), kInstrSize));
   DCHECK(is_int32(DistanceTo(target) >> kInstrSizeLog2));
@@ -343,20 +273,12 @@ void Instruction::SetUnresolvedInternalReferenceImmTarget(
   uint32_t high16 = unsigned_bitextract_32(31, 16, target_offset);
   uint32_t low16 = unsigned_bitextract_32(15, 0, target_offset);
 
-  PatchingAssembler patcher(options, reinterpret_cast<byte*>(this), 2);
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  patcher.SetJitCodeSigner(patch_signer);
-#endif
+  PatchingAssembler patcher(zone, options, reinterpret_cast<uint8_t*>(this), 2);
   patcher.brk(high16);
   patcher.brk(low16);
 }
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-void Instruction::SetImmLLiteral(Instruction* source,
-    JitCodeSignerBase* patch_signer) {
-#else
 void Instruction::SetImmLLiteral(Instruction* source) {
-#endif
   DCHECK(IsLdrLiteral());
   DCHECK(IsAligned(DistanceTo(source), kInstrSize));
   DCHECK(Assembler::IsImmLLiteral(DistanceTo(source)));
@@ -364,11 +286,7 @@ void Instruction::SetImmLLiteral(Instruction* source) {
       static_cast<int>(DistanceTo(source) >> kLoadLiteralScaleLog2));
   Instr mask = ImmLLiteral_mask;
 
-  Instr insn = Mask(~mask) | imm;
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  TryPatchInstruction(patch_signer, reinterpret_cast<void*>(this), insn);
-#endif
-  SetInstructionBits(insn);
+  SetInstructionBits(Mask(~mask) | imm);
 }
 
 NEONFormatDecoder::NEONFormatDecoder(const Instruction* instr) {

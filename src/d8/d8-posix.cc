@@ -4,7 +4,12 @@
 
 #include <errno.h>
 #include <fcntl.h>
+
+#include "src/d8/d8.h"
+
+#ifndef V8_OS_ZOS
 #include <netinet/ip.h>
+#endif
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +23,6 @@
 
 #include "include/v8-container.h"
 #include "include/v8-template.h"
-#include "src/d8/d8.h"
 
 namespace v8 {
 
@@ -590,7 +594,7 @@ void Shell::MakeDirectory(const v8::FunctionCallbackInfo<v8::Value>& info) {
 void Shell::RemoveDirectory(const v8::FunctionCallbackInfo<v8::Value>& info) {
   DCHECK(i::ValidateCallbackInfo(info));
   if (info.Length() != 1) {
-    info.GetIsolate()->ThrowError("rmdir() takes one or two arguments");
+    info.GetIsolate()->ThrowError("rmdir() takes one arguments");
     return;
   }
   String::Utf8Value directory(info.GetIsolate(), info[0]);

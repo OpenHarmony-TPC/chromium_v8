@@ -36,6 +36,7 @@
 #include "src/handles/handles.h"
 #include "src/numbers/conversions.h"
 #include "src/objects/name.h"
+#include "src/zone/zone.h"
 
 // Ast(Raw|Cons)String and AstValueFactory are for storing strings and
 // values independent of the V8 heap and internalizing them later. During
@@ -85,7 +86,7 @@ class AstRawString final : public ZoneObject {
   }
 
   // This function can be called after internalizing.
-  V8_INLINE Handle<String> string() const {
+  V8_INLINE IndirectHandle<String> string() const {
     DCHECK(has_string_);
     return string_;
   }
@@ -101,7 +102,7 @@ class AstRawString final : public ZoneObject {
   friend Zone;
 
   // Members accessed only by the AstValueFactory & related classes:
-  AstRawString(bool is_one_byte, const base::Vector<const byte>& literal_bytes,
+  AstRawString(bool is_one_byte, base::Vector<const uint8_t> literal_bytes,
                uint32_t raw_hash_field)
       : next_(nullptr),
         literal_bytes_(literal_bytes),
@@ -116,7 +117,7 @@ class AstRawString final : public ZoneObject {
     return &next_;
   }
 
-  void set_string(Handle<String> string) {
+  void set_string(IndirectHandle<String> string) {
     DCHECK(!string.is_null());
     DCHECK(!has_string_);
     string_ = string;
@@ -127,10 +128,10 @@ class AstRawString final : public ZoneObject {
 
   union {
     AstRawString* next_;
-    Handle<String> string_;
+    IndirectHandle<String> string_;
   };
 
-  base::Vector<const byte> literal_bytes_;  // Memory owned by Zone.
+  base::Vector<const uint8_t> literal_bytes_;  // Memory owned by Zone.
   uint32_t raw_hash_field_;
   bool is_one_byte_;
 #ifdef DEBUG
@@ -167,7 +168,7 @@ class AstConsString final : public ZoneObject {
   }
 
   template <typename IsolateT>
-  Handle<String> GetString(IsolateT* isolate) {
+  IndirectHandle<String> GetString(IsolateT* isolate) {
     if (string_.is_null()) {
       string_ = Allocate(isolate);
     }
@@ -180,6 +181,8 @@ class AstConsString final : public ZoneObject {
 
   std::forward_list<const AstRawString*> ToRawStrings() const;
 
+  const AstRawString* last() const { return segment_.string; }
+
  private:
   friend class AstValueFactory;
   friend Zone;
@@ -190,7 +193,7 @@ class AstConsString final : public ZoneObject {
   EXPORT_TEMPLATE_DECLARE(V8_EXPORT_PRIVATE)
   Handle<String> Allocate(IsolateT* isolate) const;
 
-  Handle<String> string_;
+  IndirectHandle<String> string_;
 
   // A linked list of AstRawStrings of the contents of this AstConsString.
   // This list has several properties:
@@ -234,12 +237,10 @@ using AstRawStringMap =
 // For generating constants.
 #define AST_STRING_CONSTANTS(F)                    \
   F(anonymous, "anonymous")                        \
-  F(anonymous_function, "(anonymous function)")    \
   F(arguments, "arguments")                        \
   F(as, "as")                                      \
   F(assert, "assert")                              \
   F(async, "async")                                \
-  F(await, "await")                                \
   F(bigint, "bigint")                              \
   F(boolean, "boolean")                            \
   F(computed, "<computed>")                        \
@@ -261,24 +262,21 @@ using AstRawStringMap =
   F(eval, "eval")                                  \
   F(from, "from")                                  \
   F(function, "function")                          \
-  F(get, "get")                                    \
   F(get_space, "get ")                             \
   F(length, "length")                              \
   F(let, "let")                                    \
   F(meta, "meta")                                  \
-  F(name, "name")                                  \
   F(native, "native")                              \
   F(new_target, ".new.target")                     \
   F(next, "next")                                  \
   F(number, "number")                              \
   F(object, "object")                              \
-  F(of, "of")                                      \
   F(private_constructor, "#constructor")           \
   F(proto, "__proto__")                            \
   F(prototype, "prototype")                        \
   F(return, "return")                              \
-  F(set, "set")                                    \
   F(set_space, "set ")                             \
+  F(source, "source")                              \
   F(string, "string")                              \
   F(symbol, "symbol")                              \
   F(target, "target")                              \
@@ -361,7 +359,7 @@ class AstValueFactory {
   const AstRawString* GetTwoByteString(base::Vector<const uint16_t> literal) {
     return GetTwoByteStringInternal(literal);
   }
-  const AstRawString* GetString(String literal,
+  const AstRawString* GetString(Tagged<String> literal,
                                 const SharedStringAccessGuardIfNeeded&);
 
   V8_EXPORT_PRIVATE AstConsString* NewConsString();
@@ -398,7 +396,7 @@ class AstValueFactory {
   const AstRawString* GetTwoByteStringInternal(
       base::Vector<const uint16_t> literal);
   const AstRawString* GetString(uint32_t raw_hash_field, bool is_one_byte,
-                                base::Vector<const byte> literal_bytes);
+                                base::Vector<const uint8_t> literal_bytes);
 
   // All strings are copied here.
   AstRawStringMap string_table_;

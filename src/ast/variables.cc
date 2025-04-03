@@ -29,6 +29,7 @@ bool Variable::IsGlobalObjectProperty() const {
          scope_ != nullptr && scope_->is_script_scope();
 }
 
+// TODO(rezvan): Add check and related tests for VariableMode::kUsing.
 bool Variable::IsReplGlobal() const {
   return scope()->is_repl_mode_scope() &&
          (mode() == VariableMode::kLet || mode() == VariableMode::kConst);
@@ -37,6 +38,7 @@ bool Variable::IsReplGlobal() const {
 void Variable::RewriteLocationForRepl() {
   DCHECK(scope_->is_repl_mode_scope());
 
+  // TODO(rezvan): Add check and related tests for VariableMode::kUsing.
   if (mode() == VariableMode::kLet || mode() == VariableMode::kConst) {
     DCHECK_EQ(location(), VariableLocation::CONTEXT);
     bit_field_ =
@@ -49,7 +51,8 @@ void Variable::AssignHoleCheckBitmapIndex(ZoneVector<Variable*>& list,
   DCHECK_EQ(next_index, list.size() + 1);
   DCHECK_NE(kUncacheableHoleCheckBitmapIndex, next_index);
   DCHECK_LT(next_index, kHoleCheckBitmapBits);
-  hole_check_bitmap_index_ = next_index;
+  hole_check_analysis_bit_field_ = HoleCheckBitmapIndexField::update(
+      hole_check_analysis_bit_field_, next_index);
   list.push_back(this);
 }
 

@@ -26,7 +26,8 @@ namespace {
 
 class ConcurrentSearchThread final : public v8::base::Thread {
  public:
-  ConcurrentSearchThread(Heap* heap, std::vector<Handle<JSObject>> handles,
+  ConcurrentSearchThread(Heap* heap,
+                         std::vector<IndirectHandle<JSObject>> handles,
                          std::unique_ptr<PersistentHandles> ph,
                          Handle<Name> name, base::Semaphore* sema_started)
       : v8::base::Thread(base::Thread::Options("ThreadWithLocalHeap")),
@@ -47,12 +48,12 @@ class ConcurrentSearchThread final : public v8::base::Thread {
 
     sema_started_->Signal();
 
-    for (Handle<JSObject> handle : handles_) {
+    for (DirectHandle<JSObject> handle : handles_) {
       // Lookup the named property on the {map}.
-      EXPECT_TRUE(name_->IsUniqueName());
-      Handle<Map> map(handle->map(), &local_heap);
+      EXPECT_TRUE(IsUniqueName(*name_));
+      DirectHandle<Map> map(handle->map(), &local_heap);
 
-      Handle<DescriptorArray> descriptors(
+      DirectHandle<DescriptorArray> descriptors(
           map->instance_descriptors(kAcquireLoad), &local_heap);
       bool is_background_thread = true;
       InternalIndex const number =
@@ -65,7 +66,7 @@ class ConcurrentSearchThread final : public v8::base::Thread {
 
  private:
   Heap* heap_;
-  std::vector<Handle<JSObject>> handles_;
+  std::vector<IndirectHandle<JSObject>> handles_;
   std::unique_ptr<PersistentHandles> ph_;
   Handle<Name> name_;
   base::Semaphore* sema_started_;
@@ -74,7 +75,7 @@ class ConcurrentSearchThread final : public v8::base::Thread {
 // Uses linear search on a flat object, with up to 8 elements.
 TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject) {
   std::unique_ptr<PersistentHandles> ph = i_isolate()->NewPersistentHandles();
-  std::vector<Handle<JSObject>> handles;
+  std::vector<IndirectHandle<JSObject>> handles;
 
   auto factory = i_isolate()->factory();
   HandleScope handle_scope(i_isolate());
@@ -114,7 +115,7 @@ TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject) {
                                                       filler_value, NONE)
         .Check();
   }
-  EXPECT_EQ(js_object->map().NumberOfOwnDescriptors(), 8);
+  EXPECT_EQ(js_object->map()->NumberOfOwnDescriptors(), 8);
 
   thread->Join();
 }
@@ -148,7 +149,7 @@ TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject_ManyElements) {
                                                       filler_value, NONE)
         .Check();
   }
-  EXPECT_GT(js_object->map().NumberOfOwnDescriptors(), 8);
+  EXPECT_GT(js_object->map()->NumberOfOwnDescriptors(), 8);
 
   for (int i = 0; i < kNumHandles; i++) {
     handles.push_back(ph->NewHandle(js_object));

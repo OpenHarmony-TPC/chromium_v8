@@ -26,6 +26,10 @@ class V8_EXPORT Version {
   static int GetBuild() { return build_; }
   static int GetPatch() { return patch_; }
   static const char* GetEmbedder() { return embedder_; }
+#ifdef OHOS_JS_ENGINE
+  static int GetInner() { return inner_; }
+  static void GetVersionWithInner(base::Vector<char> str);
+#endif
   static bool IsCandidate() { return candidate_; }
   static uint32_t Hash() {
     return static_cast<uint32_t>(
@@ -34,11 +38,6 @@ class V8_EXPORT Version {
 
   // Calculate the V8 version string.
   static void GetString(base::Vector<char> str);
-
-#ifdef OHOS_JS_ENGINE
-  static int GetInner() { return inner_; }
-  static void GetVersionWithInner(base::Vector<char> str);
-#endif
 
   // Calculate the SONAME for the V8 shared library.
   static void GetSONAME(base::Vector<char> str);

@@ -5,9 +5,10 @@
 #ifndef V8_COMPILER_JS_HEAP_BROKER_H_
 #define V8_COMPILER_JS_HEAP_BROKER_H_
 
+#include <optional>
+
 #include "src/base/compiler-specific.h"
 #include "src/base/macros.h"
-#include "src/base/optional.h"
 #include "src/base/platform/mutex.h"
 #include "src/codegen/optimized-compilation-info.h"
 #include "src/common/globals.h"
@@ -24,6 +25,7 @@
 #include "src/objects/code-kind.h"
 #include "src/objects/feedback-vector.h"
 #include "src/objects/objects.h"
+#include "src/objects/tagged.h"
 #include "src/roots/roots.h"
 #include "src/utils/address-map.h"
 #include "src/utils/identity-map.h"
@@ -47,12 +49,6 @@ std::ostream& operator<<(std::ostream& os, ObjectRef ref);
   do {                                                                   \
     if (broker->tracing_enabled() && v8_flags.trace_heap_broker_verbose) \
       StdoutStream{} << broker->Trace() << x << '\n';                    \
-  } while (false)
-
-#define TRACE_BROKER_MEMORY(broker, x)                                  \
-  do {                                                                  \
-    if (broker->tracing_enabled() && v8_flags.trace_heap_broker_memory) \
-      StdoutStream{} << broker->Trace() << x << std::endl;              \
   } while (false)
 
 #define TRACE_BROKER_MISSING(broker, x)                                        \
@@ -105,7 +101,7 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   // churn when new flags are added.
   JSHeapBroker(Isolate* isolate, Zone* broker_zone)
       : JSHeapBroker(isolate, broker_zone, v8_flags.trace_heap_broker,
-                     CodeKind::TURBOFAN) {}
+                     CodeKind::TURBOFAN_JS) {}
 
   ~JSHeapBroker();
 
@@ -114,9 +110,10 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   NativeContextRef target_native_context() const {
     return target_native_context_.value();
   }
-  void SetTargetNativeContextRef(Handle<NativeContext> native_context);
+  void SetTargetNativeContextRef(DirectHandle<NativeContext> native_context);
 
-  void InitializeAndStartSerializing(Handle<NativeContext> native_context);
+  void InitializeAndStartSerializing(
+      DirectHandle<NativeContext> native_context);
 
   Isolate* isolate() const { return isolate_; }
 
@@ -180,18 +177,19 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
 #endif  // DEBUG
 
   // Returns the handle from root index table for read only heap objects.
-  Handle<Object> GetRootHandle(Object object);
+  Handle<Object> GetRootHandle(Tagged<Object> object);
 
   // Never returns nullptr.
   ObjectData* GetOrCreateData(Handle<Object> object,
                               GetOrCreateDataFlags flags = {});
-  ObjectData* GetOrCreateData(Object object, GetOrCreateDataFlags flags = {});
+  ObjectData* GetOrCreateData(Tagged<Object> object,
+                              GetOrCreateDataFlags flags = {});
 
   // Gets data only if we have it. However, thin wrappers will be created for
   // smis, read-only objects and never-serialized objects.
   ObjectData* TryGetOrCreateData(Handle<Object> object,
                                  GetOrCreateDataFlags flags = {});
-  ObjectData* TryGetOrCreateData(Object object,
+  ObjectData* TryGetOrCreateData(Tagged<Object> object,
                                  GetOrCreateDataFlags flags = {});
 
   // Check if {object} is any native context's %ArrayPrototype% or
@@ -221,6 +219,7 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
       FeedbackSource const& source);
   ProcessedFeedback const& GetFeedbackForInstanceOf(
       FeedbackSource const& source);
+  TypeOfFeedback::Result GetFeedbackForTypeOf(FeedbackSource const& source);
   ProcessedFeedback const& GetFeedbackForArrayOrObjectLiteral(
       FeedbackSource const& source);
   ProcessedFeedback const& GetFeedbackForRegExpLiteral(
@@ -236,6 +235,8 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   ProcessedFeedback const& ProcessFeedbackForCompareOperation(
       FeedbackSource const& source);
   ProcessedFeedback const& ProcessFeedbackForForIn(
+      FeedbackSource const& source);
+  ProcessedFeedback const& ProcessFeedbackForTypeOf(
       FeedbackSource const& source);
 
   bool FeedbackIsInsufficient(FeedbackSource const& source) const;
@@ -261,7 +262,7 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
                                       : isolate()->AsLocalIsolate();
   }
 
-  base::Optional<RootIndex> FindRootIndex(HeapObjectRef object) {
+  std::optional<RootIndex> FindRootIndex(HeapObjectRef object) {
     // No root constant is a JSReceiver.
     if (object.IsJSReceiver()) return {};
     Address address = object.object()->ptr();
@@ -280,17 +281,25 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   // that happens, we should be inside a persistent handle scope. Then, we would
   // just use the regular handle creation.
   template <typename T>
-  Handle<T> CanonicalPersistentHandle(T object) {
+  Handle<T> CanonicalPersistentHandle(Tagged<T> object) {
     DCHECK_NOT_NULL(canonical_handles_);
     Address address = object.ptr();
     if (Internals::HasHeapObjectTag(address)) {
       RootIndex root_index;
-      if (root_index_map_.Lookup(address, &root_index)) {
+      // CollectArrayAndObjectPrototypes calls this function often with T equal
+      // to JSObject. The root index map only contains immortal, immutable
+      // objects; it never contains any instances of type JSObject, since
+      // JSObjects must exist within a NativeContext, and NativeContexts can be
+      // created and destroyed. Thus, we can skip the lookup in the root index
+      // map for those values and save a little time.
+      if constexpr (std::is_convertible_v<T, JSObject>) {
+        DCHECK(!root_index_map_.Lookup(address, &root_index));
+      } else if (root_index_map_.Lookup(address, &root_index)) {
         return Handle<T>(isolate_->root_handle(root_index).location());
       }
     }
 
-    Object obj(address);
+    Tagged<Object> obj(address);
     auto find_result = canonical_handles_->FindOrInsert(obj);
     if (find_result.already_exists) return Handle<T>(*find_result.entry);
 
@@ -300,7 +309,7 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
           local_isolate()->heap()->NewPersistentHandle(obj).location();
     } else {
       DCHECK(PersistentHandlesScope::IsActive(isolate()));
-      *find_result.entry = Handle<T>(object, isolate()).location();
+      *find_result.entry = IndirectHandle<T>(object, isolate()).location();
     }
     return Handle<T>(*find_result.entry);
   }
@@ -328,7 +337,7 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
         return true;
       }
     }
-    return canonical_handles_->Find(Object(address)) != nullptr;
+    return canonical_handles_->Find(Tagged<Object>(address)) != nullptr;
   }
 
   std::string Trace() const;
@@ -339,14 +348,9 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   // occurrence. This is done to have a recursive shared lock on {mutex}.
   class V8_NODISCARD RecursiveSharedMutexGuardIfNeeded {
    protected:
-    RecursiveSharedMutexGuardIfNeeded(LocalIsolate* local_isolate,
-                                      base::SharedMutex* mutex,
-                                      int* mutex_depth_address)
-        : mutex_depth_address_(mutex_depth_address),
-          initial_mutex_depth_(*mutex_depth_address_),
-          shared_mutex_guard_(local_isolate, mutex, initial_mutex_depth_ == 0) {
-      (*mutex_depth_address_)++;
-    }
+    V8_INLINE RecursiveSharedMutexGuardIfNeeded(LocalIsolate* local_isolate,
+                                                base::SharedMutex* mutex,
+                                                int* mutex_depth_address);
 
     ~RecursiveSharedMutexGuardIfNeeded() {
       DCHECK_GE((*mutex_depth_address_), 1);
@@ -363,29 +367,21 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   class MapUpdaterGuardIfNeeded final
       : public RecursiveSharedMutexGuardIfNeeded {
    public:
-    explicit MapUpdaterGuardIfNeeded(JSHeapBroker* broker)
-        : RecursiveSharedMutexGuardIfNeeded(
-              broker->local_isolate_or_isolate(),
-              broker->isolate()->map_updater_access(),
-              &broker->map_updater_mutex_depth_) {}
+    V8_INLINE explicit MapUpdaterGuardIfNeeded(JSHeapBroker* broker);
   };
 
   class BoilerplateMigrationGuardIfNeeded final
       : public RecursiveSharedMutexGuardIfNeeded {
    public:
-    explicit BoilerplateMigrationGuardIfNeeded(JSHeapBroker* broker)
-        : RecursiveSharedMutexGuardIfNeeded(
-              broker->local_isolate_or_isolate(),
-              broker->isolate()->boilerplate_migration_access(),
-              &broker->boilerplate_migration_mutex_depth_) {}
+    V8_INLINE explicit BoilerplateMigrationGuardIfNeeded(JSHeapBroker* broker);
   };
 
   // If this returns false, the object is guaranteed to be fully initialized and
   // thus safe to read from a memory safety perspective. The converse does not
   // necessarily hold.
-  bool ObjectMayBeUninitialized(Handle<Object> object) const;
-  bool ObjectMayBeUninitialized(Object object) const;
-  bool ObjectMayBeUninitialized(HeapObject object) const;
+  bool ObjectMayBeUninitialized(DirectHandle<Object> object) const;
+  bool ObjectMayBeUninitialized(Tagged<Object> object) const;
+  bool ObjectMayBeUninitialized(Tagged<HeapObject> object) const;
 
   void set_dependencies(CompilationDependencies* dependencies) {
     DCHECK_NOT_NULL(dependencies);
@@ -416,6 +412,8 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   ProcessedFeedback const& ReadFeedbackForArrayOrObjectLiteral(
       FeedbackSource const& source);
   ProcessedFeedback const& ReadFeedbackForBinaryOperation(
+      FeedbackSource const& source) const;
+  ProcessedFeedback const& ReadFeedbackForTypeOf(
       FeedbackSource const& source) const;
   ProcessedFeedback const& ReadFeedbackForCall(FeedbackSource const& source);
   ProcessedFeedback const& ReadFeedbackForCompareOperation(
@@ -463,8 +461,8 @@ class V8_EXPORT_PRIVATE JSHeapBroker {
   OptionalNativeContextRef target_native_context_;
   RefsMap* refs_;
   RootIndexMap root_index_map_;
-  ZoneUnorderedSet<Handle<JSObject>, Handle<JSObject>::hash,
-                   Handle<JSObject>::equal_to>
+  ZoneUnorderedSet<IndirectHandle<JSObject>, IndirectHandle<JSObject>::hash,
+                   IndirectHandle<JSObject>::equal_to>
       array_and_object_prototypes_;
   BrokerMode mode_ = kDisabled;
   bool const tracing_enabled_;
@@ -564,7 +562,7 @@ class V8_NODISCARD UnparkedScopeIfNeeded {
   }
 
  private:
-  base::Optional<UnparkedScope> unparked_scope;
+  std::optional<UnparkedScope> unparked_scope;
 };
 
 class V8_NODISCARD JSHeapBrokerScopeForTesting {
@@ -587,8 +585,7 @@ class V8_NODISCARD JSHeapBrokerScopeForTesting {
   JSHeapBroker* const broker_;
 };
 
-template <class T,
-          typename = std::enable_if_t<std::is_convertible<T*, Object*>::value>>
+template <class T, typename = std::enable_if_t<is_subtype_v<T, Object>>>
 OptionalRef<typename ref_traits<T>::ref_type> TryMakeRef(JSHeapBroker* broker,
                                                          ObjectData* data) {
   if (data == nullptr) return {};
@@ -603,10 +600,9 @@ OptionalRef<typename ref_traits<T>::ref_type> TryMakeRef(JSHeapBroker* broker,
 // or
 //
 //  FooRef ref = MakeRef(broker, o);
-template <class T,
-          typename = std::enable_if_t<std::is_convertible<T*, Object*>::value>>
+template <class T, typename = std::enable_if_t<is_subtype_v<T, Object>>>
 OptionalRef<typename ref_traits<T>::ref_type> TryMakeRef(
-    JSHeapBroker* broker, T object, GetOrCreateDataFlags flags = {}) {
+    JSHeapBroker* broker, Tagged<T> object, GetOrCreateDataFlags flags = {}) {
   ObjectData* data = broker->TryGetOrCreateData(object, flags);
   if (data == nullptr) {
     TRACE_BROKER_MISSING(broker, "ObjectData for " << Brief(object));
@@ -614,8 +610,7 @@ OptionalRef<typename ref_traits<T>::ref_type> TryMakeRef(
   return TryMakeRef<T>(broker, data);
 }
 
-template <class T,
-          typename = std::enable_if_t<std::is_convertible<T*, Object*>::value>>
+template <class T, typename = std::enable_if_t<is_subtype_v<T, Object>>>
 OptionalRef<typename ref_traits<T>::ref_type> TryMakeRef(
     JSHeapBroker* broker, Handle<T> object, GetOrCreateDataFlags flags = {}) {
   ObjectData* data = broker->TryGetOrCreateData(object, flags);
@@ -626,28 +621,25 @@ OptionalRef<typename ref_traits<T>::ref_type> TryMakeRef(
   return TryMakeRef<T>(broker, data);
 }
 
-template <class T,
-          typename = std::enable_if_t<std::is_convertible<T*, Object*>::value>>
-typename ref_traits<T>::ref_type MakeRef(JSHeapBroker* broker, T object) {
+template <class T, typename = std::enable_if_t<is_subtype_v<T, Object>>>
+typename ref_traits<T>::ref_type MakeRef(JSHeapBroker* broker,
+                                         Tagged<T> object) {
   return TryMakeRef(broker, object, kCrashOnError).value();
 }
 
-template <class T,
-          typename = std::enable_if_t<std::is_convertible<T*, Object*>::value>>
+template <class T, typename = std::enable_if_t<is_subtype_v<T, Object>>>
 typename ref_traits<T>::ref_type MakeRef(JSHeapBroker* broker,
                                          Handle<T> object) {
   return TryMakeRef(broker, object, kCrashOnError).value();
 }
 
-template <class T,
-          typename = std::enable_if_t<std::is_convertible<T*, Object*>::value>>
+template <class T, typename = std::enable_if_t<is_subtype_v<T, Object>>>
 typename ref_traits<T>::ref_type MakeRefAssumeMemoryFence(JSHeapBroker* broker,
-                                                          T object) {
+                                                          Tagged<T> object) {
   return TryMakeRef(broker, object, kAssumeMemoryFence | kCrashOnError).value();
 }
 
-template <class T,
-          typename = std::enable_if_t<std::is_convertible<T*, Object*>::value>>
+template <class T, typename = std::enable_if_t<is_subtype_v<T, Object>>>
 typename ref_traits<T>::ref_type MakeRefAssumeMemoryFence(JSHeapBroker* broker,
                                                           Handle<T> object) {
   return TryMakeRef(broker, object, kAssumeMemoryFence | kCrashOnError).value();

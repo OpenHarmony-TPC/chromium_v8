@@ -4,13 +4,15 @@
 
 #include "src/compiler/node-properties.h"
 
+#include <optional>
+
 #include "src/compiler/common-operator.h"
-#include "src/compiler/graph.h"
 #include "src/compiler/js-heap-broker.h"
 #include "src/compiler/map-inference.h"
 #include "src/compiler/node-matchers.h"
 #include "src/compiler/operator-properties.h"
 #include "src/compiler/simplified-operator.h"
+#include "src/compiler/turbofan-graph.h"
 #include "src/compiler/verifier.h"
 
 namespace v8 {
@@ -204,6 +206,10 @@ void NodeProperties::ChangeOp(Node* node, const Operator* new_op) {
   Verifier::VerifyNode(node);
 }
 
+// static
+void NodeProperties::ChangeOpUnchecked(Node* node, const Operator* new_op) {
+  node->set_op(new_op);
+}
 
 // static
 Node* NodeProperties::FindFrameStateBefore(Node* node,
@@ -312,12 +318,14 @@ MachineRepresentation NodeProperties::GetProjectionType(
     case IrOpcode::kInt32AddWithOverflow:
     case IrOpcode::kInt32SubWithOverflow:
     case IrOpcode::kInt32MulWithOverflow:
+    case IrOpcode::kInt32AbsWithOverflow:
       CHECK_LE(index, static_cast<size_t>(1));
       return index == 0 ? MachineRepresentation::kWord32
                         : MachineRepresentation::kBit;
     case IrOpcode::kInt64AddWithOverflow:
     case IrOpcode::kInt64SubWithOverflow:
     case IrOpcode::kInt64MulWithOverflow:
+    case IrOpcode::kInt64AbsWithOverflow:
       CHECK_LE(index, static_cast<size_t>(1));
       return index == 0 ? MachineRepresentation::kWord64
                         : MachineRepresentation::kBit;
@@ -337,6 +345,8 @@ MachineRepresentation NodeProperties::GetProjectionType(
       auto call_descriptor = CallDescriptorOf(input->op());
       return call_descriptor->GetReturnType(index).representation();
     }
+    case IrOpcode::kInt32PairAdd:
+    case IrOpcode::kInt32PairSub:
     case IrOpcode::kWord32AtomicPairLoad:
     case IrOpcode::kWord32AtomicPairAdd:
     case IrOpcode::kWord32AtomicPairSub:
@@ -388,7 +398,7 @@ OptionalMapRef NodeProperties::GetJSCreateMap(JSHeapBroker* broker,
       }
     }
   }
-  return base::nullopt;
+  return std::nullopt;
 }
 
 // static

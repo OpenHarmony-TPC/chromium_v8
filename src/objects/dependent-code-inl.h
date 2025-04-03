@@ -5,8 +5,10 @@
 #ifndef V8_OBJECTS_DEPENDENT_CODE_INL_H_
 #define V8_OBJECTS_DEPENDENT_CODE_INL_H_
 
+#include "src/heap/heap-layout-inl.h"
 #include "src/objects/dependent-code.h"
 #include "src/objects/fixed-array-inl.h"
+#include "src/objects/tagged.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -15,24 +17,35 @@ namespace v8 {
 namespace internal {
 
 OBJECT_CONSTRUCTORS_IMPL(DependentCode, WeakArrayList)
-CAST_ACCESSOR(DependentCode)
 
 // static
 template <typename ObjectT>
 void DependentCode::DeoptimizeDependencyGroups(Isolate* isolate, ObjectT object,
                                                DependencyGroups groups) {
-  // Shared objects are designed to never invalidate code.
-  DCHECK(!object.InSharedHeap());
-  object.dependent_code().DeoptimizeDependencyGroups(isolate, groups);
+  static_assert(kTaggedCanConvertToRawObjects);
+  DeoptimizeDependencyGroups(isolate, Tagged<ObjectT>(object), groups);
 }
 
 // static
 template <typename ObjectT>
-bool DependentCode::MarkCodeForDeoptimization(Isolate* isolate, ObjectT object,
+void DependentCode::DeoptimizeDependencyGroups(Isolate* isolate,
+                                               Tagged<ObjectT> object,
+                                               DependencyGroups groups) {
+  // Shared objects are designed to never invalidate code.
+  DCHECK(!HeapLayout::InAnySharedSpace(object) &&
+         !HeapLayout::InReadOnlySpace(object));
+  object->dependent_code()->DeoptimizeDependencyGroups(isolate, groups);
+}
+
+// static
+template <typename ObjectT>
+bool DependentCode::MarkCodeForDeoptimization(Isolate* isolate,
+                                              Tagged<ObjectT> object,
                                               DependencyGroups groups) {
   // Shared objects are designed to never invalidate code.
-  DCHECK(!object.InSharedHeap());
-  return object.dependent_code().MarkCodeForDeoptimization(isolate, groups);
+  DCHECK(!HeapLayout::InAnySharedSpace(object) &&
+         !HeapLayout::InReadOnlySpace(object));
+  return object->dependent_code()->MarkCodeForDeoptimization(isolate, groups);
 }
 
 }  // namespace internal

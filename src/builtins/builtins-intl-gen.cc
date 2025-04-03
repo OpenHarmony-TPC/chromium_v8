@@ -8,7 +8,7 @@
 
 #include "src/builtins/builtins-iterator-gen.h"
 #include "src/builtins/builtins-utils-gen.h"
-#include "src/codegen/code-stub-assembler.h"
+#include "src/codegen/code-stub-assembler-inl.h"
 #include "src/objects/js-list-format-inl.h"
 #include "src/objects/js-list-format.h"
 #include "src/objects/objects-inl.h"
@@ -16,6 +16,8 @@
 
 namespace v8 {
 namespace internal {
+
+#include "src/codegen/define-code-stub-assembler-macros.inc"
 
 class IntlBuiltinsAssembler : public CodeStubAssembler {
  public:
@@ -31,16 +33,17 @@ class IntlBuiltinsAssembler : public CodeStubAssembler {
   TNode<IntPtrT> PointerToSeqStringData(TNode<String> seq_string) {
     CSA_DCHECK(this,
                IsSequentialStringInstanceType(LoadInstanceType(seq_string)));
-    static_assert(SeqOneByteString::kHeaderSize ==
-                  SeqTwoByteString::kHeaderSize);
-    return IntPtrAdd(
-        BitcastTaggedToWord(seq_string),
-        IntPtrConstant(SeqOneByteString::kHeaderSize - kHeapObjectTag));
+    static_assert(OFFSET_OF_DATA_START(SeqOneByteString) ==
+                  OFFSET_OF_DATA_START(SeqTwoByteString));
+    return IntPtrAdd(BitcastTaggedToWord(seq_string),
+                     IntPtrConstant(OFFSET_OF_DATA_START(SeqOneByteString) -
+                                    kHeapObjectTag));
   }
 
   TNode<Uint8T> GetChar(TNode<SeqOneByteString> seq_string, int index) {
-    int effective_offset =
-        SeqOneByteString::kHeaderSize - kHeapObjectTag + index;
+    size_t effective_offset = OFFSET_OF_DATA_START(SeqOneByteString) +
+                              sizeof(SeqOneByteString::Char) * index -
+                              kHeapObjectTag;
     return Load<Uint8T>(seq_string, IntPtrConstant(effective_offset));
   }
 
@@ -48,7 +51,8 @@ class IntlBuiltinsAssembler : public CodeStubAssembler {
   // {pattern} ignoring case.
   void JumpIfStartsWithIgnoreCase(TNode<SeqOneByteString> seq_string,
                                   const char* pattern, Label* target) {
-    int effective_offset = SeqOneByteString::kHeaderSize - kHeapObjectTag;
+    size_t effective_offset =
+        OFFSET_OF_DATA_START(SeqOneByteString) - kHeapObjectTag;
     TNode<Uint16T> raw =
         Load<Uint16T>(seq_string, IntPtrConstant(effective_offset));
     DCHECK_EQ(strlen(pattern), 2);
@@ -68,11 +72,13 @@ class IntlBuiltinsAssembler : public CodeStubAssembler {
         Int32Constant('z' - 'a'));
   }
 
+#ifdef OHOS_JS_ENGINE
   TNode<BoolT> IsChinese(TNode<Uint16T> character) {
     return Word32And(
         Uint32GreaterThanOrEqual(character, Uint32Constant(0x4E00)),
         Uint32LessThanOrEqual(character, Uint32Constant(0x9FFF)));
   }
+#endif
 
   enum class ToLowerCaseKind {
     kToLowerCase,
@@ -118,8 +124,9 @@ void IntlBuiltinsAssembler::ToLowerCaseImpl(
     TNode<String> string, TNode<Object> maybe_locales, TNode<Context> context,
     ToLowerCaseKind kind, std::function<void(TNode<Object>)> ReturnFct) {
   Label call_c(this), return_string(this), runtime(this, Label::kDeferred);
+#ifdef OHOS_JS_ENGINE
   Label two_byte_string(this);
-
+#endif
   // Unpack strings if possible, and bail to runtime unless we get a one-byte
   // flat string.
   ToDirectStringAssembler to_direct(
@@ -130,8 +137,10 @@ void IntlBuiltinsAssembler::ToLowerCaseImpl(
     Label fast(this), check_locale(this);
     // Check for fast locales.
     GotoIf(IsUndefined(maybe_locales), &fast);
-    // Passing a smi here is equivalent to passing an empty list of locales.
-    GotoIf(TaggedIsSmi(maybe_locales), &fast);
+    // Passing a Smi as locales requires performing a ToObject conversion
+    // followed by reading the length property and the "indexed" properties of
+    // it until a valid locale is found.
+    GotoIf(TaggedIsSmi(maybe_locales), &runtime);
     GotoIfNot(IsString(CAST(maybe_locales)), &runtime);
     GotoIfNot(IsSeqOneByteString(CAST(maybe_locales)), &runtime);
     TNode<SeqOneByteString> locale = CAST(maybe_locales);
@@ -160,12 +169,12 @@ void IntlBuiltinsAssembler::ToLowerCaseImpl(
   const TNode<Uint32T> length = LoadStringLengthAsWord32(string);
   GotoIf(Word32Equal(length, Uint32Constant(0)), &return_string);
 
-  const TNode<Int32T> instance_type = to_direct.instance_type();
-  CSA_DCHECK(this,
-             Word32BinaryNot(IsIndirectStringInstanceType(instance_type)));
-
-  GotoIfNot(IsOneByteStringInstanceType(instance_type), &two_byte_string);
-
+  const TNode<BoolT> is_one_byte = to_direct.IsOneByte();
+#ifdef OHOS_JS_ENGINE
+  GotoIfNot(is_one_byte, &two_byte_string);
+#else
+  GotoIfNot(is_one_byte, &runtime);
+#endif
   // For short strings, do the conversion in CSA through the lookup table.
 
   const TNode<String> dst = AllocateSeqOneByteString(length);
@@ -230,73 +239,73 @@ void IntlBuiltinsAssembler::ToLowerCaseImpl(
 
     ReturnFct(result);
   }
+#ifdef OHOS_JS_ENGINE
+  BIND(&two_byte_string);
+  {
+    const TNode<String> dst = AllocateSeqTwoByteString(length);
+    const TNode<IntPtrT> dst_ptr = PointerToSeqStringData(dst);
+    const TNode<ExternalReference> to_lower_table_addr =
+        ExternalConstant(ExternalReference::intl_to_latin1_lower_table());
+    TVARIABLE(IntPtrT, var_cursor, IntPtrConstant(0));
+    const int kMaxShortStringLength = 24;  // Determined empirically.
+    GotoIf(Uint32GreaterThan(length, Uint32Constant(kMaxShortStringLength)),
+           &runtime);
+    const TNode<IntPtrT> start_address =
+        ReinterpretCast<IntPtrT>(to_direct.PointerToData(&runtime));
+    const TNode<IntPtrT> end_address =
+        Signed(IntPtrAdd(start_address, IntPtrMul(IntPtrConstant(kUInt16Size),
+                                                  ChangeUint32ToWord(length))));
 
-   BIND(&two_byte_string);
-   {
-     const TNode<String> dst = AllocateSeqTwoByteString(length);
-     const TNode<IntPtrT> dst_ptr = PointerToSeqStringData(dst);
-     const TNode<ExternalReference> to_lower_table_addr =
-         ExternalConstant(ExternalReference::intl_to_latin1_lower_table());
-     TVARIABLE(IntPtrT, var_cursor, IntPtrConstant(0));
-     const int kMaxShortStringLength = 24;  // Determined empirically.
-     GotoIf(Uint32GreaterThan(length, Uint32Constant(kMaxShortStringLength)),
-            &runtime);
-     const TNode<IntPtrT> start_address =
-         ReinterpretCast<IntPtrT>(to_direct.PointerToData(&runtime));
-     const TNode<IntPtrT> end_address =
-         Signed(IntPtrAdd(start_address, IntPtrMul(IntPtrConstant(kUInt16Size),
-                                                   ChangeUint32ToWord(length))));
- 
-     TVARIABLE(Word32T, var_did_change, Int32Constant(0));
- 
-     VariableList push_vars({&var_cursor, &var_did_change}, zone());
- 
-     BuildFastLoop<IntPtrT>(
-         push_vars, start_address, end_address,
-         [&](TNode<IntPtrT> current) {
-           TNode<Uint16T> c = Load<Uint16T>(current);
- 
-           Label is_assic(this), is_not_assic(this), inc_offset(this);
- 
-           Branch(Uint32LessThanOrEqual(c, Uint32Constant(0x00FF)), &is_assic,
-                  &is_not_assic);
- 
-           BIND(&is_assic);
-           {
-             // For assic character, convert to lower case
-             TNode<Uint16T> lower =
-                 Load<Uint8T>(to_lower_table_addr, ChangeInt32ToIntPtr(c));
-             StoreNoWriteBarrier(MachineRepresentation::kWord16, dst_ptr,
-                                 var_cursor.value(), lower);
-             var_did_change =
-                 Word32Or(Word32NotEqual(c, lower), var_did_change.value());
-             Goto(&inc_offset);
-           }
- 
-           BIND(&is_not_assic);
-           {
-             // For non-assic character, check if is a Chinese character
-             GotoIfNot(IsChinese(c), &runtime);
-             StoreNoWriteBarrier(MachineRepresentation::kWord16, dst_ptr,
-                                 var_cursor.value(), c);
-             Goto(&inc_offset);
-           }
- 
-           BIND(&inc_offset);
-           {
-             // Store to dst string
-             Increment(&var_cursor, kUInt16Size);
-           }
-         },
-         kUInt16Size, LoopUnrollingMode::kNo, IndexAdvanceMode::kPost);
- 
-     // Return the original string if it remained unchanged in order to preserve
-     // e.g. internalization and private symbols (such as the preserved object
-     // hash) on the source string.
-     GotoIfNot(var_did_change.value(), &return_string);
-     ReturnFct(dst);
-   }
+    TVARIABLE(Word32T, var_did_change, Int32Constant(0));
 
+    VariableList push_vars({&var_cursor, &var_did_change}, zone());
+
+    BuildFastLoop<IntPtrT>(
+        push_vars, start_address, end_address,
+        [&](TNode<IntPtrT> current) {
+          TNode<Uint16T> c = Load<Uint16T>(current);
+
+          Label is_assic(this), is_not_assic(this), inc_offset(this);
+
+          Branch(Uint32LessThanOrEqual(c, Uint32Constant(0x00FF)), &is_assic,
+                 &is_not_assic);
+
+          BIND(&is_assic);
+          {
+            // For assic character, convert to lower case
+            TNode<Uint16T> lower =
+                Load<Uint8T>(to_lower_table_addr, ChangeInt32ToIntPtr(c));
+            StoreNoWriteBarrier(MachineRepresentation::kWord16, dst_ptr,
+                                var_cursor.value(), lower);
+            var_did_change =
+                Word32Or(Word32NotEqual(c, lower), var_did_change.value());
+            Goto(&inc_offset);
+          }
+
+          BIND(&is_not_assic);
+          {
+            // For non-assic character, check if is a Chinese character
+            GotoIfNot(IsChinese(c), &runtime);
+            StoreNoWriteBarrier(MachineRepresentation::kWord16, dst_ptr,
+                                var_cursor.value(), c);
+            Goto(&inc_offset);
+          }
+
+          BIND(&inc_offset);
+          {
+            // Store to dst string
+            Increment(&var_cursor, kUInt16Size);
+          }
+        },
+        kUInt16Size, LoopUnrollingMode::kNo, IndexAdvanceMode::kPost);
+
+    // Return the original string if it remained unchanged in order to preserve
+    // e.g. internalization and private symbols (such as the preserved object
+    // hash) on the source string.
+    GotoIfNot(var_did_change.value(), &return_string);
+    ReturnFct(dst);
+  }
+#endif
   BIND(&return_string);
   ReturnFct(string);
 
@@ -360,6 +369,8 @@ TF_BUILTIN(ListFormatPrototypeFormatToParts, IntlBuiltinsAssembler) {
       UncheckedParameter<Int32T>(Descriptor::kJSActualArgumentsCount),
       Runtime::kFormatListToParts, "Intl.ListFormat.prototype.formatToParts");
 }
+
+#include "src/codegen/undef-code-stub-assembler-macros.inc"
 
 }  // namespace internal
 }  // namespace v8

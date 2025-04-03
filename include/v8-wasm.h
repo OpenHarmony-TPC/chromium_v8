@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "v8-internal.h"      // NOLINT(build/include_directory)
 #include "v8-local-handle.h"  // NOLINT(build/include_directory)
 #include "v8-memory-span.h"   // NOLINT(build/include_directory)
 #include "v8-object.h"        // NOLINT(build/include_directory)
@@ -86,12 +87,14 @@ class V8_EXPORT WasmMemoryObject : public Object {
   static void CheckCast(Value* object);
 };
 
+#ifdef OHOS_JS_ENGINE
 // All the tiers of Wasm execution.
 enum class WasmExecutionTier : int8_t {
   kNone,
   kLiftoff,
   kTurbofan,
 };
+#endif
 
 // An instance of WebAssembly.Module.
 class V8_EXPORT WasmModuleObject : public Object {
@@ -111,6 +114,7 @@ class V8_EXPORT WasmModuleObject : public Object {
    */
   CompiledWasmModule GetCompiledModule();
 
+#ifdef OHOS_JS_ENGINE
   /**
    * Compile a Wasm function of the specified index with the specified tier.
    */
@@ -123,7 +127,7 @@ class V8_EXPORT WasmModuleObject : public Object {
   static MaybeLocal<WasmModuleObject> DeserializeOrCompile(
       Isolate* isolate, MemorySpan<const uint8_t> wire_bytes,
       MemorySpan<const uint8_t> wasm_cache, bool& cacheRejected);
-
+#endif
   /**
    * Compile a Wasm module from the provided uncompiled bytes.
    */
@@ -149,6 +153,8 @@ class V8_EXPORT WasmModuleObject : public Object {
  */
 class V8_EXPORT WasmStreaming final {
  public:
+  static constexpr internal::ExternalPointerTag kManagedTag =
+      internal::kWasmWasmStreamingTag;
   class WasmStreamingImpl;
 
   explicit WasmStreaming(std::unique_ptr<WasmStreamingImpl> impl);

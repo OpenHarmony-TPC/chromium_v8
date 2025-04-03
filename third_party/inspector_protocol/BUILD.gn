@@ -13,45 +13,6 @@ config("crdtp_config") {
   include_dirs = [ "../../include" ]
 }
 
-v8_source_set_shared("crdtp_shared") {
-  sources = [
-    "crdtp/cbor.cc",
-    "crdtp/cbor.h",
-    "crdtp/dispatch.cc",
-    "crdtp/dispatch.h",
-    "crdtp/error_support.cc",
-    "crdtp/error_support.h",
-    "crdtp/export.h",
-    "crdtp/find_by_first.h",
-    "crdtp/json.cc",
-    "crdtp/json.h",
-    "crdtp/maybe.h",
-    "crdtp/parser_handler.h",
-    "crdtp/protocol_core.cc",
-    "crdtp/protocol_core.h",
-    "crdtp/serializable.cc",
-    "crdtp/serializable.h",
-    "crdtp/span.cc",
-    "crdtp/span.h",
-    "crdtp/status.cc",
-    "crdtp/status.h",
-  ]
-  configs = [ ":crdtp_config" ]
-  deps = [ ":crdtp_platform_shared" ]
-}
-
-# A small adapter library which only :crdtp_shared may depend on.
-v8_source_set_shared("crdtp_platform_shared") {
-  visibility = [ ":crdtp_shared" ]
-  sources = [
-    "crdtp/json_platform.h",
-    "crdtp/json_platform_v8.cc",
-  ]
-  public_deps = [ "../../v8_shared:v8_libbase_shared" ]
-  deps = [ "../../v8_shared:v8_internal_headers_shared" ]
-  configs = [ ":crdtp_config" ]
-}
-
 v8_source_set("crdtp") {
   sources = [
     "crdtp/cbor.cc",

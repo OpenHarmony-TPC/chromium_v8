@@ -18,18 +18,22 @@ with different test suite extensions and build configurations.
 # TODO(majeski): Add some tests for the fuzzers.
 
 from collections import deque
-import os
+from pathlib import Path
+
+import re
 import sys
 import unittest
-from os.path import dirname as up
 from mock import patch
 
-TOOLS_ROOT = up(up(os.path.abspath(__file__)))
-sys.path.append(TOOLS_ROOT)
+TOOLS_ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(TOOLS_ROOT))
+
 from testrunner import standard_runner
 from testrunner import num_fuzzer
 from testrunner.testproc import base
 from testrunner.testproc import fuzzer
+from testrunner.testproc import resultdb
+from testrunner.testproc.resultdb_server_mock import RDBMockServer
 from testrunner.utils.test_utils import (
     temp_base,
     TestRunnerTest,
@@ -37,7 +41,17 @@ from testrunner.utils.test_utils import (
     FakeOSContext,
 )
 
+
 class StandardRunnerTest(TestRunnerTest):
+
+  def setUp(self):
+    self.mock_rdb_server = RDBMockServer()
+    resultdb.TESTING_SINK = dict(
+        auth_token='none', address=self.mock_rdb_server.address)
+
+  def tearDown(self):
+    resultdb.TESTING_SINK = None
+
   def get_runner_class(self):
     return standard_runner.StandardTestRunner
 
@@ -125,11 +139,11 @@ class StandardRunnerTest(TestRunnerTest):
     result.has_returncode(1)
 
   def testGN(self):
-    """Test running only failing tests in two variants."""
-    result = self.run_tests('--gn',baseroot="testroot5")
+    """Test setup with legacy GN out dir."""
+    result = self.run_tests('--gn', baseroot="testroot5", outdir='out.gn')
     result.stdout_includes('>>> Latest GN build found: build')
     result.stdout_includes('Build found: ')
-    result.stdout_includes('v8_test_/out.gn/build')
+    result.stdout_includes('_v8_test/out.gn/build')
     result.has_returncode(2)
 
   def testMalformedJsonConfig(self):
@@ -155,7 +169,7 @@ class StandardRunnerTest(TestRunnerTest):
     # With test processors we don't count reruns as separated failures.
     # TODO(majeski): fix it?
     result.stdout_includes('1 tests failed')
-    result.has_returncode(0)
+    result.has_returncode(1)
 
     # TODO(majeski): Previously we only reported the variant flags in the
     # flags field of the test result.
@@ -207,8 +221,14 @@ class StandardRunnerTest(TestRunnerTest):
     result.stdout_includes('=== sweet/bananaflakes (flaky) ===')
     result.stdout_includes('1 tests failed')
     result.stdout_includes('1 tests were flaky')
-    result.has_returncode(0)
+    result.has_returncode(1)
     result.json_content_equals('expected_test_results2.json')
+    self.assertTrue(re.search(
+        r'sweet/bananaflakes default: FAIL \(\d+\.\d+:\d+\.\d+\)',
+        result.test_schedule))
+    self.assertTrue(re.search(
+        r'sweet/bananaflakes default: PASS \(\d+\.\d+:\d+\.\d+\)',
+        result.test_schedule))
 
   def testAutoDetect(self):
     """Fake a build with several auto-detected options.
@@ -221,25 +241,35 @@ class StandardRunnerTest(TestRunnerTest):
         '--variants=default',
         'sweet/bananas',
         config_overrides=dict(
-          dcheck_always_on=True, is_asan=True, is_cfi=True,
-          is_msan=True, is_tsan=True, is_ubsan_vptr=True, target_cpu='x86',
-          v8_enable_i18n_support=False, v8_target_cpu='x86',
-          v8_enable_verify_csa=False, v8_enable_lite_mode=False,
-          v8_enable_pointer_compression=False,
-          v8_enable_pointer_compression_shared_cage=False,
-          v8_enable_shared_ro_heap=False,
-          v8_enable_sandbox=False
-        )
-    )
-    result.stdout_includes('>>> Autodetected:')
-    result.stdout_includes('asan')
-    result.stdout_includes('cfi_vptr')
-    result.stdout_includes('dcheck_always_on')
-    result.stdout_includes('msan')
-    result.stdout_includes('no_i18n')
-    result.stdout_includes('tsan')
-    result.stdout_includes('ubsan_vptr')
-    result.stdout_includes('webassembly')
+            arch="ia32",
+            asan=True,
+            cfi=True,
+            dcheck_always_on=True,
+            has_webassembly=True,
+            msan=True,
+            target_cpu='x86',
+            tsan=True,
+            ubsan=True,
+            use_sanitizer=True,
+            v8_target_cpu='x86',
+        ))
+    result.stdout_includes('>>> Statusfile variables:')
+    result.stdout_includes(
+        "DEBUG_defined=False, arch=ia32, asan=True, byteorder=little, "
+        "cfi=True, code_comments=False, component_build=False, "
+        "dcheck_always_on=True, debug_code=False, debugging_features=False, "
+        "deopt_fuzzer=False, device_type=None, "
+        "dict_property_const_tracking=False, disassembler=False, "
+        "endurance_fuzzer=False, full_debug=False, gc_fuzzer=False, "
+        "gc_stress=False, gdbjit=False, has_jitless=False, has_maglev=False, "
+        "has_turbofan=False, has_webassembly=True, i18n=True, "
+        "interrupt_fuzzer=False, is_android=False, is_ios=False, "
+        "isolates=False, lite_mode=False, mode=debug, msan=True, "
+        "no_harness=False, no_simd_hardware=False, novfp3=False, "
+        "optimize_for_size=False, simulator_run=False, slow_dchecks=False, "
+        "system=linux, target_cpu=x86, tsan=True, ubsan=True, "
+        "use_sanitizer=True, v8_target_cpu=x86, verify_heap=False, "
+        "verify_predictable=False")
     result.stdout_includes('>>> Running tests for ia32.release')
     result.has_returncode(0)
     # TODO(machenbach): Test some more implications of the auto-detected
@@ -264,8 +294,8 @@ class StandardRunnerTest(TestRunnerTest):
           '--progress=verbose',
           'sweet',
       )
-      result.stdout_includes('===>Starting stuff\n'
-                             '>>> Running tests for x64.release\n'
+      result.stdout_includes('===>Starting stuff')
+      result.stdout_includes('>>> Running tests for x64.release\n'
                              '>>> Running with test processors\n')
       result.stdout_includes('--- stdout ---\nfake stdout 1')
       result.stdout_includes('--- stderr ---\nfake stderr 1')
@@ -316,7 +346,7 @@ class StandardRunnerTest(TestRunnerTest):
 
   def testNoBuildConfig(self):
     """Test failing run when build config is not found."""
-    result = self.run_tests(baseroot='wrong_path')
+    result = self.run_tests(baseroot='wrong_path', with_build_config=False)
     result.stdout_includes('Failed to load build config')
     result.has_returncode(5)
 
@@ -349,7 +379,7 @@ class StandardRunnerTest(TestRunnerTest):
         '--variants=default',
         'sweet/bananas',
         infra_staging=False,
-        config_overrides=dict(v8_enable_verify_predictable=True),
+        config_overrides=dict(verify_predictable=True),
     )
     result.stdout_includes('1 tests ran')
     result.stdout_includes('sweet/bananas default: FAIL')
@@ -408,7 +438,7 @@ class StandardRunnerTest(TestRunnerTest):
         '--variants=default,stress',
         'sweet/bananas',
         'sweet/raspberries',
-        config_overrides=dict(is_asan=True),
+        config_overrides=dict(asan=True),
     )
     # Both tests are either marked as running in only default or only
     # slow variant.
@@ -590,7 +620,7 @@ class NumFuzzerTest(TestRunnerTest):
               'sweet/bananas',
             )
             result.has_returncode(0)
-            result.stdout_includes('>>> Autodetected')
+            result.stdout_includes('>>> Statusfile variables:')
             result.stdout_includes('11 tests ran')
 
 
@@ -600,7 +630,7 @@ class OtherTest(TestRunnerTest):
     with temp_base() as basedir:
       from testrunner.local import statusfile
       self.assertTrue(statusfile.PresubmitCheck(
-          os.path.join(basedir, 'test', 'sweet', 'sweet.status')))
+          basedir / 'test' / 'sweet' / 'sweet.status'))
 
 
 if __name__ == '__main__':

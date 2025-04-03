@@ -8,9 +8,9 @@
 #include <memory>
 
 #include "src/compiler/common-operator.h"
-#include "src/compiler/graph.h"
 #include "src/compiler/machine-operator.h"
 #include "src/compiler/simplified-operator.h"
+#include "src/compiler/turbofan-graph.h"
 #include "src/zone/zone-containers.h"
 
 namespace v8 {
@@ -42,10 +42,10 @@ class V8_EXPORT_PRIVATE Int64Lowering {
 
   void LowerGraph();
 
+ private:
   static int GetParameterCountAfterLowering(
       Signature<MachineRepresentation>* signature);
 
- private:
   enum class State : uint8_t { kUnvisited, kOnStack, kVisited };
 
   struct Replacement {

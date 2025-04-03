@@ -57,6 +57,15 @@ inspector_protocol_generate("protocol_generated_sources") {
 }
 
 config("inspector_config") {
+  # Only targets in this file and v8_internal_headers can depend on this.
+  visibility = [
+    ":*",
+    "../..:v8_internal_headers",
+  ]
+  include_dirs = [ "$target_gen_dir/../../include" ]
+}
+
+config("inspector_internal_config") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
   configs = [ "../../:internal_config" ]
@@ -64,7 +73,7 @@ config("inspector_config") {
 }
 
 v8_header_set("inspector_test_headers") {
-  configs = [ ":inspector_config" ]
+  configs = [ ":inspector_internal_config" ]
 
   public_deps = [ "../..:v8_headers" ]
 
@@ -94,7 +103,9 @@ v8_source_set("inspector") {
     "../../:v8_libbase",
   ]
 
-  configs = [ ":inspector_config" ]
+  configs = [ ":inspector_internal_config" ]
+
+  public_configs = [ ":inspector_config" ]
 
   sources = rebase_path(_protocol_generated, ".", target_gen_dir)
   sources += [
@@ -135,6 +146,8 @@ v8_source_set("inspector") {
     "v8-debugger-script.h",
     "v8-debugger.cc",
     "v8-debugger.h",
+    "v8-deep-serializer.cc",
+    "v8-deep-serializer.h",
     "v8-heap-profiler-agent-impl.cc",
     "v8-heap-profiler-agent-impl.h",
     "v8-inspector-impl.cc",
@@ -149,12 +162,12 @@ v8_source_set("inspector") {
     "v8-runtime-agent-impl.h",
     "v8-schema-agent-impl.cc",
     "v8-schema-agent-impl.h",
+    "v8-serialization-duplicate-tracker.cc",
+    "v8-serialization-duplicate-tracker.h",
     "v8-stack-trace-impl.cc",
     "v8-stack-trace-impl.h",
     "v8-value-utils.cc",
     "v8-value-utils.h",
-    "v8-webdriver-serializer.cc",
-    "v8-webdriver-serializer.h",
     "value-mirror.cc",
     "value-mirror.h",
   ]
@@ -165,108 +178,4 @@ group("v8_generated_cc_files") {
   testonly = true
 
   deps = [ ":protocol_generated_sources" ]
-}
-
-config("inspector_config_shared") {
-  visibility = [ ":*" ]  # Only targets in this file can depend on this.
-
-  configs = [ "../../v8_shared:internal_config_shared" ]
-  include_dirs = [ "../../include" ]
-}
-
-v8_header_set_shared("inspector_test_headers_shared") {
-  configs = [ ":inspector_config_shared" ]
-
-  public_deps = [ "../../v8_shared:v8_headers_shared" ]
-
-  sources = [ "test-interface.h" ]
-}
-
-v8_source_set_shared("inspector_string_conversions_shared") {
-  sources = [
-    "v8-string-conversions.cc",
-    "v8-string-conversions.h",
-  ]
-  configs = [ "../../v8_shared:internal_config_base_shared" ]
-  deps = [ "../../v8_shared:v8_libbase_shared" ]
-}
-
-v8_source_set_shared("inspector_shared") {
-  deps = [
-    ":inspector_string_conversions_shared",
-    "../../v8_shared:v8_tracing_shared",
-    "../../v8_shared:v8_version_shared",
-    "../../third_party/inspector_protocol:crdtp_shared",
-  ]
-
-  public_deps = [
-    ":inspector_test_headers_shared",
-    ":protocol_generated_sources",
-    "../../v8_shared:v8_libbase_shared",
-  ]
-
-  configs = [ ":inspector_config_shared" ]
-
-  sources = rebase_path(_protocol_generated, ".", target_gen_dir)
-  sources += [
-    "../../include/v8-inspector-protocol.h",
-    "../../include/v8-inspector.h",
-  ]
-  sources += [
-    "crc32.cc",
-    "crc32.h",
-    "custom-preview.cc",
-    "custom-preview.h",
-    "injected-script.cc",
-    "injected-script.h",
-    "inspected-context.cc",
-    "inspected-context.h",
-    "remote-object-id.cc",
-    "remote-object-id.h",
-    "search-util.cc",
-    "search-util.h",
-    "string-16.cc",
-    "string-16.h",
-    "string-util.cc",
-    "string-util.h",
-    "test-interface.cc",
-    "v8-console-agent-impl.cc",
-    "v8-console-agent-impl.h",
-    "v8-console-message.cc",
-    "v8-console-message.h",
-    "v8-console.cc",
-    "v8-console.h",
-    "v8-debugger-agent-impl.cc",
-    "v8-debugger-agent-impl.h",
-    "v8-debugger-barrier.cc",
-    "v8-debugger-barrier.h",
-    "v8-debugger-id.cc",
-    "v8-debugger-id.h",
-    "v8-debugger-script.cc",
-    "v8-debugger-script.h",
-    "v8-debugger.cc",
-    "v8-debugger.h",
-    "v8-heap-profiler-agent-impl.cc",
-    "v8-heap-profiler-agent-impl.h",
-    "v8-inspector-impl.cc",
-    "v8-inspector-impl.h",
-    "v8-inspector-session-impl.cc",
-    "v8-inspector-session-impl.h",
-    "v8-profiler-agent-impl.cc",
-    "v8-profiler-agent-impl.h",
-    "v8-regex.cc",
-    "v8-regex.h",
-    "v8-runtime-agent-impl.cc",
-    "v8-runtime-agent-impl.h",
-    "v8-schema-agent-impl.cc",
-    "v8-schema-agent-impl.h",
-    "v8-stack-trace-impl.cc",
-    "v8-stack-trace-impl.h",
-    "v8-value-utils.cc",
-    "v8-value-utils.h",
-    "v8-webdriver-serializer.cc",
-    "v8-webdriver-serializer.h",
-    "value-mirror.cc",
-    "value-mirror.h",
-  ]
 }
