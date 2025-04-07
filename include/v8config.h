@@ -82,12 +82,19 @@ path. Add it with -I<path> to the command line
 //  V8_OS_STARBOARD     - Starboard (platform abstraction for Cobalt)
 //  V8_OS_AIX           - AIX
 //  V8_OS_WIN           - Microsoft Windows
+//  V8_OS_OHOS          - OHOS
 
 #if defined(__ANDROID__)
 # define V8_OS_ANDROID 1
 # define V8_OS_LINUX 1
 # define V8_OS_POSIX 1
 # define V8_OS_STRING "android"
+
+#elif defined(OSOHOS)
+# define V8_OS_OHOS 1
+# define V8_OS_LINUX 1
+# define V8_OS_POSIX 1
+# define V8_OS_STRING "ohos"
 
 #elif defined(__APPLE__)
 # define V8_OS_POSIX 1
@@ -181,6 +188,7 @@ path. Add it with -I<path> to the command line
 
 // The target OS is provided, just check that at least one known value is set.
 # if !defined(V8_TARGET_OS_ANDROID) \
+  && !defined(V8_TARGET_OS_OHOS) \
   && !defined(V8_TARGET_OS_FUCHSIA) \
   && !defined(V8_TARGET_OS_IOS) \
   && !defined(V8_TARGET_OS_LINUX) \
@@ -193,6 +201,7 @@ path. Add it with -I<path> to the command line
 #else  // V8_HAVE_TARGET_OS
 
 # if defined(V8_TARGET_OS_ANDROID) \
+  || defined(V8_TARGET_OS_OHOS) \
   || defined(V8_TARGET_OS_FUCHSIA) \
   || defined(V8_TARGET_OS_IOS) \
   || defined(V8_TARGET_OS_LINUX) \
@@ -219,6 +228,10 @@ path. Add it with -I<path> to the command line
 # define V8_TARGET_OS_LINUX
 #endif
 
+#ifdef V8_OS_OHOS
+# define V8_TARGET_OS_OHOS
+#endif
+
 #ifdef V8_OS_MACOS
 # define V8_TARGET_OS_MACOS
 #endif
@@ -231,6 +244,8 @@ path. Add it with -I<path> to the command line
 
 #if defined(V8_TARGET_OS_ANDROID)
 # define V8_TARGET_OS_STRING "android"
+#elif defined(V8_TARGET_OS_OHOS)
+# define V8_TARGET_OS_STRING "ohos"
 #elif defined(V8_TARGET_OS_FUCHSIA)
 # define V8_TARGET_OS_STRING "fuchsia"
 #elif defined(V8_TARGET_OS_IOS)
