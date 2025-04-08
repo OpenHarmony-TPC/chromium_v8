@@ -6,14 +6,10 @@
 #include "src/codegen/assembler-arch.h"
 #include "src/codegen/assembler-inl.h"
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-#include "src/codegen/arm64/jit-code-signer-helper.h"
-#endif
-
 namespace v8 {
 namespace internal {
 
-#if defined(V8_TARGET_ARCH_PPC) || defined(V8_TARGET_ARCH_PPC64)
+#if defined(V8_TARGET_ARCH_PPC64)
 
 ConstantPoolBuilder::ConstantPoolBuilder(int ptr_reach_bits,
                                          int double_reach_bits) {
@@ -213,7 +209,7 @@ int ConstantPoolBuilder::Emit(Assembler* assm) {
   return !empty ? (assm->pc_offset() - emitted_label_.pos()) : 0;
 }
 
-#endif  // defined(V8_TARGET_ARCH_PPC) || defined(V8_TARGET_ARCH_PPC64)
+#endif  // defined(V8_TARGET_ARCH_PPC64)
 
 #if defined(V8_TARGET_ARCH_ARM64)
 
@@ -248,9 +244,6 @@ RelocInfoStatus ConstantPool::RecordKey(ConstantPoolKey key, int offset) {
     }
   }
   entries_.insert(std::make_pair(key, offset));
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  TrySkipNext(assm_->GetJitCodeSigner(), 1);
-#endif
 
   if (Entry32Count() + Entry64Count() > ConstantPool::kApproxMaxEntryCount) {
     // Request constant pool emission after the next instruction.
@@ -315,12 +308,14 @@ void ConstantPool::Clear() {
   entry32_count_ = 0;
   entry64_count_ = 0;
   next_check_ = 0;
+  old_next_check_ = 0;
 }
 
 void ConstantPool::StartBlock() {
   if (blocked_nesting_ == 0) {
     // Prevent constant pool checks from happening by setting the next check to
     // the biggest possible offset.
+    old_next_check_ = next_check_;
     next_check_ = kMaxInt;
   }
   ++blocked_nesting_;
@@ -330,8 +325,10 @@ void ConstantPool::EndBlock() {
   --blocked_nesting_;
   if (blocked_nesting_ == 0) {
     DCHECK(IsInImmRangeIfEmittedAt(assm_->pc_offset()));
-    // Make sure a check happens quickly after getting unblocked.
-    next_check_ = 0;
+    // Restore the old next_check_ value if it's less than the current
+    // next_check_. This accounts for any attempt to emit pools sooner whilst
+    // pools were blocked.
+    next_check_ = std::min(next_check_, old_next_check_);
   }
 }
 
@@ -358,14 +355,8 @@ void ConstantPool::EmitEntries() {
 
 void ConstantPool::Emit(const ConstantPoolKey& key) {
   if (key.is_value32()) {
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    TrySkipNext(assm_->GetJitCodeSigner(), 1);
-#endif
     assm_->dd(key.value32());
   } else {
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    TrySkipNext(assm_->GetJitCodeSigner(), 2);
-#endif
     assm_->dq(key.value64());
   }
 }

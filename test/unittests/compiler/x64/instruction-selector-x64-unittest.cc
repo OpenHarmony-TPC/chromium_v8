@@ -4,7 +4,9 @@
 
 #include <limits>
 
+#include "src/codegen/assembler.h"
 #include "src/common/globals.h"
+#include "src/compiler/backend/instruction-codes.h"
 #include "src/compiler/machine-operator.h"
 #include "src/compiler/node-matchers.h"
 #include "src/objects/objects-inl.h"
@@ -1048,7 +1050,7 @@ TEST_F(InstructionSelectorTest, Int32AddMinNegativeDisplacement) {
   // https://crbug.com/1091892. The key here is that we match on a
   // sequence like: Int32Add(Int32Sub(-524288, -2147483648), -26048), which
   // matches on an EmitLea, with -2147483648 as the displacement. Since we
-  // have a Int32Sub node, it sets kNegativeDisplacement, and later we try to
+  // have an Int32Sub node, it sets kNegativeDisplacement, and later we try to
   // negate -2147483648, which overflows.
   StreamBuilder m(this, MachineType::Int32());
   Node* const c0 = m.Int32Constant(-524288);
@@ -2085,6 +2087,7 @@ TEST_F(InstructionSelectorTest, LoadAndWord64ShiftRight32) {
   }
 }
 
+#if V8_ENABLE_WEBASSEMBLY
 // -----------------------------------------------------------------------------
 // SIMD.
 
@@ -2099,7 +2102,7 @@ TEST_F(InstructionSelectorTest, SIMDSplatZero) {
     m.Return(splat);
     Stream s = m.Build();
     ASSERT_EQ(1U, s.size());
-    EXPECT_EQ(kX64S128Zero, s[0]->arch_opcode());
+    EXPECT_EQ(kX64SZero, s[0]->arch_opcode());
     ASSERT_EQ(0U, s[0]->InputCount());
     EXPECT_EQ(1U, s[0]->OutputCount());
   }
@@ -2109,7 +2112,7 @@ TEST_F(InstructionSelectorTest, SIMDSplatZero) {
     m.Return(splat);
     Stream s = m.Build();
     ASSERT_EQ(1U, s.size());
-    EXPECT_EQ(kX64S128Zero, s[0]->arch_opcode());
+    EXPECT_EQ(kX64SZero, s[0]->arch_opcode());
     ASSERT_EQ(0U, s[0]->InputCount());
     EXPECT_EQ(1U, s[0]->OutputCount());
   }
@@ -2119,7 +2122,7 @@ TEST_F(InstructionSelectorTest, SIMDSplatZero) {
     m.Return(splat);
     Stream s = m.Build();
     ASSERT_EQ(1U, s.size());
-    EXPECT_EQ(kX64S128Zero, s[0]->arch_opcode());
+    EXPECT_EQ(kX64SZero, s[0]->arch_opcode());
     ASSERT_EQ(0U, s[0]->InputCount());
     EXPECT_EQ(1U, s[0]->OutputCount());
   }
@@ -2129,13 +2132,12 @@ TEST_F(InstructionSelectorTest, SIMDSplatZero) {
     m.Return(splat);
     Stream s = m.Build();
     ASSERT_EQ(1U, s.size());
-    EXPECT_EQ(kX64S128Zero, s[0]->arch_opcode());
+    EXPECT_EQ(kX64SZero, s[0]->arch_opcode());
     ASSERT_EQ(0U, s[0]->InputCount());
     EXPECT_EQ(1U, s[0]->OutputCount());
   }
 }
 
-#if V8_ENABLE_WEBASSEMBLY
 struct ArchShuffle {
   uint8_t shuffle[kSimd128Size];
   ArchOpcode arch_opcode;
@@ -2370,6 +2372,43 @@ INSTANTIATE_TEST_SUITE_P(InstructionSelectorTest,
                          InstructionSelectorSIMDArchShuffleTest,
                          ::testing::ValuesIn(kArchShuffles));
 
+struct ArchShuffle256 {
+  uint8_t shuffle[kSimd256Size];
+  ArchOpcode arch_opcode;
+  size_t input_count;
+};
+
+static constexpr ArchShuffle256 kArchShuffles256[] = {
+    {{4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 0,  1,  2,  3,
+      20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 16, 17, 18, 19},
+     kX64Vpshufd,
+     2}};
+
+using InstructionSelectorSIMDArchShuffle256Test =
+    InstructionSelectorTestWithParam<ArchShuffle256>;
+
+TEST_P(InstructionSelectorSIMDArchShuffle256Test, SIMDArchShuffle256) {
+  MachineType type = MachineType::Simd128();
+  {
+    // Tests various shuffle optimizations
+    StreamBuilder m(this, type, type, type);
+    auto param = GetParam();
+    auto shuffle = param.shuffle;
+    const Operator* op = m.machine()->I8x32Shuffle(shuffle);
+    Node* n = m.AddNode(op, m.Parameter(0), m.Parameter(1));
+    m.Return(n);
+    Stream s = m.Build();
+    ASSERT_EQ(1U, s.size());
+    EXPECT_EQ(param.arch_opcode, s[0]->arch_opcode());
+    ASSERT_EQ(param.input_count, s[0]->InputCount());
+    EXPECT_EQ(1U, s[0]->OutputCount());
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(InstructionSelectorTest,
+                         InstructionSelectorSIMDArchShuffle256Test,
+                         ::testing::ValuesIn(kArchShuffles256));
+
 struct ShuffleWithZeroInput {
   uint8_t shuffle_mask[kSimd128Size];
   ArchOpcode arch_opcode;
@@ -2477,6 +2516,23 @@ TEST_F(InstructionSelectorTest, F64x2PromoteLowF32x4WithS128Load64Zero) {
   EXPECT_EQ(2U, s[0]->InputCount());
   EXPECT_EQ(1U, s[0]->OutputCount());
 }
+
+TEST_F(InstructionSelectorTest, SIMDF32x4SConvert) {
+  // Test optimization for F32x4UConvertI32x4.
+  // If the input of F32x4UConvertI32x4 is zero-extend from I16x8,
+  // F32x4SConvertI32x4 can be used, it's more efficient.
+  StreamBuilder m(this, MachineType::Simd128());
+  Node* const splat = m.I16x8Splat(m.Int32Constant(0xFFFF));
+  Node* const extend = m.AddNode(m.machine()->I32x4UConvertI16x8Low(), splat);
+  Node* const convert = m.AddNode(m.machine()->F32x4UConvertI32x4(), extend);
+  m.Return(convert);
+  Stream s = m.Build();
+  ASSERT_EQ(3U, s.size());
+  EXPECT_EQ(kX64F32x4SConvertI32x4, s[2]->arch_opcode());
+  ASSERT_EQ(1U, s[2]->InputCount());
+  EXPECT_EQ(1U, s[2]->OutputCount());
+}
+
 #endif  // V8_ENABLE_WEBASSEMBLY
 
 }  // namespace compiler

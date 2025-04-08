@@ -8,8 +8,9 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 
-#include "src/base/optional.h"
+#include "absl/container/flat_hash_map.h"
 #include "src/codegen/arm64/constants-arm64.h"
 #include "src/codegen/arm64/instructions-arm64.h"
 #include "src/codegen/arm64/register-arm64.h"
@@ -17,6 +18,7 @@
 #include "src/codegen/constant-pool.h"
 #include "src/common/globals.h"
 #include "src/utils/utils.h"
+#include "src/zone/zone-containers.h"
 
 // Windows arm64 SDK defines mvn to NEON intrinsic neon_not which will not
 // be used here.
@@ -27,11 +29,6 @@
 #if defined(V8_OS_WIN)
 #include "src/diagnostics/unwinding-info-win64.h"
 #endif  // V8_OS_WIN
-
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-#include "src/codegen/arm64/jit-code-signer-helper.h"
-#include "src/codegen/arm64/jit-code-signer-base.h"
-#endif
 
 namespace v8 {
 namespace internal {
@@ -124,7 +121,7 @@ class Operand {
   bool NeedsRelocation(const Assembler* assembler) const;
 
  private:
-  base::Optional<HeapNumberRequest> heap_number_request_;
+  std::optional<HeapNumberRequest> heap_number_request_;
   Immediate immediate_;
   Register reg_;
   Shift shift_;
@@ -167,6 +164,26 @@ class MemOperand {
   unsigned shift_amount_;
 };
 
+class AssemblerZone {
+ public:
+  explicit AssemblerZone(const MaybeAssemblerZone& zone)
+      // Create a fresh Zone unless one is already provided.
+      : maybe_local_zone_(
+            std::holds_alternative<Zone*>(zone)
+                ? std::nullopt
+                : std::make_optional<Zone>(std::get<AccountingAllocator*>(zone),
+                                           ZONE_NAME)),
+        zone_(std::holds_alternative<Zone*>(zone)
+                  ? std::get<Zone*>(zone)
+                  : &maybe_local_zone_.value()) {}
+
+  Zone* get() const { return zone_; }
+
+ private:
+  std::optional<Zone> maybe_local_zone_ = std::nullopt;
+  Zone* zone_;
+};
+
 // -----------------------------------------------------------------------------
 // Assembler.
 
@@ -177,20 +194,20 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // relocation information starting from the end of the buffer. See CodeDesc
   // for a detailed comment on the layout (globals.h).
   //
+  // When available, a zone should be provided for the assembler to manage
+  // temporary state, as long as the assembler does not outlive it. An
+  // AccountingAllocator can be provided instead.
+  //
   // If the provided buffer is nullptr, the assembler allocates and grows its
   // own buffer. Otherwise it takes ownership of the provided buffer.
-  explicit Assembler(const AssemblerOptions&,
-                     std::unique_ptr<AssemblerBuffer> = {});
+  Assembler(const MaybeAssemblerZone&, const AssemblerOptions&,
+            std::unique_ptr<AssemblerBuffer> = {});
 
   ~Assembler() override;
 
-  void AbortedCodeGeneration() override;
+  Zone* zone() const { return zone_.get(); }
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  JitCodeSignerBase *GetJitCodeSigner() {
-    return jit_code_signer_;
-  }
-#endif
+  void AbortedCodeGeneration() override;
 
   // System functions ---------------------------------------------------------
   // Start generating code from the beginning of the buffer, discarding any code
@@ -203,12 +220,14 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // GetCode emits any pending (non-emitted) code and fills the descriptor desc.
   static constexpr int kNoHandlerTable = 0;
   static constexpr SafepointTableBuilderBase* kNoSafepointTable = nullptr;
-  void GetCode(Isolate* isolate, CodeDesc* desc,
+  void GetCode(LocalIsolate* isolate, CodeDesc* desc,
                SafepointTableBuilderBase* safepoint_table_builder,
                int handler_table_offset);
 
+  // Convenience wrapper for allocating with an Isolate.
+  void GetCode(Isolate* isolate, CodeDesc* desc);
   // Convenience wrapper for code without safepoint or handler tables.
-  void GetCode(Isolate* isolate, CodeDesc* desc) {
+  void GetCode(LocalIsolate* isolate, CodeDesc* desc) {
     GetCode(isolate, desc, kNoSafepointTable, kNoHandlerTable);
   }
 
@@ -265,10 +284,12 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
                                                       Address constant_pool);
   inline static void set_target_address_at(
       Address pc, Address constant_pool, Address target,
+      WritableJitAllocation* jit_allocation,
       ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
 
   inline static void set_target_compressed_address_at(
       Address pc, Address constant_pool, Tagged_t target,
+      WritableJitAllocation* jit_allocation,
       ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
 
   // Returns the handle for the code object called at 'pc'.
@@ -285,13 +306,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // code is moved into the code space.
   static inline Builtin target_builtin_at(Address pc);
 
-  // This sets the branch destination. 'location' here can be either the pc of
-  // an immediate branch or the address of an entry in the constant pool.
-  // This is for calls and branches within generated code.
-  inline static void deserialization_set_special_target_at(Address location,
-                                                           Code code,
-                                                           Address target);
-
   // Get the size of the special target encoded at 'location'.
   inline static int deserialization_special_target_size(Address location);
 
@@ -299,6 +313,13 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   inline static void deserialization_set_target_internal_reference_at(
       Address pc, Address target,
       RelocInfo::Mode mode = RelocInfo::INTERNAL_REFERENCE);
+
+  // Read/modify the uint32 constant used at pc.
+  static inline uint32_t uint32_constant_at(Address pc, Address constant_pool);
+  static inline void set_uint32_constant_at(
+      Address pc, Address constant_pool, uint32_t new_constant,
+      WritableJitAllocation* jit_allocation = nullptr,
+      ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
 
   // This value is used in the serialization process and must be zero for
   // ARM64, as the code target is split across multiple instructions and does
@@ -2724,7 +2745,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   }
 
   ptrdiff_t InstructionOffset(Instruction* instr) const {
-    return reinterpret_cast<byte*>(instr) - buffer_start_;
+    return reinterpret_cast<uint8_t*>(instr) - buffer_start_;
   }
 
   // Register encoding.
@@ -2811,7 +2832,15 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   inline static Instr ImmCondCmp(unsigned imm);
   inline static Instr Nzcv(StatusFlags nzcv);
 
-  static bool IsImmAddSub(int64_t immediate);
+  static constexpr bool IsImmAddSub(int64_t immediate) {
+    return is_uint12(immediate) ||
+           (is_uint12(immediate >> 12) && ((immediate & 0xFFF) == 0));
+  }
+
+  static constexpr bool IsImmConditionalCompare(int64_t immediate) {
+    return is_uint5(immediate);
+  }
+
   static bool IsImmLogical(uint64_t value, unsigned width, unsigned* n,
                            unsigned* imm_s, unsigned* imm_r);
 
@@ -2825,12 +2854,14 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   inline static Instr ImmHint(int imm7);
   inline static Instr ImmBarrierDomain(int imm2);
   inline static Instr ImmBarrierType(int imm2);
-  inline static unsigned CalcLSDataSize(LoadStoreOp op);
+  inline static unsigned CalcLSDataSizeLog2(LoadStoreOp op);
 
   // Instruction bits for vector format in data processing operations.
   static Instr VFormat(VRegister vd) {
     if (vd.Is64Bits()) {
       switch (vd.LaneCount()) {
+        case 1:
+          return NEON_1D;
         case 2:
           return NEON_2S;
         case 4:
@@ -2872,9 +2903,15 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
       return vd.Is128Bits() ? NEON_FP_2D : NEON_FP_2S;
     }
 
-    // Four lane floating point vector format.
-    DCHECK((vd.LaneCount() == 4) && vd.Is128Bits());
-    return NEON_FP_4S;
+    // Four lane floating point vector formats.
+    if (vd.LaneCount() == 4) {
+      DCHECK(vd.Is64Bits() || vd.Is128Bits());
+      return vd.Is128Bits() ? NEON_FP_4S : NEON_FP_4H;
+    }
+
+    // Eight lane floating point vector format.
+    DCHECK((vd.LaneCount() == 8) && vd.Is128Bits());
+    return NEON_FP_8H;
   }
 
   // Instruction bits for vector format in load and store operations.
@@ -2984,8 +3021,15 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
     return op << NEONModImmOp_offset;
   }
 
-  static bool IsImmLSUnscaled(int64_t offset);
-  static bool IsImmLSScaled(int64_t offset, unsigned size);
+  static constexpr bool IsImmLSUnscaled(int64_t offset) {
+    return is_int9(offset);
+  }
+  static constexpr bool IsImmLSScaled(int64_t offset, unsigned size_log2) {
+    bool offset_is_size_multiple =
+        (static_cast<int64_t>(static_cast<uint64_t>(offset >> size_log2)
+                              << size_log2) == offset);
+    return offset_is_size_multiple && is_uint12(offset >> size_log2);
+  }
   static bool IsImmLLiteral(int64_t offset);
 
   // Move immediates encoding.
@@ -3012,6 +3056,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // Check if the const pool needs to be emitted while pretending that {margin}
   // more bytes of instructions have already been emitted.
   void EmitConstPoolWithJumpIfNeeded(size_t margin = 0) {
+    if (constpool_.IsEmpty()) return;
     constpool_.Check(Emission::kIfNeeded, Jump::kRequired, margin);
   }
 
@@ -3081,6 +3126,9 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   inline const Register& AppropriateZeroRegFor(const CPURegister& reg) const;
 
   void LoadStore(const CPURegister& rt, const MemOperand& addr, LoadStoreOp op);
+  inline void LoadStoreScaledImmOffset(Instr memop, int offset, unsigned size);
+  inline void LoadStoreUnscaledImmOffset(Instr memop, int offset);
+  inline void LoadStoreWRegOffset(Instr memop, const Register& regoffset);
   void LoadStorePair(const CPURegister& rt, const CPURegister& rt2,
                      const MemOperand& addr, LoadStorePairOp op);
   void LoadStoreStruct(const VRegister& vt, const MemOperand& addr,
@@ -3106,7 +3154,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   void ConditionalCompare(const Register& rn, const Operand& operand,
                           StatusFlags nzcv, Condition cond,
                           ConditionalCompareOp op);
-  static bool IsImmConditionalCompare(int64_t immediate);
 
   void AddSubWithCarry(const Register& rd, const Register& rn,
                        const Operand& operand, FlagsUpdate S,
@@ -3122,8 +3169,14 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   void AddSub(const Register& rd, const Register& rn, const Operand& operand,
               FlagsUpdate S, AddSubOp op);
 
-  static bool IsImmFP32(float imm);
-  static bool IsImmFP64(double imm);
+  inline void DataProcPlainRegister(const Register& rd, const Register& rn,
+                                    const Register& rm, Instr op);
+  inline void CmpPlainRegister(const Register& rn, const Register& rm);
+  inline void DataProcImmediate(const Register& rd, const Register& rn,
+                                int immediate, Instr op);
+
+  static bool IsImmFP32(uint32_t bits);
+  static bool IsImmFP64(uint64_t bits);
 
   // Find an appropriate LoadStoreOp or LoadStorePairOp for the specified
   // registers. Only simple loads are supported; sign- and zero-extension (such
@@ -3228,8 +3281,8 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   int LinkAndGetByteOffsetTo(Label* label);
 
   // This is the same as LinkAndGetByteOffsetTo, but return an offset
-  // suitable for fields that take instruction offsets.
-  inline int LinkAndGetInstructionOffsetTo(Label* label);
+  // suitable for fields that take instruction offsets: branches.
+  inline int LinkAndGetBranchInstructionOffsetTo(Label* label);
 
   static constexpr int kStartOfLabelLinkChain = 0;
 
@@ -3241,10 +3294,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
     static_assert(sizeof(*pc_) == 1);
     static_assert(sizeof(instruction) == kInstrSize);
     DCHECK_LE(pc_ + sizeof(instruction), buffer_start_ + buffer_->size());
-
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    TrySignInstruction(jit_code_signer_, pc_, instruction);
-#endif
 
     memcpy(pc_, &instruction, sizeof(instruction));
     pc_ += sizeof(instruction);
@@ -3258,9 +3307,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
     // TODO(all): Somehow register we have some data here. Then we can
     // disassemble it correctly.
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    TrySignData(jit_code_signer_, pc_, data, size);
-#endif
     memcpy(pc_, data, size);
     pc_ += size;
     CheckBuffer();
@@ -3284,7 +3330,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   }
 
   // Emission of the veneer pools may be blocked in some code sequences.
-  int veneer_pool_blocked_nesting_;  // Block emission if this is not zero.
+  int veneer_pool_blocked_nesting_ = 0;  // Block emission if this is not zero.
 
   // Relocation info generation
   // Each relocation is encoded as a variable size value
@@ -3306,11 +3352,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   static constexpr int kGap = 64;
   static_assert(AssemblerBase::kMinimalBufferSize >= 2 * kGap);
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  // Jit code signer for signing instruction
-  JitCodeSignerBase *jit_code_signer_ = nullptr;
-#endif
-
  public:
 #ifdef DEBUG
   // Functions used for testing.
@@ -3329,30 +3370,35 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   }
 #endif
 
-  class FarBranchInfo {
-   public:
-    FarBranchInfo(int offset, Label* label)
-        : pc_offset_(offset), label_(label) {}
-    // Offset of the branch in the code generation buffer.
-    int pc_offset_;
-    // The label branched to.
-    Label* label_;
-  };
-
  protected:
+  const AssemblerZone zone_;
+
   // Information about unresolved (forward) branches.
   // The Assembler is only allowed to delete out-of-date information from here
   // after a label is bound. The MacroAssembler uses this information to
   // generate veneers.
   //
-  // The second member gives information about the unresolved branch. The first
-  // member of the pair is the maximum offset that the branch can reach in the
-  // buffer. The map is sorted according to this reachable offset, allowing to
-  // easily check when veneers need to be emitted.
+  // The first member of the pair (max_pc) is the maximum offset that the branch
+  // can reach in the buffer, with the bottom bit set to indicate a
+  // test-and-branch instruction. This bit is used to help in calculating the
+  // address of the branch, ie.
+  //
+  //   branch_addr = { max_pc - 2^21,     if max_pc<0> == 0 (B.cond, CB[N]Z)
+  //                 { max_pc - 2^16 - 1, if max_pc<0> == 1 (TB[N]Z)
+  //
+  // The second member is a pointer to the Label targetted by the branch.
+  //
+  // The map is sorted according to the reachable offset, max_pc, allowing to
+  // check easily when veneers need to be emitted.
   // Note that the maximum reachable offset (first member of the pairs) should
   // always be positive but has the same type as the return value for
   // pc_offset() for convenience.
-  std::multimap<int, FarBranchInfo> unresolved_branches_;
+  ZoneAbslBTreeMap<int, Label*> unresolved_branches_;
+
+  // Back edge offsets for the link chain - the forward edge is stored in the
+  // generated code. This is used to accelerate removing branches from the
+  // link chain when emitting veneers.
+  absl::flat_hash_map<int, int> branch_link_chain_back_edge_;
 
   // We generate a veneer for a branch if we reach within this distance of the
   // limit of the range.
@@ -3365,8 +3411,11 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
       kVeneerNoProtectionFactor * kVeneerDistanceMargin;
   int unresolved_branches_first_limit() const {
     DCHECK(!unresolved_branches_.empty());
-    return unresolved_branches_.begin()->first;
+
+    // Mask branch type tag bit.
+    return unresolved_branches_.begin()->first & ~1;
   }
+
   // This PC-offset of the next veneer pool check helps reduce the overhead
   // of checking for veneer pools.
   // It is maintained to the closest unresolved branch limit minus the maximum
@@ -3392,7 +3441,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // the length of the label chain.
   void DeleteUnresolvedBranchInfoForLabelTraverse(Label* label);
 
-  void AllocateAndInstallRequestedHeapNumbers(Isolate* isolate);
+  void AllocateAndInstallRequestedHeapNumbers(LocalIsolate* isolate);
 
   int WriteCodeComments();
 
@@ -3414,18 +3463,15 @@ class PatchingAssembler : public Assembler {
   // relocation information takes space in the buffer, the PatchingAssembler
   // will crash trying to grow the buffer.
   // Note that the instruction cache will not be flushed.
-  PatchingAssembler(const AssemblerOptions& options, byte* start,
+  PatchingAssembler(Zone* zone, const AssemblerOptions& options, uint8_t* start,
                     unsigned count)
-      : Assembler(options,
+      : Assembler(zone, options,
                   ExternalAssemblerBuffer(start, count * kInstrSize + kGap)),
         block_constant_pool_emission_scope(this) {}
 
   ~PatchingAssembler() {
     // Verify we have generated the number of instruction we expected.
     DCHECK_EQ(pc_offset() + kGap, buffer_->size());
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    ReleaseJitCodeSigner();
-#endif
   }
 
   // See definition of PatchAdrFar() for details.
@@ -3433,23 +3479,6 @@ class PatchingAssembler : public Assembler {
   static constexpr int kAdrFarPatchableNInstrs = kAdrFarPatchableNNops + 2;
   void PatchAdrFar(int64_t target_offset);
   void PatchSubSp(uint32_t immediate);
-
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  void SetJitCodeSigner(JitCodeSignerBase *signer) {
-    if (signer == nullptr) {
-      return;
-    }
-    jit_code_signer_ = reinterpret_cast<JitCodeSignerBase *>(signer);
-    TrySetCompileMode(jit_code_signer_, static_cast<int>(CompileMode::PATCH));
-  }
-
-  void ReleaseJitCodeSigner()  {
-    if (jit_code_signer_ != nullptr) {
-      TrySetCompileMode(jit_code_signer_, static_cast<int>(CompileMode::APPEND));
-      jit_code_signer_ = nullptr;
-    }
-  }
-#endif
 
  private:
   BlockPoolsScope block_constant_pool_emission_scope;

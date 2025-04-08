@@ -11,6 +11,7 @@
 #include "src/objects/heap-number-inl.h"
 #include "src/objects/objects.h"
 #include "src/zone/zone.h"
+#include "test/unittests/heap/heap-utils.h"
 #include "test/unittests/test-utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -26,8 +27,8 @@ class IdentityMapTester {
   IdentityMapTester(Heap* heap, Zone* zone)
       : map(heap, ZoneAllocationPolicy(zone)) {}
 
-  void TestInsertFind(Handle<Object> key1, void* val1, Handle<Object> key2,
-                      void* val2) {
+  void TestInsertFind(DirectHandle<Object> key1, void* val1,
+                      DirectHandle<Object> key2, void* val2) {
     CHECK_NULL(map.Find(key1));
     CHECK_NULL(map.Find(key2));
 
@@ -77,8 +78,8 @@ class IdentityMapTester {
     }
   }
 
-  void TestFindDelete(Handle<Object> key1, void* val1, Handle<Object> key2,
-                      void* val2) {
+  void TestFindDelete(DirectHandle<Object> key1, void* val1,
+                      DirectHandle<Object> key2, void* val2) {
     CHECK_NULL(map.Find(key1));
     CHECK_NULL(map.Find(key2));
 
@@ -142,26 +143,27 @@ class IdentityMapTester {
     for (int i = 0; i < map.capacity_; i++) {
       Address key = map.keys_[i];
       if (!Internals::HasHeapObjectTag(key)) {
-        map.keys_[i] = Internals::IntToSmi(Internals::SmiValue(key) + shift);
+        map.keys_[i] =
+            Internals::IntegralToSmi(Internals::SmiValue(key) + shift);
       }
     }
     map.gc_counter_ = -1;
   }
 
-  void CheckFind(Handle<Object> key, void* value) {
+  void CheckFind(DirectHandle<Object> key, void* value) {
     void** entry = map.Find(key);
     CHECK_NOT_NULL(entry);
     CHECK_EQ(value, *entry);
   }
 
-  void CheckFindOrInsert(Handle<Object> key, void* value) {
+  void CheckFindOrInsert(DirectHandle<Object> key, void* value) {
     auto find_result = map.FindOrInsert(key);
     CHECK(find_result.already_exists);
     CHECK_NOT_NULL(find_result.entry);
     CHECK_EQ(value, *find_result.entry);
   }
 
-  void CheckDelete(Handle<Object> key, void* value) {
+  void CheckDelete(DirectHandle<Object> key, void* value) {
     void* entry;
     CHECK(map.Delete(key, &entry));
     CHECK_NOT_NULL(entry);
@@ -695,7 +697,7 @@ TEST_F(IdentityMapTest, ExplicitGC) {
   }
 
   // Do an explicit, real GC.
-  CollectGarbage(i::NEW_SPACE);
+  InvokeMinorGC();
 
   // Check that searching for the numbers finds the same values.
   for (size_t i = 0; i < arraysize(num_keys); i++) {
@@ -727,7 +729,7 @@ TEST_F(IdentityMapTest, GCShortCutting) {
         factory->NewStringFromAsciiChecked("thin_string");
     Handle<String> internalized_string =
         factory->InternalizeString(thin_string);
-    DCHECK(thin_string->IsThinString());
+    DCHECK(IsThinString(*thin_string));
     DCHECK_NE(*thin_string, *internalized_string);
 
     // Insert both keys into the map.
@@ -735,9 +737,9 @@ TEST_F(IdentityMapTest, GCShortCutting) {
     t.map.Insert(internalized_string, &internalized_string);
 
     // Do an explicit, real GC, this should short-cut the thin string to point
-    // to the internalized string (this is not implemented for MinorMC).
-    CollectGarbage(i::NEW_SPACE);
-    DCHECK_IMPLIES(!v8_flags.minor_mc && !v8_flags.optimize_for_size,
+    // to the internalized string (this is not implemented for MinorMS).
+    InvokeMinorGC();
+    DCHECK_IMPLIES(!v8_flags.minor_ms && !v8_flags.optimize_for_size,
                    *thin_string == *internalized_string);
 
     // Check that getting the object points to one of the handles.

@@ -71,11 +71,17 @@ class V8_EXPORT CageBaseGlobal final {
 
 class V8_TRIVIAL_ABI CompressedPointer final {
  public:
+  struct AtomicInitializerTag {};
+
   using IntegralType = uint32_t;
   static constexpr auto kWriteBarrierSlotType =
       WriteBarrierSlotType::kCompressed;
 
   V8_INLINE CompressedPointer() : value_(0u) {}
+  V8_INLINE explicit CompressedPointer(const void* value,
+                                       AtomicInitializerTag) {
+    StoreAtomic(value);
+  }
   V8_INLINE explicit CompressedPointer(const void* ptr)
       : value_(Compress(ptr)) {}
   V8_INLINE explicit CompressedPointer(std::nullptr_t) : value_(0u) {}
@@ -122,17 +128,22 @@ class V8_TRIVIAL_ABI CompressedPointer final {
   }
 
   static V8_INLINE IntegralType Compress(const void* ptr) {
-    static_assert(
-        SentinelPointer::kSentinelValue == 0b10,
-        "The compression scheme relies on the sentinel encoded as 0b10");
+    static_assert(SentinelPointer::kSentinelValue ==
+                      1 << api_constants::kPointerCompressionShift,
+                  "The compression scheme relies on the sentinel encoded as 1 "
+                  "<< kPointerCompressionShift");
     static constexpr size_t kGigaCageMask =
         ~(api_constants::kCagedHeapReservationAlignment - 1);
+    static constexpr size_t kPointerCompressionShiftMask =
+        (1 << api_constants::kPointerCompressionShift) - 1;
 
     CPPGC_DCHECK(CageBaseGlobal::IsSet());
     const uintptr_t base = CageBaseGlobal::Get();
     CPPGC_DCHECK(!ptr || ptr == kSentinelPointer ||
                  (base & kGigaCageMask) ==
                      (reinterpret_cast<uintptr_t>(ptr) & kGigaCageMask));
+    CPPGC_DCHECK(
+        (reinterpret_cast<uintptr_t>(ptr) & kPointerCompressionShiftMask) == 0);
 
 #if defined(CPPGC_2GB_CAGE)
     // Truncate the pointer.
@@ -140,8 +151,9 @@ class V8_TRIVIAL_ABI CompressedPointer final {
         static_cast<IntegralType>(reinterpret_cast<uintptr_t>(ptr));
 #else   // !defined(CPPGC_2GB_CAGE)
     const auto uptr = reinterpret_cast<uintptr_t>(ptr);
-    // Shift the pointer by one and truncate.
-    auto compressed = static_cast<IntegralType>(uptr >> 1);
+    // Shift the pointer and truncate.
+    auto compressed = static_cast<IntegralType>(
+        uptr >> api_constants::kPointerCompressionShift);
 #endif  // !defined(CPPGC_2GB_CAGE)
     // Normal compressed pointers must have the MSB set.
     CPPGC_DCHECK((!compressed || compressed == kCompressedSentinel) ||
@@ -152,14 +164,21 @@ class V8_TRIVIAL_ABI CompressedPointer final {
   static V8_INLINE void* Decompress(IntegralType ptr) {
     CPPGC_DCHECK(CageBaseGlobal::IsSet());
     const uintptr_t base = CageBaseGlobal::Get();
+    return Decompress(ptr, base);
+  }
+
+  static V8_INLINE void* Decompress(IntegralType ptr, uintptr_t base) {
+    CPPGC_DCHECK(CageBaseGlobal::IsSet());
+    CPPGC_DCHECK(base == CageBaseGlobal::Get());
     // Treat compressed pointer as signed and cast it to uint64_t, which will
     // sign-extend it.
 #if defined(CPPGC_2GB_CAGE)
     const uint64_t mask = static_cast<uint64_t>(static_cast<int32_t>(ptr));
 #else   // !defined(CPPGC_2GB_CAGE)
-    // Then, shift the result by one. It's important to shift the unsigned
+    // Then, shift the result. It's important to shift the unsigned
     // value, as otherwise it would result in undefined behavior.
-    const uint64_t mask = static_cast<uint64_t>(static_cast<int32_t>(ptr)) << 1;
+    const uint64_t mask = static_cast<uint64_t>(static_cast<int32_t>(ptr))
+                          << api_constants::kPointerCompressionShift;
 #endif  // !defined(CPPGC_2GB_CAGE)
     return reinterpret_cast<void*>(mask & base);
   }
@@ -170,7 +189,8 @@ class V8_TRIVIAL_ABI CompressedPointer final {
       SentinelPointer::kSentinelValue;
 #else   // !defined(CPPGC_2GB_CAGE)
   static constexpr IntegralType kCompressedSentinel =
-      SentinelPointer::kSentinelValue >> 1;
+      SentinelPointer::kSentinelValue >>
+      api_constants::kPointerCompressionShift;
 #endif  // !defined(CPPGC_2GB_CAGE)
   // All constructors initialize `value_`. Do not add a default value here as it
   // results in a non-atomic write on some builds, even when the atomic version
@@ -182,11 +202,16 @@ class V8_TRIVIAL_ABI CompressedPointer final {
 
 class V8_TRIVIAL_ABI RawPointer final {
  public:
+  struct AtomicInitializerTag {};
+
   using IntegralType = uintptr_t;
   static constexpr auto kWriteBarrierSlotType =
       WriteBarrierSlotType::kUncompressed;
 
   V8_INLINE RawPointer() : ptr_(nullptr) {}
+  V8_INLINE explicit RawPointer(const void* ptr, AtomicInitializerTag) {
+    StoreAtomic(ptr);
+  }
   V8_INLINE explicit RawPointer(const void* ptr) : ptr_(ptr) {}
 
   V8_INLINE const void* Load() const { return ptr_; }

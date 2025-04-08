@@ -20,14 +20,13 @@ int Version::major_ = V8_MAJOR_VERSION;
 int Version::minor_ = V8_MINOR_VERSION;
 int Version::build_ = V8_BUILD_NUMBER;
 int Version::patch_ = V8_PATCH_LEVEL;
-#ifdef OHOS_JS_ENGINE
-int Version::inner_ = V8_INNER_VERSION;
-#endif
 const char* Version::embedder_ = V8_EMBEDDER_STRING;
 bool Version::candidate_ = (V8_IS_CANDIDATE_VERSION != 0);
 const char* Version::soname_ = SONAME;
 const char* Version::version_string_ = V8_VERSION_STRING;
-
+#ifdef OHOS_JS_ENGINE
+int Version::inner_ = V8_INNER_VERSION;
+#endif
 // Calculate the V8 version string.
 void Version::GetString(base::Vector<char> str) {
   const char* candidate = IsCandidate() ? " (candidate)" : "";
@@ -39,13 +38,6 @@ void Version::GetString(base::Vector<char> str) {
                    GetEmbedder(), candidate);
   }
 }
-
-#ifdef OHOS_JS_ENGINE
-void Version::GetVersionWithInner(base::Vector<char> str) {
-    base::SNPrintF(str, "%d.%d.%d.%d.%d", GetMajor(), GetMinor(), GetBuild(),
-                   GetPatch(), GetInner());
-}
-#endif
 
 // Calculate the SONAME for the V8 shared library.
 void Version::GetSONAME(base::Vector<char> str) {
@@ -65,6 +57,12 @@ void Version::GetSONAME(base::Vector<char> str) {
   }
 }
 
+#ifdef OHOS_JS_ENGINE
+void Version::GetVersionWithInner(base::Vector<char> str) {
+  base::SNPrintF(str, "%d.%d.%d.%d.%d", GetMajor(), GetMinor(), GetBuild(),
+                 GetPatch(), GetInner());
+}
+#endif
 #undef SONAME
 
 }  // namespace internal

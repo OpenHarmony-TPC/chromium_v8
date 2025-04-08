@@ -28,9 +28,16 @@ class V8_EXPORT_PRIVATE V8_NODISCARD StackGuard final {
 
   explicit StackGuard(Isolate* isolate) : isolate_(isolate) {}
 
-  // Pass the address beyond which the stack should not grow.  The stack
+  // Pass the address beyond which the stack should not grow. The stack
   // is assumed to grow downwards.
+  // When executing on the simulator, we set the stack limits to the limits of
+  // the simulator's stack instead of using {limit}.
   void SetStackLimit(uintptr_t limit);
+
+  // Try to compare and swap the given jslimit without the ExecutionAccess lock.
+  // Expects potential concurrent writes of the interrupt limit, and of the
+  // interrupt limit only.
+  void SetStackLimitForStackSwitching(uintptr_t limit);
 
   // The simulator uses a separate JS stack. Limits on the JS stack might have
   // to be adjusted in order to reflect overflows of the C stack, because we
@@ -66,7 +73,9 @@ class V8_EXPORT_PRIVATE V8_NODISCARD StackGuard final {
   V(LOG_WASM_CODE, LogWasmCode, 7, InterruptLevel::kAnyEffect)                 \
   V(WASM_CODE_GC, WasmCodeGC, 8, InterruptLevel::kNoHeapWrites)                \
   V(INSTALL_MAGLEV_CODE, InstallMaglevCode, 9, InterruptLevel::kAnyEffect)     \
-  V(GLOBAL_SAFEPOINT, GlobalSafepoint, 10, InterruptLevel::kNoHeapWrites)
+  V(GLOBAL_SAFEPOINT, GlobalSafepoint, 10, InterruptLevel::kNoHeapWrites)      \
+  V(START_INCREMENTAL_MARKING, StartIncrementalMarking, 11,                    \
+    InterruptLevel::kNoHeapWrites)
 
 #define V(NAME, Name, id, interrupt_level)                   \
   inline bool Check##Name() { return CheckInterrupt(NAME); } \
@@ -112,11 +121,22 @@ class V8_EXPORT_PRIVATE V8_NODISCARD StackGuard final {
         &thread_local_.interrupt_requested_[static_cast<int>(level)]);
   }
 
+  static constexpr int jslimit_offset() {
+    return offsetof(StackGuard, thread_local_) +
+           offsetof(ThreadLocal, jslimit_);
+  }
+
+  static constexpr int real_jslimit_offset() {
+    return offsetof(StackGuard, thread_local_) +
+           offsetof(ThreadLocal, real_jslimit_);
+  }
+
   // If the stack guard is triggered, but it is not an actual
   // stack overflow, then handle the interruption accordingly.
   // Only interrupts that match the given `InterruptLevel` will be handled,
   // leaving other interrupts pending as if this method had not been called.
-  Object HandleInterrupts(InterruptLevel level = InterruptLevel::kAnyEffect);
+  Tagged<Object> HandleInterrupts(
+      InterruptLevel level = InterruptLevel::kAnyEffect);
 
   // Special case of {HandleInterrupts}: checks for termination requests only.
   // This is guaranteed to never cause GC, so can be used to interrupt
@@ -134,6 +154,9 @@ class V8_EXPORT_PRIVATE V8_NODISCARD StackGuard final {
   void RequestInterrupt(InterruptFlag flag);
   void ClearInterrupt(InterruptFlag flag);
   int FetchAndClearInterrupts(InterruptLevel level);
+
+  void SetStackLimitInternal(const ExecutionAccess& lock, uintptr_t limit,
+                             uintptr_t jslimit);
 
   // You should hold the ExecutionAccess lock when calling this method.
   bool has_pending_interrupts(const ExecutionAccess& lock) {
@@ -177,7 +200,8 @@ class V8_EXPORT_PRIVATE V8_NODISCARD StackGuard final {
     uintptr_t real_climit_ = kIllegalLimit;
 
     // jslimit_ and climit_ can be read without any lock.
-    // Writing requires the ExecutionAccess lock.
+    // Writing requires the ExecutionAccess lock, or may be updated with a
+    // strong compare-and-swap (e.g. for stack-switching).
     base::AtomicWord jslimit_ = kIllegalLimit;
     base::AtomicWord climit_ = kIllegalLimit;
 
@@ -200,10 +224,12 @@ class V8_EXPORT_PRIVATE V8_NODISCARD StackGuard final {
     // Writing requires the ExecutionAccess lock.
     base::Atomic8 interrupt_requested_[kNumberOfInterruptLevels] = {
         false, false, false};
+
     void set_interrupt_requested(InterruptLevel level, bool requested) {
       base::Relaxed_Store(&interrupt_requested_[static_cast<int>(level)],
                           requested);
     }
+
     bool has_interrupt_requested(InterruptLevel level) {
       return base::Relaxed_Load(&interrupt_requested_[static_cast<int>(level)]);
     }
@@ -220,6 +246,8 @@ class V8_EXPORT_PRIVATE V8_NODISCARD StackGuard final {
   friend class Isolate;
   friend class StackLimitCheck;
   friend class InterruptsScope;
+
+  static_assert(std::is_standard_layout<ThreadLocal>::value);
 };
 
 static_assert(StackGuard::kSizeInBytes == sizeof(StackGuard));

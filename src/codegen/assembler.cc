@@ -47,11 +47,6 @@
 #include "src/snapshot/snapshot.h"
 #include "src/utils/ostreams.h"
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-#include "src/codegen/arm64/jit-code-signer-helper.h"
-#include "src/codegen/arm64/jit-code-signer-hybrid.h"
-#endif
-
 namespace v8 {
 namespace internal {
 
@@ -75,7 +70,8 @@ AssemblerOptions AssemblerOptions::Default(Isolate* isolate) {
   options.enable_simulator_code = !serializer || v8_flags.target_is_simulator;
 #endif
 
-#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64
+#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_LOONG64 || \
+    V8_TARGET_ARCH_RISCV64
   options.code_range_base = isolate->heap()->code_range_base();
 #endif
   bool short_builtin_calls =
@@ -94,59 +90,33 @@ namespace {
 
 class DefaultAssemblerBuffer : public AssemblerBuffer {
  public:
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  explicit DefaultAssemblerBuffer(int size,
-       std::unique_ptr<JitCodeSignerBase> signer = nullptr)
-      : buffer_(base::OwnedVector<uint8_t>::NewForOverwrite(
-            std::max(AssemblerBase::kMinimalBufferSize, size))),
-        jit_code_signer_(std::move(signer)) {
-    if (IsSupportJitCodeSigner() && jit_code_signer_ == nullptr) {
-      jit_code_signer_ = std::make_unique<JitCodeSignerHybrid>();
-    }
-    TryRegisterTmpBuffer(jit_code_signer_.get(), reinterpret_cast<void *>(start()));
-#else
   explicit DefaultAssemblerBuffer(int size)
       : buffer_(base::OwnedVector<uint8_t>::NewForOverwrite(
             std::max(AssemblerBase::kMinimalBufferSize, size))) {
-#endif
 #ifdef DEBUG
     ZapCode(reinterpret_cast<Address>(buffer_.begin()), buffer_.size());
 #endif
   }
 
-  byte* start() const override { return buffer_.begin(); }
+  uint8_t* start() const override { return buffer_.begin(); }
 
   int size() const override { return static_cast<int>(buffer_.size()); }
 
   std::unique_ptr<AssemblerBuffer> Grow(int new_size) override {
     DCHECK_LT(size(), new_size);
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-    return std::make_unique<DefaultAssemblerBuffer>(new_size, std::move(jit_code_signer_));
-#else
     return std::make_unique<DefaultAssemblerBuffer>(new_size);
-#endif
   }
-
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  JitCodeSignerBase *GetJitCodeSigner() const override {
-    return jit_code_signer_.get();
-  }
-#endif
 
  private:
   base::OwnedVector<uint8_t> buffer_;
-
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  std::unique_ptr<JitCodeSignerBase> jit_code_signer_ = nullptr;
-#endif
 };
 
 class ExternalAssemblerBufferImpl : public AssemblerBuffer {
  public:
-  ExternalAssemblerBufferImpl(byte* start, int size)
+  ExternalAssemblerBufferImpl(uint8_t* start, int size)
       : start_(start), size_(size) {}
 
-  byte* start() const override { return start_; }
+  uint8_t* start() const override { return start_; }
 
   int size() const override { return size_; }
 
@@ -157,16 +127,9 @@ class ExternalAssemblerBufferImpl : public AssemblerBuffer {
   void* operator new(std::size_t count);
   void operator delete(void* ptr) noexcept;
 
-#ifdef V8_ENABLE_JIT_CODE_SIGN
-  JitCodeSignerBase *GetJitCodeSigner() const override {
-    return nullptr;
-  }
-#endif
-
  private:
-  byte* const start_;
+  uint8_t* const start_;
   const int size_;
-  
 };
 
 static thread_local std::aligned_storage_t<sizeof(ExternalAssemblerBufferImpl),
@@ -198,7 +161,7 @@ void ExternalAssemblerBufferImpl::operator delete(void* ptr) noexcept {
 std::unique_ptr<AssemblerBuffer> ExternalAssemblerBuffer(void* start,
                                                          int size) {
   return std::make_unique<ExternalAssemblerBufferImpl>(
-      reinterpret_cast<byte*>(start), size);
+      reinterpret_cast<uint8_t*>(start), size);
 }
 
 std::unique_ptr<AssemblerBuffer> NewAssemblerBuffer(int size) {
@@ -268,12 +231,19 @@ HeapNumberRequest::HeapNumberRequest(double heap_number, int offset)
 
 void Assembler::RecordDeoptReason(DeoptimizeReason reason, uint32_t node_id,
                                   SourcePosition position, int id) {
-  EnsureSpace ensure_space(this);
-  RecordRelocInfo(RelocInfo::DEOPT_SCRIPT_OFFSET, position.ScriptOffset());
-  RecordRelocInfo(RelocInfo::DEOPT_INLINING_ID, position.InliningId());
-  RecordRelocInfo(RelocInfo::DEOPT_REASON, static_cast<int>(reason));
-  RecordRelocInfo(RelocInfo::DEOPT_ID, id);
+  static_assert(RelocInfoWriter::kMaxSize * 2 <= kGap);
+  {
+    EnsureSpace space(this);
+    RecordRelocInfo(RelocInfo::DEOPT_SCRIPT_OFFSET, position.ScriptOffset());
+    RecordRelocInfo(RelocInfo::DEOPT_INLINING_ID, position.InliningId());
+  }
+  {
+    EnsureSpace space(this);
+    RecordRelocInfo(RelocInfo::DEOPT_REASON, static_cast<int>(reason));
+    RecordRelocInfo(RelocInfo::DEOPT_ID, id);
+  }
 #ifdef DEBUG
+  EnsureSpace space(this);
   RecordRelocInfo(RelocInfo::DEOPT_NODE_ID, node_id);
 #endif  // DEBUG
 }
@@ -293,7 +263,7 @@ void AssemblerBase::RequestHeapNumber(HeapNumberRequest request) {
   heap_number_requests_.push_front(request);
 }
 
-int AssemblerBase::AddCodeTarget(Handle<Code> target) {
+int AssemblerBase::AddCodeTarget(IndirectHandle<Code> target) {
   int current = static_cast<int>(code_targets_.size());
   if (current > 0 && !target.is_null() &&
       code_targets_.back().address() == target.address()) {
@@ -305,13 +275,14 @@ int AssemblerBase::AddCodeTarget(Handle<Code> target) {
   }
 }
 
-Handle<Code> AssemblerBase::GetCodeTarget(intptr_t code_target_index) const {
+IndirectHandle<Code> AssemblerBase::GetCodeTarget(
+    intptr_t code_target_index) const {
   DCHECK_LT(static_cast<size_t>(code_target_index), code_targets_.size());
   return code_targets_[code_target_index];
 }
 
 AssemblerBase::EmbeddedObjectIndex AssemblerBase::AddEmbeddedObject(
-    Handle<HeapObject> object) {
+    IndirectHandle<HeapObject> object) {
   EmbeddedObjectIndex current = embedded_objects_.size();
   // Do not deduplicate invalid handles, they are to heap object requests.
   if (!object.is_null()) {
@@ -325,12 +296,11 @@ AssemblerBase::EmbeddedObjectIndex AssemblerBase::AddEmbeddedObject(
   return current;
 }
 
-Handle<HeapObject> AssemblerBase::GetEmbeddedObject(
+IndirectHandle<HeapObject> AssemblerBase::GetEmbeddedObject(
     EmbeddedObjectIndex index) const {
   DCHECK_LT(index, embedded_objects_.size());
   return embedded_objects_[index];
 }
-
 
 int Assembler::WriteCodeComments() {
   if (!v8_flags.code_comments) return 0;
@@ -346,12 +316,13 @@ int Assembler::WriteCodeComments() {
 
 #ifdef V8_CODE_COMMENTS
 int Assembler::CodeComment::depth() const { return assembler_->comment_depth_; }
-void Assembler::CodeComment::Open(const std::string& comment) {
+void Assembler::CodeComment::Open(const std::string& comment,
+                                  const SourceLocation& loc) {
   std::stringstream sstream;
   sstream << std::setfill(' ') << std::setw(depth() * kIndentWidth + 2);
   sstream << "[ " << comment;
   assembler_->comment_depth_++;
-  assembler_->RecordComment(sstream.str());
+  assembler_->RecordComment(sstream.str(), loc);
 }
 
 void Assembler::CodeComment::Close() {
@@ -359,7 +330,8 @@ void Assembler::CodeComment::Close() {
   std::string comment = "]";
   comment.insert(0, depth() * kIndentWidth, ' ');
   DCHECK_LE(0, depth());
-  assembler_->RecordComment(comment);
+  // Don't record source information for the closed comment.
+  assembler_->RecordComment(comment, SourceLocation());
 }
 #endif
 
