@@ -264,35 +264,10 @@ struct is_trivially_copyable {
   static constexpr bool value = std::is_trivially_copyable<T>::value;
 #endif
 };
-#if defined(__clang__) && (__clang_major__ < 17)
-template <typename T, typename = void>
-struct is_std_pair : std::false_type {};
 
-template <typename First, typename Second>
-struct is_std_pair<std::pair<First, Second>> : std::true_type {};
-
-// check if both first and second members of a std::pair are
-// is_trivially_copyable
-template <typename T, typename = void>
-struct are_pair_elements_trivially_copyable : std::false_type {};
-
-template <typename First, typename Second>
-struct are_pair_elements_trivially_copyable<std::pair<First, Second>>
-    : std::integral_constant<
-          bool, ::v8::base::is_trivially_copyable<First>::value&& ::v8::base::
-                    is_trivially_copyable<Second>::value> {};
-
-#define ASSERT_TRIVIALLY_COPYABLE(T)                                    \
-  static_assert(                                                        \
-      ::v8::base::is_trivially_copyable<T>::value ||                    \
-          (::v8::base::is_std_pair<T>::value &&                         \
-           ::v8::base::are_pair_elements_trivially_copyable<T>::value), \
-      #T " should be trivially copyable")
-#else
 #define ASSERT_TRIVIALLY_COPYABLE(T)                         \
   static_assert(::v8::base::is_trivially_copyable<T>::value, \
                 #T " should be trivially copyable")
-#endif
 #define ASSERT_NOT_TRIVIALLY_COPYABLE(T)                      \
   static_assert(!::v8::base::is_trivially_copyable<T>::value, \
                 #T " should not be trivially copyable")
@@ -466,19 +441,14 @@ bool is_inbounds(float_t v) {
 #else  // V8_OS_WIN
 
 // Setup for Linux shared library export.
-#if V8_HAS_ATTRIBUTE_VISIBILITY
-#ifdef BUILDING_V8_SHARED_PRIVATE
+#if V8_HAS_ATTRIBUTE_VISIBILITY && defined(BUILDING_V8_SHARED_PRIVATE) && \
+    !defined(OHOS_JS_ENGINE)
 #define V8_EXPORT_PRIVATE __attribute__((visibility("default")))
 #define V8_EXPORT_ENUM V8_EXPORT_PRIVATE
 #else
 #define V8_EXPORT_PRIVATE
 #define V8_EXPORT_ENUM
 #endif
-#else
-#define V8_EXPORT_PRIVATE
-#define V8_EXPORT_ENUM
-#endif
-
 #endif  // V8_OS_WIN
 
 // Defines IF_WASM, to be used in macro lists for elements that should only be

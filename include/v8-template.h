@@ -47,7 +47,7 @@ enum Intrinsic {
 /**
  * The superclass of object and function templates.
  */
-class V8_EXPORT Template : public Data {
+class V8_EXPORT JSVM_EXPORT Template : public Data {
  public:
   /**
    * Adds a property to each instance created by this template.
@@ -567,7 +567,7 @@ enum class ConstructorBehavior { kThrow, kAllow };
  * include/v8-fast-api-calls.h. Please note that this feature is still
  * experimental.
  */
-class V8_EXPORT FunctionTemplate : public Template {
+class V8_EXPORT JSVM_EXPORT FunctionTemplate : public Template {
  public:
   /** Creates a function template.*/
   static Local<FunctionTemplate> New(
@@ -921,7 +921,7 @@ struct IndexedPropertyHandlerConfiguration {
  * Properties added to an ObjectTemplate are added to each object
  * created from the ObjectTemplate.
  */
-class V8_EXPORT ObjectTemplate : public Template {
+class V8_EXPORT JSVM_EXPORT ObjectTemplate : public Template {
  public:
   /** Creates an ObjectTemplate. */
   static Local<ObjectTemplate> New(
@@ -1089,7 +1089,7 @@ class V8_EXPORT DictionaryTemplate final {
  * from a FunctionTemplate that inherits directly or indirectly from the
  * signature's FunctionTemplate.
  */
-class V8_EXPORT Signature : public Data {
+class V8_EXPORT JSVM_EXPORT Signature : public Data {
  public:
   static Local<Signature> New(
       Isolate* isolate,

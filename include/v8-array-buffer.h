@@ -39,7 +39,7 @@ enum class BackingStoreInitializationMode { kZeroInitialized, kUninitialized };
  * default. Use Isolate::CreateParams::array_buffer_allocator_shared when
  * creating the Isolate to make it hold a reference to the allocator itself.
  */
-class V8_EXPORT BackingStore : public v8::internal::BackingStoreBase {
+class V8_EXPORT JSVM_EXPORT BackingStore : public v8::internal::BackingStoreBase {
  public:
   ~BackingStore();
 
@@ -133,7 +133,7 @@ using BackingStoreDeleterCallback = void (*)(void* data, size_t length,
 /**
  * An instance of the built-in ArrayBuffer constructor (ES6 draft 15.13.5).
  */
-class V8_EXPORT ArrayBuffer : public Object {
+class V8_EXPORT JSVM_EXPORT ArrayBuffer : public Object {
  public:
   /**
    * A thread-safe allocator that V8 uses to allocate |ArrayBuffer|'s memory.
@@ -150,7 +150,7 @@ class V8_EXPORT ArrayBuffer : public Object {
    * Note that it is unsafe to call back into V8 from any of the allocator
    * functions.
    */
-  class V8_EXPORT Allocator {
+  class V8_EXPORT JSVM_EXPORT Allocator {
    public:
     virtual ~Allocator() = default;
 
@@ -381,7 +381,7 @@ class V8_EXPORT ArrayBuffer : public Object {
  * A base class for an instance of one of "views" over ArrayBuffer,
  * including TypedArrays and DataView (ES6 draft 15.13).
  */
-class V8_EXPORT ArrayBufferView : public Object {
+class V8_EXPORT JSVM_EXPORT ArrayBufferView : public Object {
  public:
   /**
    * Returns underlying ArrayBuffer.
@@ -442,7 +442,7 @@ class V8_EXPORT ArrayBufferView : public Object {
 /**
  * An instance of DataView constructor (ES6 draft 15.13.7).
  */
-class V8_EXPORT DataView : public ArrayBufferView {
+class V8_EXPORT JSVM_EXPORT DataView : public ArrayBufferView {
  public:
   static Local<DataView> New(Local<ArrayBuffer> array_buffer,
                              size_t byte_offset, size_t length);

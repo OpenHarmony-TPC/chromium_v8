@@ -23,15 +23,18 @@ void MigrateSlowPropertiesIntoEnumCache(Isolate& isolate,
   Handle<JSObject> object = Cast<JSObject>(receiver);
   if (V8_ENABLE_SWISS_NAME_DICTIONARY_BOOL ||
       !V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL ||
-      object->HasFastProperties() || IsJSGlobalObject(*object)) {
+      object->HasFastProperties() ||
+      IsJSGlobalObject(*object)) {
     return;
   }
-  Handle<NameDictionary> dictionary(object->property_dictionary(&isolate),
-                                    &isolate);
-  if (dictionary->NumberOfElements() > kEnumTimesCacheMaxPropertiesNum) {
+  Handle<NameDictionary> dictionary(
+      object->property_dictionary(&isolate), &isolate);
+  if (dictionary->NumberOfElements() >
+      kEnumTimesCacheMaxPropertiesNum) {
     return;
   }
-  if (isolate.enum_times_cache()->Put(object->ptr()) > kHitsObjTimesThreshold) {
+  if (isolate.enum_times_cache()->Put(object->ptr()) >
+      kHitsObjTimesThreshold) {
     JSObject::MigrateSlowToFast(object, 0,
                                 "MigrateSlowPropertiesIntoEnumCache");
     isolate.enum_times_cache()->RemoveCurrentElem(object->ptr());

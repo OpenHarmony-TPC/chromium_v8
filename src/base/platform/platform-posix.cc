@@ -119,8 +119,9 @@ const char* g_gc_fake_mmap = nullptr;
 #endif
 
 #ifdef V8_HOST_ARCH_ARM64
-static long Syscall(unsigned long n, unsigned long a, unsigned long b,
-                    unsigned long c, unsigned long d, unsigned long e,
+static long Syscall(unsigned long n, unsigned long a,
+                    unsigned long b, unsigned long c,
+                    unsigned long d, unsigned long e,
                     unsigned long f) {
   register unsigned long x8 asm("x8") = n;
   register unsigned long x0 asm("x0") = a;
@@ -137,8 +138,8 @@ static long Syscall(unsigned long n, unsigned long a, unsigned long b,
 }
 #endif
 
-static inline void* InlineMmap(void* addr, size_t len, int prot, int flags,
-                               int fd, off_t offset) {
+static inline void* InlineMmap(void *addr, size_t len, int prot, int flags, int fd,
+                               off_t offset) {
 #ifdef V8_HOST_ARCH_ARM64
   long res =
       Syscall(SYS_mmap, (unsigned long)addr, len, prot, flags, fd, offset);
@@ -153,7 +154,7 @@ static inline void* InlineMmap(void* addr, size_t len, int prot, int flags,
 #endif
 }
 
-static inline int InlineMprotect(void* addr, size_t len, int prot) {
+static inline int InlineMprotect(void *addr, size_t len, int prot) {
 #ifdef V8_HOST_ARCH_ARM64
   return (int)Syscall(SYS_mprotect, (unsigned long)addr, len, prot, 0, 0, 0);
 #else
@@ -853,8 +854,8 @@ OS::MemoryMappedFile* OS::MemoryMappedFile::open(const char* name,
             prot |= PROT_WRITE;
             flags = MAP_SHARED;
           }
-          void* const memory = InlineMmap(OS::GetRandomMmapAddr(), size, prot,
-                                          flags, fileno(file), 0);
+          void* const memory =
+              InlineMmap(OS::GetRandomMmapAddr(), size, prot, flags, fileno(file), 0);
           if (memory != MAP_FAILED) {
             return new PosixMemoryMappedFile(file, memory, size);
           }
@@ -873,9 +874,8 @@ OS::MemoryMappedFile* OS::MemoryMappedFile::create(const char* name,
     if (size == 0) return new PosixMemoryMappedFile(file, nullptr, 0);
     size_t result = fwrite(initial, 1, size, file);
     if (result == size && !ferror(file)) {
-      void* memory =
-          InlineMmap(OS::GetRandomMmapAddr(), result, PROT_READ | PROT_WRITE,
-                     MAP_SHARED, fileno(file), 0);
+      void* memory = InlineMmap(OS::GetRandomMmapAddr(), result,
+                                PROT_READ | PROT_WRITE, MAP_SHARED, fileno(file), 0);
       if (memory != MAP_FAILED) {
         return new PosixMemoryMappedFile(file, memory, result);
       }
@@ -1161,14 +1161,14 @@ bool AddressSpaceReservation::AllocateShared(void* address, size_t size,
   int prot = GetProtectionFromMemoryPermission(access);
   int fd = FileDescriptorFromSharedMemoryHandle(handle);
   return InlineMmap(address, size, prot, MAP_SHARED | MAP_FIXED, fd, offset) !=
-         MAP_FAILED;
+                    MAP_FAILED;
 }
 #endif  // !defined(V8_OS_DARWIN)
 
 bool AddressSpaceReservation::FreeShared(void* address, size_t size) {
   DCHECK(Contains(address, size));
-  return InlineMmap(address, size, PROT_NONE,
-                    MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == address;
+  return InlineMmap(address, size, PROT_NONE, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+                    -1, 0) == address;
 }
 #endif  // !V8_OS_ZOS
 

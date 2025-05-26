@@ -59,8 +59,8 @@ void Version::GetSONAME(base::Vector<char> str) {
 
 #ifdef OHOS_JS_ENGINE
 void Version::GetVersionWithInner(base::Vector<char> str) {
-  base::SNPrintF(str, "%d.%d.%d.%d.%d", GetMajor(), GetMinor(), GetBuild(),
-                 GetPatch(), GetInner());
+    base::SNPrintF(str, "%d.%d.%d.%d.%d", GetMajor(), GetMinor(), GetBuild(),
+                   GetPatch(), GetInner());
 }
 #endif
 #undef SONAME

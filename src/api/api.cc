@@ -140,6 +140,10 @@
 #include "src/utils/identity-map.h"
 #include "src/utils/version.h"
 
+#ifdef OHOS_JS_ENGINE
+#include "../../../arkweb/chromium_ext/v8/trace.h"
+#endif
+
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/debug/debug-wasm-objects.h"
 #include "src/trap-handler/trap-handler.h"
@@ -1276,12 +1280,11 @@ bool FunctionTemplate::Inherit(v8::Local<Function> parentFunc) {
   auto i_function =
       i::Cast<i::JSFunction>(v8::Utils::OpenDirectHandle(*parentFunc));
   if (!i_function->shared()->IsApiFunction()) {
-    return false;
+      return false;
   }
   auto info = Utils::OpenHandle(this);
   i::Isolate* i_isolate = info->GetIsolateChecked();
-  i::Handle<i::FunctionTemplateInfo> funcInfo(
-      i_function->shared()->api_func_data(), i_isolate);
+  i::Handle<i::FunctionTemplateInfo> funcInfo(i_function->shared()->api_func_data(), i_isolate);
   Inherit(v8::Utils::ToLocal(funcInfo));
   return true;
 }
@@ -2591,6 +2594,9 @@ MaybeLocal<UnboundScript> ScriptCompiler::CompileUnboundInternal(
 
   i::DirectHandle<i::SharedFunctionInfo> result;
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.CompileScript");
+#ifdef OHOS_JS_ENGINE
+  auto trace = HiTrace("RCS_v8.compile_V8.CompileScript");
+#endif
   i::ScriptDetails script_details = GetScriptDetails(
       i_isolate, source->resource_name, source->resource_line_offset,
       source->resource_column_offset, source->source_map_url,
@@ -2697,7 +2703,8 @@ MaybeLocal<WasmModuleObject> WasmModuleObject::DeserializeOrCompile(
           base::Vector<const uint8_t>(wasm_cache_data.data(),
                                       wasm_cache_data.size()),
           base::Vector<const uint8_t>(wire_bytes.data(), wire_bytes.size()),
-          i::wasm::CompileTimeImports(), {});
+          i::wasm::CompileTimeImports(),
+          {});
   cacheRejected = maybe_module.is_null();
   if (!cacheRejected) {
     // Deserialize successfully
@@ -2721,8 +2728,7 @@ bool WasmModuleObject::CompileFunction(Isolate* v8_isolate,
   uint32_t num_imported_functions = native_module->num_imported_functions();
   uint32_t num_functions = native_module->num_functions();
   // Check function index out of range.
-  if (function_index < num_imported_functions ||
-      function_index >= num_functions) {
+  if (function_index < num_imported_functions || function_index >= num_functions) {
     return false;
   }
 
@@ -2916,6 +2922,9 @@ MaybeLocal<Script> ScriptCompiler::Compile(Local<Context> context,
   TRACE_EVENT_CALL_STATS_SCOPED(i_isolate, "v8", "V8.ScriptCompiler");
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                "V8.CompileStreamedScript");
+#ifdef OHOS_JS_ENGINE
+  auto trace = HiTrace("RCS_v8.compile_V8.CompileStreamedScript");
+#endif
   i::DirectHandle<i::SharedFunctionInfo> sfi;
   i::MaybeDirectHandle<i::SharedFunctionInfo> maybe_sfi =
       CompileStreamedSource(i_isolate, v8_source, full_source_string, origin);
@@ -2936,6 +2945,9 @@ MaybeLocal<Module> ScriptCompiler::CompileModule(
   TRACE_EVENT_CALL_STATS_SCOPED(i_isolate, "v8", "V8.ScriptCompiler");
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                "V8.CompileStreamedModule");
+#ifdef OHOS_JS_ENGINE
+  auto trace = HiTrace("RCS_v8.compile_V8.CompileStreamedModule");
+#endif
   i::DirectHandle<i::SharedFunctionInfo> sfi;
   i::MaybeDirectHandle<i::SharedFunctionInfo> maybe_sfi =
       CompileStreamedSource(i_isolate, v8_source, full_source_string, origin);

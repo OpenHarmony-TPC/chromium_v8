@@ -309,7 +309,7 @@ declare_args() {
   # ARM64. Enable it by default for simulator builds and when native code
   # supports it as well.
   #v8_control_flow_integrity = false
-  v8_control_flow_integrity = 
+  v8_control_flow_integrity =
       v8_current_cpu == "arm64" &&
       (target_is_simulator || arm_control_flow_integrity != "none")
 
@@ -444,7 +444,7 @@ declare_args() {
 
   # Whether custom embedder snapshots may extend (= allocate new objects in)
   # ReadOnlySpace.
-  v8_enable_extensible_ro_snapshot = true
+  v8_enable_extensible_ro_snapshot = false
 
   # Enable Turboshaft CSA pipeline.
   v8_enable_turboshaft_csa = false
@@ -483,7 +483,7 @@ if (pgo_exists_flag) {
 }
 print("Using v8_builtins_profiling from: ")
 print(v8_builtins_profiling_log_file)
- 
+
 if (cppgc_enable_verify_heap == "") {
   cppgc_enable_verify_heap = v8_enable_debugging_features || v8_dcheck_always_on
 }
@@ -1608,10 +1608,9 @@ config("toolchain") {
       "-fomit-frame-pointer"
     ]
     ldflags += [ "-flto" ]
-    import("//ohos_sdk/ohos_sdk.gni")
-    ldflags += [ "../../ohos_sdk/native/$ohos_sdk_version/sysroot/usr/lib/aarch64-linux-ohos/libhilog_ndk.z.so" ]
-    include_dirs = [ "../ohos_sdk/native/$ohos_sdk_version/sysroot/usr/include/hilog" ]
+    include_dirs = [ "../ohos_sdk/openharmony/native/sysroot/usr/include/hilog" ]
     defines += [ "USING_OHOS" ]
+    libs = ["hitrace_ndk.z"]
   }
 
   if (is_clang) {
@@ -8155,6 +8154,8 @@ v8_shared_library("v8_shared") {
     ":v8_snapshot",
     ":copy_v8_include",
   ]
+
+  libs = [ "hilog_ndk.z" ]
 
   public_configs = [ ":external_config" ]
 }

@@ -569,8 +569,8 @@ class EnumTimesCache {
  public:
   explicit EnumTimesCache() {}
   ~EnumTimesCache() = default;
-
-  size_t LookUp(uint64_t objPtr, int& objCnt) {
+ 
+  size_t LookUp(uint64_t objPtr, int &objCnt) {
     for (size_t index = 0; index < cache_deque_.size(); index++) {
       if (cache_deque_[index].first == objPtr) {
         objCnt = cache_deque_[index].second;
