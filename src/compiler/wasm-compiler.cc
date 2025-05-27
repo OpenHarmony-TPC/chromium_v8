@@ -3877,8 +3877,7 @@ Node* WasmGraphBuilder::LoadLane(const wasm::WasmMemory* memory,
   Node* node_offset = gasm_->UintPtrConstant(offset);
   load = SetEffect(graph()->NewNode(
       mcgraph()->machine()->LoadLane(load_kind, memtype, laneidx),
-      MemBuffer(memory->index, index), node_offset, value, effect(),
-      control()));
+      MemBuffer(memory->index, index), node_offset, value, effect(), control()));
 
   if (load_kind == MemoryAccessKind::kProtected) {
     SetSourcePosition(load, position);

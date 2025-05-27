@@ -11,6 +11,10 @@
 #include "src/execution/vm-state-inl.h"
 #include "src/logging/runtime-call-stats-scope.h"
 
+#ifdef OHOS_JS_ENGINE
+#include "../../../arkweb/chromium_ext/v8/trace.h"
+#endif
+
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/compiler/wasm-compiler.h"  // Only for static asserts.
 #include "src/wasm/code-space-access.h"
@@ -192,6 +196,8 @@ MaybeHandle<Context> NewScriptContext(
   Tagged<SharedFunctionInfo> sfi = function->shared();
   Handle<Script> script(Cast<Script>(sfi->script()), isolate);
   Handle<ScopeInfo> scope_info(sfi->scope_info(), isolate);
+  // Make sure this is the first time we're running this function.
+  CHECK(IsNativeContext(function->context()));
   DirectHandle<NativeContext> native_context(
       Cast<NativeContext>(function->context()), isolate);
   Handle<JSGlobalObject> global_object(native_context->global_object(),
@@ -416,6 +422,9 @@ V8_WARN_UNUSED_RESULT MaybeHandle<Object> Invoke(Isolate* isolate,
       Address recv = (*params.receiver).ptr();
       Address** argv = reinterpret_cast<Address**>(params.argv);
       RCS_SCOPE(isolate, RuntimeCallCounterId::kJS_Execution);
+#ifdef OHOS_JS_ENGINE
+      auto trace = HiTrace("RCS_JS_Execution");
+#endif
       value = Tagged<Object>(
           stub_entry.Call(isolate->isolate_data()->isolate_root(), orig_func,
                           func, recv, JSParameterCount(params.argc), argv));
@@ -432,6 +441,9 @@ V8_WARN_UNUSED_RESULT MaybeHandle<Object> Invoke(Isolate* isolate,
           JSEntryFunction::FromAddress(isolate, code->instruction_start());
 
       RCS_SCOPE(isolate, RuntimeCallCounterId::kJS_Execution);
+#ifdef OHOS_JS_ENGINE
+      auto trace = HiTrace("RCS_JS_Execution");
+#endif
       value = Tagged<Object>(stub_entry.Call(
           isolate->isolate_data()->isolate_root(), params.microtask_queue));
     }
@@ -624,6 +636,9 @@ void Execution::CallWasm(Isolate* isolate, DirectHandle<Code> wrapper_code,
 
   {
     RCS_SCOPE(isolate, RuntimeCallCounterId::kJS_Execution);
+#ifdef OHOS_JS_ENGINE
+    auto trace = HiTrace("RCS_JS_Execution");
+#endif
     static_assert(compiler::CWasmEntryParameters::kCodeEntry == 0);
     static_assert(compiler::CWasmEntryParameters::kObjectRef == 1);
     static_assert(compiler::CWasmEntryParameters::kArgumentsBuffer == 2);

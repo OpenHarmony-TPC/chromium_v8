@@ -11,10 +11,10 @@
 #define V8_MAJOR_VERSION 13
 #define V8_MINOR_VERSION 2
 #define V8_BUILD_NUMBER 152
-#define V8_PATCH_LEVEL 29
+#define V8_PATCH_LEVEL 41
 
 #ifdef OHOS_JS_ENGINE
-#define V8_INNER_VERSION 1
+#define V8_INNER_VERSION 2
 #endif
 
 // Use 1 for candidates and 0 otherwise.

@@ -19,6 +19,10 @@
 #include "src/tasks/cancelable-task.h"
 #include "src/tracing/trace-event.h"
 
+#ifdef OHOS_JS_ENGINE
+#include "../../../arkweb/chromium_ext/v8/trace.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -47,6 +51,9 @@ class OptimizingCompileDispatcher::CompileTask : public v8::JobTask {
             TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.OptimizeBackground",
             job->trace_id(),
             TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+#ifdef OHOS_JS_ENGINE
+        auto trace = HiTrace("RCS_v8.compile_V8.OptimizeBackground");
+#endif
 
         if (dispatcher_->recompilation_delay_ != 0) {
           base::OS::Sleep(base::TimeDelta::FromMilliseconds(
