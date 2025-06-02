@@ -2248,11 +2248,7 @@ PropertyDetails DescriptorArrayRef::GetPropertyDetails(
 
 NameRef DescriptorArrayRef::GetPropertyKey(
     JSHeapBroker* broker, InternalIndex descriptor_index) const {
-  // A property key that has been written to a descriptor array must be being
-  // read because it was observed in a map, which means this write must have
-  // been published.
-  NameRef result =
-      MakeRefAssumeMemoryFence(broker, object()->GetKey(descriptor_index));
+  NameRef result = MakeRef(broker, object()->GetKey(descriptor_index));
   CHECK(result.IsUniqueName());
   return result;
 }

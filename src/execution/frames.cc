@@ -652,7 +652,9 @@ bool StackFrameIteratorForProfiler::IsValidTop(ThreadLocalTop* top) const {
   if (!IsValidExitFrame(c_entry_fp)) return false;
   // There should be at least one JS_ENTRY stack handler.
   Address handler = Isolate::handler(top);
-  return handler != kNullAddress;
+  if (handler == kNullAddress) return false;
+  // Check that there are no js frames on top of the native frames.
+  return c_entry_fp < handler;
 }
 
 void StackFrameIteratorForProfiler::AdvanceOneFrame() {

@@ -570,16 +570,24 @@ class FrameFunctionIterator {
     return true;
   }
 
-  // Iterate through functions, at least one step, until the first candidate
-  // is found that is not toplevel and either user-provided JavaScript or
-  // "native" (not defined in user-provided scripts, but directly exposed).
+  // Iterate through functions until the next non-toplevel one is found.
   // Returns true if one is found, and false if the iterator ends before.
-  bool FindNextNonTopLevelNativeOrUserJavaScript() {
+  bool FindNextNonTopLevel() {
     do {
       if (!next().ToHandle(&function_)) return false;
-    } while (function_->shared()->is_toplevel() ||
-             (!function_->shared()->native() &&
-              !function_->shared()->IsUserJavaScript()));
+    } while (function_->shared()->is_toplevel());
+    return true;
+  }
+
+  // Iterate through function until the first native or user-provided function
+  // is found. Functions not defined in user-provided scripts are not visible
+  // unless directly exposed, in which case the native flag is set on them.
+  // Returns true if one is found, and false if the iterator ends before.
+  bool FindFirstNativeOrUserJavaScript() {
+    while (!function_->shared()->native() &&
+           !function_->shared()->IsUserJavaScript()) {
+      if (!next().ToHandle(&function_)) return false;
+    }
     return true;
   }
 
@@ -656,11 +664,14 @@ MaybeHandle<JSFunction> FindCaller(Isolate* isolate,
   if (!it.Find(function)) {
     return MaybeHandle<JSFunction>();
   }
-  // Find previously called non-toplevel function that is also a user-land
-  // JavaScript function (or the entry point into native JavaScript builtins
-  // in case such a builtin was the caller).
-  if (!it.FindNextNonTopLevelNativeOrUserJavaScript()) {
-    return {};
+  // Find previously called non-toplevel function.
+  if (!it.FindNextNonTopLevel()) {
+    return MaybeHandle<JSFunction>();
+  }
+  // Find the first user-land JavaScript function (or the entry point into
+  // native JavaScript builtins in case such a builtin was the caller).
+  if (!it.FindFirstNativeOrUserJavaScript()) {
+    return MaybeHandle<JSFunction>();
   }
 
   // Materialize the function that the iterator is currently sitting on. Note

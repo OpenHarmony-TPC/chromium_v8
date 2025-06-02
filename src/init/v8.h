@@ -16,9 +16,6 @@ class StartupData;
 namespace internal {
 
 class Isolate;
-#ifdef OHOS_JS_ENGINE
-extern bool rcs_enable;
-#endif
 
 class V8 : public AllStatic {
  public:

@@ -4597,10 +4597,7 @@ Isolate::~Isolate() {
   compilation_cache_ = nullptr;
   delete bootstrapper_;
   bootstrapper_ = nullptr;
-#ifdef OHOS_JS_ENGINE
-  delete enum_times_cache_;
-  enum_times_cache_ = nullptr;
-#endif
+
   delete thread_manager_;
   thread_manager_ = nullptr;
 
@@ -5400,9 +5397,7 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
   heap_profiler_ = new HeapProfiler(heap());
   interpreter_ = new interpreter::Interpreter(this);
   bigint_processor_ = bigint::Processor::New(new BigIntPlatform(this));
-#ifdef OHOS_JS_ENGINE
-  enum_times_cache_ = new EnumTimesCache();
-#endif
+
   if (is_shared_space_isolate_) {
     global_safepoint_ = std::make_unique<GlobalSafepoint>(this);
   }

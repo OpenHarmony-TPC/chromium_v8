@@ -58,7 +58,7 @@ using V8FatalErrorCallback = void (*)(const char* file, int line,
 /**
  * Container class for static utility functions.
  */
-class V8_EXPORT JSVM_EXPORT V8 {
+class V8_EXPORT V8 {
  public:
   /**
    * Hand startup data to V8, in case the embedder has chosen to build

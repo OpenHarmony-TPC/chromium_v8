@@ -10,7 +10,7 @@
 #include "src/ic/stub-cache.h"
 #include "src/logging/counters.h"
 
-#if defined(DEBUG) && defined(V8_OS_LINUX) && !defined(V8_OS_ANDROID) && !defined(__MUSL__)
+#if defined(DEBUG) && defined(V8_OS_LINUX) && !defined(V8_OS_ANDROID)
 #define SYMBOLIZE_FUNCTION
 #include <execinfo.h>
 

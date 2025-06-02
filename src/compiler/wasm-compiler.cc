@@ -3443,12 +3443,6 @@ Node* WasmGraphBuilder::MemBuffer(uint32_t mem_index, uintptr_t offset) {
   return gasm_->IntAdd(mem_start, gasm_->UintPtrConstant(offset));
 }
 
-Node* WasmGraphBuilder::MemBuffer(uint32_t mem_index, Node* index) {
-  DCHECK_NOT_NULL(index);
-  Node* mem_start = MemStart(mem_index);
-  return gasm_->IntAdd(mem_start, index);
-}
-
 Node* WasmGraphBuilder::CurrentMemoryPages(const wasm::WasmMemory* memory) {
   // CurrentMemoryPages can not be called from asm.js.
   DCHECK_EQ(wasm::kWasmOrigin, env_->module->origin);
@@ -3874,10 +3868,10 @@ Node* WasmGraphBuilder::LoadLane(const wasm::WasmMemory* memory,
 
   MemoryAccessKind load_kind = GetMemoryAccessKind(
       mcgraph_, memtype.representation(), bounds_check_result);
-  Node* node_offset = gasm_->UintPtrConstant(offset);
+
   load = SetEffect(graph()->NewNode(
       mcgraph()->machine()->LoadLane(load_kind, memtype, laneidx),
-      MemBuffer(memory->index, index), node_offset, value, effect(), control()));
+      MemBuffer(memory->index, offset), index, value, effect(), control()));
 
   if (load_kind == MemoryAccessKind::kProtected) {
     SetSourcePosition(load, position);
@@ -3915,10 +3909,10 @@ Node* WasmGraphBuilder::LoadTransform(const wasm::WasmMemory* memory,
   LoadTransformation transformation = GetLoadTransformation(memtype, transform);
   MemoryAccessKind load_kind = GetMemoryAccessKind(
       mcgraph_, memtype.representation(), bounds_check_result);
-  Node* node_offset = gasm_->UintPtrConstant(offset);
+
   Node* load = SetEffect(graph()->NewNode(
       mcgraph()->machine()->LoadTransform(load_kind, transformation),
-      MemBuffer(memory->index, index), node_offset, effect(), control()));
+      MemBuffer(memory->index, offset), index, effect(), control()));
 
   if (load_kind == MemoryAccessKind::kProtected) {
     SetSourcePosition(load, position);
@@ -3948,20 +3942,20 @@ Node* WasmGraphBuilder::LoadMem(const wasm::WasmMemory* memory,
   std::tie(index, bounds_check_result) = BoundsCheckMem(
       memory, memtype.MemSize(), index, offset, position,
       EnforceBoundsCheck::kCanOmitBoundsCheck, AlignmentCheck::kNo);
-  Node* node_offset = gasm_->UintPtrConstant(offset);
-  Node* mem_start = MemBuffer(memory->index, index);
+
+  Node* mem_start = MemBuffer(memory->index, offset);
   Node* load;
   switch (GetMemoryAccessKind(mcgraph_, memtype.representation(),
                               bounds_check_result)) {
     case MemoryAccessKind::kUnaligned:
-      load = gasm_->LoadUnaligned(memtype, mem_start, node_offset);
+      load = gasm_->LoadUnaligned(memtype, mem_start, index);
       break;
     case MemoryAccessKind::kProtected:
-      load = gasm_->ProtectedLoad(memtype, mem_start, node_offset);
+      load = gasm_->ProtectedLoad(memtype, mem_start, index);
       SetSourcePosition(load, position);
       break;
     case MemoryAccessKind::kNormal:
-      load = gasm_->Load(memtype, mem_start, node_offset);
+      load = gasm_->Load(memtype, mem_start, index);
       break;
   }
 
@@ -4002,10 +3996,10 @@ void WasmGraphBuilder::StoreLane(const wasm::WasmMemory* memory,
       AlignmentCheck::kNo);
   MemoryAccessKind load_kind =
       GetMemoryAccessKind(mcgraph_, mem_rep, bounds_check_result);
-  Node* node_offset = gasm_->UintPtrConstant(offset);
+
   Node* store = SetEffect(graph()->NewNode(
       mcgraph()->machine()->StoreLane(load_kind, mem_rep, laneidx),
-      MemBuffer(memory->index, index), node_offset, val, effect(), control()));
+      MemBuffer(memory->index, offset), index, val, effect(), control()));
 
   if (load_kind == MemoryAccessKind::kProtected) {
     SetSourcePosition(store, position);
@@ -4036,15 +4030,15 @@ void WasmGraphBuilder::StoreMem(const wasm::WasmMemory* memory,
 #if defined(V8_TARGET_BIG_ENDIAN)
   val = BuildChangeEndiannessStore(val, mem_rep, type);
 #endif
-  Node* node_offset = gasm_->UintPtrConstant(offset);
-  Node* mem_start = MemBuffer(memory->index, index);
+
+  Node* mem_start = MemBuffer(memory->index, offset);
   switch (GetMemoryAccessKind(mcgraph_, mem_rep, bounds_check_result)) {
     case MemoryAccessKind::kUnaligned:
       gasm_->StoreUnaligned(UnalignedStoreRepresentation{mem_rep}, mem_start,
-                            node_offset, val);
+                            index, val);
       break;
     case MemoryAccessKind::kProtected: {
-      Node* store = gasm_->ProtectedStore(mem_rep, mem_start, node_offset, val);
+      Node* store = gasm_->ProtectedStore(mem_rep, mem_start, index, val);
       SetSourcePosition(store, position);
       if (mem_rep == MachineRepresentation::kSimd128) {
         graph()->RecordSimdStore(store);
@@ -4053,7 +4047,7 @@ void WasmGraphBuilder::StoreMem(const wasm::WasmMemory* memory,
     }
     case MemoryAccessKind::kNormal: {
       Node* store = gasm_->Store(StoreRepresentation{mem_rep, kNoWriteBarrier},
-                                 mem_start, node_offset, val);
+                                 mem_start, index, val);
       if (mem_rep == MachineRepresentation::kSimd128) {
         graph()->RecordSimdStore(store);
       }
