@@ -196,6 +196,11 @@ bool MutablePageMetadata::ContainsAnySlots() const {
   return false;
 }
 
+void MutablePageMetadata::ClearLiveness() {
+  marking_bitmap()->Clear<AccessMode::NON_ATOMIC>();
+  SetLiveBytes(0);
+}
+
 int MutablePageMetadata::ComputeFreeListsLength() {
   int length = 0;
   for (int cat = kFirstCategory; cat <= owner()->free_list()->last_category();
@@ -205,11 +210,6 @@ int MutablePageMetadata::ComputeFreeListsLength() {
     }
   }
   return length;
-}
-
-bool MutablePageMetadata::IsLivenessClear() const {
-  CHECK_IMPLIES(marking_bitmap()->IsClean(), live_bytes() == 0);
-  return marking_bitmap()->IsClean();
 }
 
 #ifdef DEBUG

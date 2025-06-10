@@ -16,10 +16,6 @@
 #include "src/tracing/trace-event.h"
 #include "src/utils/memcopy.h"
 
-#ifdef OHOS_JS_ENGINE
-#include "../../../arkweb/chromium_ext/v8/trace.h"
-#endif
-
 #ifdef V8_ENABLE_SPARKPLUG
 #include "src/baseline/baseline-batch-compiler.h"
 #endif
@@ -355,9 +351,6 @@ Tagged<Object> StackGuard::HandleInterrupts(InterruptLevel level) {
   if (TestAndClear(&interrupt_flags, INSTALL_CODE)) {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                  "V8.InstallOptimizedFunctions");
-#ifdef OHOS_JS_ENGINE
-    auto trace = HiTrace("RCS_v8.compile_V8.InstallOptimizedFunctions");
-#endif
     DCHECK(isolate_->concurrent_recompilation_enabled());
     isolate_->optimizing_compile_dispatcher()->InstallOptimizedFunctions();
   }
@@ -366,9 +359,6 @@ Tagged<Object> StackGuard::HandleInterrupts(InterruptLevel level) {
   if (TestAndClear(&interrupt_flags, INSTALL_BASELINE_CODE)) {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                  "V8.FinalizeBaselineConcurrentCompilation");
-#ifdef OHOS_JS_ENGINE
-    auto trace = HiTrace("RCS_v8.compile_V8.FinalizeBaselineConcurrentCompilation");
-#endif
     isolate_->baseline_batch_compiler()->InstallBatch();
   }
 #endif  // V8_ENABLE_SPARKPLUG
@@ -377,9 +367,6 @@ Tagged<Object> StackGuard::HandleInterrupts(InterruptLevel level) {
   if (TestAndClear(&interrupt_flags, INSTALL_MAGLEV_CODE)) {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                  "V8.FinalizeMaglevConcurrentCompilation");
-#ifdef OHOS_JS_ENGINE
-    auto trace = HiTrace("RCS_v8.compile_V8.FinalizeMaglevConcurrentCompilation");
-#endif
     isolate_->maglev_concurrent_dispatcher()->FinalizeFinishedJobs();
   }
 #endif  // V8_ENABLE_MAGLEV

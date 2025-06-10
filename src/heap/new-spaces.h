@@ -101,8 +101,7 @@ class SemiSpace final : public Space {
       return false;
     }
     current_page_ = next_page;
-    base::AsAtomicWord::Relaxed_Store(
-        &current_capacity_, current_capacity_ + PageMetadata::kPageSize);
+    current_capacity_ += PageMetadata::kPageSize;
     return true;
   }
 

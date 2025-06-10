@@ -38,7 +38,9 @@ PageMetadata* SemiSpace::InitializePage(MutablePageMetadata* mutable_page) {
                                           : MemoryChunk::FROM_PAGE);
   PageMetadata* page = PageMetadata::cast(mutable_page);
   page->list_node().Initialize();
-  CHECK(page->IsLivenessClear());
+  if (v8_flags.minor_ms) {
+    page->ClearLiveness();
+  }
   chunk->InitializationMemoryFence();
   return page;
 }
@@ -93,7 +95,7 @@ bool SemiSpace::EnsureCurrentCapacity() {
       AccountCommitted(PageMetadata::kPageSize);
       IncrementCommittedPhysicalMemory(current_page->CommittedPhysicalMemory());
       memory_chunk_list_.PushBack(current_page);
-      CHECK(current_page->IsLivenessClear());
+      current_page->ClearLiveness();
       current_page->Chunk()->SetFlagsNonExecutable(
           first_page()->Chunk()->GetFlags());
       heap()->CreateFillerObjectAt(current_page->area_start(),
@@ -194,7 +196,7 @@ bool SemiSpace::AllocateFreshPage() {
     return false;
   }
   memory_chunk_list_.PushBack(new_page);
-  CHECK(new_page->IsLivenessClear());
+  new_page->ClearLiveness();
   IncrementCommittedPhysicalMemory(new_page->CommittedPhysicalMemory());
   AccountCommitted(PageMetadata::kPageSize);
   heap()->CreateFillerObjectAt(new_page->area_start(),

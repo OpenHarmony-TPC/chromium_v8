@@ -3,9 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/config/android/config.gni")
-if (is_ohos) {
-  import("//build/config/ohos/config.gni")
-}
 import("//build/config/arm.gni")
 import("//build/config/coverage/coverage.gni")
 import("//build/config/dcheck_always_on.gni")
@@ -14,7 +11,6 @@ import("//build/config/mips.gni")
 import("//build/config/riscv.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build_overrides/build.gni")
-import("//cef/libcef/features/features.gni")
 import("//third_party/icu/config.gni")
 
 import("gni/snapshot_toolchain.gni")
@@ -218,7 +214,6 @@ declare_args() {
   # 5. Build again with v8_builtins_profiling_log_file set to the file created
   #    in step 3 or 4.
   v8_builtins_profiling_log_file = "default"
-  pgo_exists_flag = false
 
   # Enables various testing features.
   v8_enable_test_features = ""
@@ -303,12 +298,11 @@ declare_args() {
   # Enable snapshot compression (enabled by default for desktop) devices.
   v8_enable_snapshot_compression =
       target_os == "android" || target_os == "chromeos" ||
-      target_os == "fuchsia" || target_os == "ohos"
+      target_os == "fuchsia"
 
   # Enable control-flow integrity features, such as pointer authentication for
   # ARM64. Enable it by default for simulator builds and when native code
   # supports it as well.
-  #v8_control_flow_integrity = false
   v8_control_flow_integrity =
       v8_current_cpu == "arm64" &&
       (target_is_simulator || arm_control_flow_integrity != "none")
@@ -352,9 +346,6 @@ declare_args() {
   # Experimental feature that uses SwissNameDictionary instead of NameDictionary
   # as the backing store for all dictionary mode objects.
   v8_enable_swiss_name_dictionary = false
-
-  # Enable forin enum cache for slow properties
-  v8_enable_enum_cache_for_slow_properties = true
 
   # If enabled then macro definitions that are used in externally visible
   # header files are placed in a separate header file v8-gn.h.
@@ -423,8 +414,6 @@ declare_args() {
   # optimizations.
   v8_jitless = v8_enable_lite_mode
 
-  v8_enable_ohos_js_engine = true
-
   # Enable Sparkplug
   # Sets -DV8_ENABLE_SPARKPLUG.
   v8_enable_sparkplug = ""
@@ -444,7 +433,7 @@ declare_args() {
 
   # Whether custom embedder snapshots may extend (= allocate new objects in)
   # ReadOnlySpace.
-  v8_enable_extensible_ro_snapshot = false
+  v8_enable_extensible_ro_snapshot = true
 
   # Enable Turboshaft CSA pipeline.
   v8_enable_turboshaft_csa = false
@@ -469,21 +458,9 @@ declare_args() {
   # Some fuzzers depend on fuzzing functionality linked into the v8 library.
   # For binary size reasons this functionality is not always available.
   v8_wasm_random_fuzzers = ""
-
-  # Set to true if V8 will be used in a shared library.
-  v8_used_in_shared_library = enable_cef
 }
 
 # Derived defaults.
-pgo_exists_flag = exec_script("tools/builtins-pgo/check_pgo.py", ["--pgo_path", "profiles/ohos.profile"], "value")
-if (pgo_exists_flag) {
-  v8_builtins_profiling_log_file = "tools/builtins-pgo/profiles/ohos.profile"
-} else {
-  v8_builtins_profiling_log_file = "default"
-}
-print("Using v8_builtins_profiling from: ")
-print(v8_builtins_profiling_log_file)
-
 if (cppgc_enable_verify_heap == "") {
   cppgc_enable_verify_heap = v8_enable_debugging_features || v8_dcheck_always_on
 }
@@ -807,13 +784,6 @@ config("internal_config_base") {
     "include",
     "$target_gen_dir",
   ]
-  cflags = []
-  if (v8_component_build) {
-    cflags += [ "-U_FORTIFY_SOURCE" ]
-    include_dirs += [
-      "//arkweb/chromium_ext/v8"
-    ]
-  }
 }
 
 config("internal_config") {
@@ -831,12 +801,8 @@ config("internal_config") {
 
   if (is_component_build) {
     defines += [ "BUILDING_V8_SHARED_PRIVATE" ]
-  } else if (v8_expose_public_symbols || v8_component_build) {
+  } else if (v8_expose_public_symbols) {
     defines += [ "BUILDING_V8_SHARED" ]
-  }
-
-  if (v8_used_in_shared_library) {
-    defines += [ "V8_TLS_USED_IN_LIBRARY" ]
   }
 
   if (v8_current_cpu == "riscv64" || v8_current_cpu == "riscv32") {
@@ -860,14 +826,14 @@ config("v8_tracing_config") {
 # This config should be applied to code using the libplatform.
 config("libplatform_config") {
   include_dirs = [ "include" ]
-  if (is_component_build || v8_component_build) {
+  if (is_component_build) {
     defines = [ "USING_V8_PLATFORM_SHARED" ]
   }
 }
 
 # This config should be applied to code using the libbase.
 config("libbase_config") {
-  if (is_component_build || v8_component_build) {
+  if (is_component_build) {
     defines = [ "USING_V8_BASE_SHARED" ]
   }
   libs = []
@@ -911,7 +877,7 @@ config("headers_config") {
 config("external_config") {
   configs = [ ":headers_config" ]
   defines = []
-  if (is_component_build || v8_component_build) {
+  if (is_component_build) {
     defines += [
       "USING_V8_SHARED",
       "USING_V8_SHARED_PRIVATE",
@@ -963,7 +929,6 @@ external_v8_defines = [
   "V8_TARGET_OS_MACOS",
   "V8_TARGET_OS_WIN",
   "V8_TARGET_OS_CHROMEOS",
-  "V8_TARGET_OS_OHOS",
 ]
 
 enabled_external_v8_defines = [
@@ -1040,9 +1005,6 @@ if (target_os == "android") {
 } else if (target_os == "chromeos") {
   enabled_external_v8_defines += [ "V8_HAVE_TARGET_OS" ]
   enabled_external_v8_defines += [ "V8_TARGET_OS_CHROMEOS" ]
-} else if (target_os == "ohos") {
-  enabled_external_v8_defines += [ "V8_HAVE_TARGET_OS" ]
-  enabled_external_v8_defines += [ "V8_TARGET_OS_OHOS" ]
 }
 
 disabled_external_v8_defines = external_v8_defines - enabled_external_v8_defines
@@ -1308,9 +1270,6 @@ config("features") {
   if (v8_enable_swiss_name_dictionary) {
     defines += [ "V8_ENABLE_SWISS_NAME_DICTIONARY" ]
   }
-  if (v8_enable_enum_cache_for_slow_properties) {
-    defines += [ "V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES" ]
-  }
   if (v8_enable_system_instrumentation) {
     defines += [ "V8_ENABLE_SYSTEM_INSTRUMENTATION" ]
   }
@@ -1406,9 +1365,6 @@ config("features") {
   }
   if (v8_wasm_random_fuzzers) {
     defines += [ "V8_WASM_RANDOM_FUZZERS" ]
-  }
-  if (v8_enable_ohos_js_engine) {
-    defines += [ "OHOS_JS_ENGINE" ]
   }
 }
 
@@ -1587,10 +1543,6 @@ config("toolchain") {
     defines += [ "V8_RUNTIME_CALL_STATS" ]
   }
 
-  if (is_arkweb && !v8_component_build) {
-    defines += [ "USING_OHOS_WEB" ]
-  }
-
   if (v8_no_inline) {
     if (is_win) {
       cflags += [ "/Ob0" ]
@@ -1600,17 +1552,6 @@ config("toolchain") {
         "-fno-inline",
       ]
     }
-  }
-
-  if (is_ohos && v8_component_build) {
-    cflags += [
-      "-flto",
-      "-fomit-frame-pointer"
-    ]
-    ldflags += [ "-flto" ]
-    include_dirs = [ "../ohos_sdk/openharmony/native/sysroot/usr/include/hilog" ]
-    defines += [ "USING_OHOS" ]
-    libs = ["hitrace_ndk.z"]
   }
 
   if (is_clang) {
@@ -2625,7 +2566,7 @@ template("run_mksnapshot") {
 
         # Replace this with --warn-about-builtin-profile-data to see the full
         # list of builtins with incompatible profiles.
-        "--warn-about-builtin-profile-data",
+        "--abort-on-bad-builtin-profile-data",
       ]
 
       if (!v8_enable_builtins_profiling && v8_enable_builtins_reordering) {
@@ -3990,7 +3931,6 @@ v8_header_set("v8_internal_headers") {
     "src/logging/runtime-call-stats-scope.h",
     "src/logging/runtime-call-stats.h",
     "src/logging/tracing-flags.h",
-    "//arkweb/chromium_ext/v8/ohlog.h",
     "src/numbers/conversions-inl.h",
     "src/numbers/conversions.h",
     "src/numbers/hash-seed-inl.h",
@@ -4725,7 +4665,7 @@ v8_header_set("v8_internal_headers") {
     if (v8_enable_webassembly) {
       # iOS Xcode simulator builds run on an x64 target. iOS and macOS are both
       # based on Darwin and thus POSIX-compliant to a similar degree.
-      if (is_linux || is_chromeos || is_mac || is_ios || is_ohos ||
+      if (is_linux || is_chromeos || is_mac || is_ios ||
           target_os == "freebsd") {
         sources += [ "src/trap-handler/handler-inside-posix.h" ]
       } else if (is_win) {
@@ -4792,7 +4732,7 @@ v8_header_set("v8_internal_headers") {
       # Trap handling is enabled on arm64 Mac and Linux and in simulators on
       # x64 on Linux and Mac.
       if ((current_cpu == "arm64" &&
-           (is_linux || is_chromeos || is_mac || is_ios || is_ohos)) ||
+           (is_linux || is_chromeos || is_mac || is_ios)) ||
           (current_cpu == "x64" && (is_linux || is_chromeos || is_mac))) {
         sources += [ "src/trap-handler/handler-inside-posix.h" ]
       }
@@ -5674,7 +5614,6 @@ v8_source_set("v8_base_without_compiler") {
     "src/logging/metrics.cc",
     "src/logging/runtime-call-stats.cc",
     "src/logging/tracing-flags.cc",
-    "//arkweb/chromium_ext/v8/ohlog.cc",
     "src/numbers/conversions.cc",
     "src/numbers/math-random.cc",
     "src/objects/abstract-code.cc",
@@ -6090,7 +6029,7 @@ v8_source_set("v8_base_without_compiler") {
     if (v8_enable_webassembly) {
       # iOS Xcode simulator builds run on an x64 target. iOS and macOS are both
       # based on Darwin and thus POSIX-compliant to a similar degree.
-      if (is_linux || is_chromeos || is_mac || is_ios || is_ohos ||
+      if (is_linux || is_chromeos || is_mac || is_ios ||
           target_os == "freebsd") {
         sources += [
           "src/trap-handler/handler-inside-posix.cc",
@@ -6141,7 +6080,7 @@ v8_source_set("v8_base_without_compiler") {
     ]
     if (v8_enable_webassembly) {
       # Trap handling is enabled on arm64 and x64, on Linux, Mac and Windows.
-      if ((current_cpu == "arm64" && (is_linux || is_chromeos || is_apple || is_ohos)) ||
+      if ((current_cpu == "arm64" && (is_linux || is_chromeos || is_apple)) ||
           (current_cpu == "x64" && (is_linux || is_chromeos || is_mac))) {
         sources += [
           "src/trap-handler/handler-inside-posix.cc",
@@ -6689,7 +6628,7 @@ v8_component("v8_libbase") {
 
   defines = []
 
-  if (is_component_build || v8_component_build) {
+  if (is_component_build) {
     defines = [ "BUILDING_V8_BASE_SHARED" ]
   }
 
@@ -6706,7 +6645,7 @@ v8_component("v8_libbase") {
     }
   }
 
-  if (is_linux || is_chromeos || is_ohos) {
+  if (is_linux || is_chromeos) {
     sources += [
       "src/base/debug/stack_trace_posix.cc",
       "src/base/platform/platform-linux.cc",
@@ -6886,7 +6825,7 @@ v8_component("v8_libplatform") {
 
   configs = [ ":internal_config_base" ]
 
-  if (is_component_build || v8_component_build) {
+  if (is_component_build) {
     defines = [ "BUILDING_V8_PLATFORM_SHARED" ]
   }
 
@@ -7252,11 +7191,6 @@ v8_source_set("cppgc_base") {
       "src/tracing/trace-categories.cc",
       "src/tracing/trace-categories.h",
     ]
-  }
-
-  if (is_arkweb) {
-    include_dirs = [ "../ohos_nweb/src" ]
-    deps = [ "../ohos_nweb:nweb_hilog" ]
   }
 }
 
@@ -8141,21 +8075,3 @@ if (!build_with_chromium && v8_use_perfetto) {
     ]
   }
 }  # if (!build_with_chromium && v8_use_perfetto)
-
-action("copy_v8_include") {
-  script = "//arkweb/chromium_ext/v8/cp_v8_include.py"
-  report_file = "$target_gen_dir/v8-include.txt"
-  outputs = [ report_file ]
-}
-
-v8_shared_library("v8_shared") {
-  public_deps = [
-    ":v8_base",
-    ":v8_snapshot",
-    ":copy_v8_include",
-  ]
-
-  libs = [ "hilog_ndk.z" ]
-
-  public_configs = [ ":external_config" ]
-}

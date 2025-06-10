@@ -1742,6 +1742,7 @@ void WasmEngine::FreeNativeModule(NativeModule* native_module) {
   }
   // If any code objects are currently tracked as dead or near-dead, remove
   // references belonging to the NativeModule that's being deleted.
+  std::erase_if(dead_code_, part_of_native_module);
   std::erase_if(potentially_dead_code_, part_of_native_module);
 
   if (native_module->log_code()) DisableCodeLogging(native_module);
@@ -1828,11 +1829,9 @@ void WasmEngine::ReportLiveCodeFromStackForGC(Isolate* isolate) {
 
 bool WasmEngine::AddPotentiallyDeadCode(WasmCode* code) {
   base::MutexGuard guard(&mutex_);
-  if (code->is_dying()) return false;
+  if (dead_code_.contains(code)) return false;  // Code is already dead.
   auto added = potentially_dead_code_.insert(code);
-  DCHECK(added.second);
-  USE(added);
-  code->mark_as_dying();
+  if (!added.second) return false;  // An entry already existed.
   new_potentially_dead_code_size_ += code->instructions().size();
   if (v8_flags.wasm_code_gc) {
     // Trigger a GC if 64kB plus 10% of committed code are potentially dead.
@@ -1878,17 +1877,19 @@ void WasmEngine::FreeDeadCodeLocked(const DeadCodeMap& dead_code,
     const std::vector<WasmCode*>& code_vec = dead_code_entry.second;
     TRACE_CODE_GC("Freeing %zu code object%s of module %p.\n", code_vec.size(),
                   code_vec.size() == 1 ? "" : "s", native_module);
-#if DEBUG
-    for (WasmCode* code : code_vec) DCHECK(code->is_dying());
-#endif  // DEBUG
+    for (WasmCode* code : code_vec) {
+      DCHECK(dead_code_.contains(code));
+      dead_code_.erase(code);
+    }
     native_module->FreeCode(base::VectorOf(code_vec));
   }
   if (dead_wrappers.size()) {
     TRACE_CODE_GC("Freeing %zu wrapper%s.\n", dead_wrappers.size(),
                   dead_wrappers.size() == 1 ? "" : "s");
-#if DEBUG
-    for (WasmCode* code : dead_wrappers) DCHECK(code->is_dying());
-#endif  // DEBUG
+    for (WasmCode* code : dead_wrappers) {
+      DCHECK(dead_code_.contains(code));
+      dead_code_.erase(code);
+    }
     GetWasmImportWrapperCache()->Free(dead_wrappers);
   }
 }
@@ -1978,15 +1979,16 @@ void WasmEngine::PotentiallyFinishCurrentGC() {
   if (!current_gc_info_->outstanding_isolates.empty()) return;
 
   // All remaining code in {current_gc_info->dead_code} is really dead.
-  // Remove it from the set of potentially dead code, and decrement its
-  // ref count.
+  // Move it from the set of potentially dead code to the set of dead code,
+  // and decrement its ref count.
   size_t num_freed = 0;
   DeadCodeMap dead_code;
   std::vector<WasmCode*> dead_wrappers;
   for (WasmCode* code : current_gc_info_->dead_code) {
     DCHECK(potentially_dead_code_.contains(code));
-    DCHECK(code->is_dying());
     potentially_dead_code_.erase(code);
+    DCHECK(!dead_code_.contains(code));
+    dead_code_.insert(code);
     if (code->DecRefOnDeadCode()) {
       NativeModule* native_module = code->native_module();
       if (native_module) {
@@ -2010,7 +2012,7 @@ void WasmEngine::PotentiallyFinishCurrentGC() {
 }
 
 size_t WasmEngine::EstimateCurrentMemoryConsumption() const {
-  UPDATE_WHEN_CLASS_CHANGES(WasmEngine, 768);
+  UPDATE_WHEN_CLASS_CHANGES(WasmEngine, 808);
   UPDATE_WHEN_CLASS_CHANGES(IsolateInfo, 168);
   UPDATE_WHEN_CLASS_CHANGES(NativeModuleInfo, 56);
   UPDATE_WHEN_CLASS_CHANGES(CurrentGCInfo, 96);
@@ -2021,6 +2023,7 @@ size_t WasmEngine::EstimateCurrentMemoryConsumption() const {
     result += ContentSize(async_compile_jobs_);
     result += async_compile_jobs_.size() * sizeof(AsyncCompileJob);
     result += ContentSize(potentially_dead_code_);
+    result += ContentSize(dead_code_);
 
     // TODO(14106): Do we care about {compilation_stats_}?
     // TODO(14106): Do we care about {code_tracer_}?

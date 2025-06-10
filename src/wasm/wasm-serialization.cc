@@ -131,14 +131,7 @@ void WriteHeader(Writer* writer, WasmEnabledFeatures enabled_features) {
   writer->Write(static_cast<uint32_t>(CpuFeatures::SupportedFeatures()));
   writer->Write(FlagList::Hash());
   writer->Write(enabled_features.ToIntegral());
-  writer->Write(static_cast<uint32_t>(0)); // placeholder for cache length.
   DCHECK_EQ(WasmSerializer::kHeaderSize, writer->bytes_written());
-}
-
-void WriteCacheLength(base::Vector<uint8_t> buffer, size_t size) {
-  Writer code_cache_write(buffer);
-  code_cache_write.Skip(WasmSerializer::kCacheLengthOffset);
-  code_cache_write.Write(static_cast<uint32_t>(size));
 }
 
 // On Intel, call sites are encoded as a displacement. For linking and for
@@ -317,7 +310,7 @@ class V8_EXPORT_PRIVATE NativeModuleSerializer {
   NativeModuleSerializer& operator=(const NativeModuleSerializer&) = delete;
 
   size_t Measure() const;
-  bool Write(Writer* writer, base::Vector<uint8_t> buffer);
+  bool Write(Writer* writer);
 
  private:
   size_t MeasureCode(const WasmCode*) const;
@@ -598,7 +591,7 @@ uint32_t NativeModuleSerializer::CanonicalSigIdToModuleLocalTypeId(
   return it->second;
 }
 
-bool NativeModuleSerializer::Write(Writer* writer, base::Vector<uint8_t> buffer) {
+bool NativeModuleSerializer::Write(Writer* writer) {
   DCHECK(!write_called_);
   write_called_ = true;
 
@@ -626,8 +619,6 @@ bool NativeModuleSerializer::Write(Writer* writer, base::Vector<uint8_t> buffer)
   CHECK_EQ(total_written_code_, total_code_size);
 
   WriteTieringBudget(writer);
-
-  WriteCacheLength(buffer, writer->bytes_written());
   return true;
 }
 
@@ -651,7 +642,7 @@ bool WasmSerializer::SerializeNativeModule(base::Vector<uint8_t> buffer) const {
   Writer writer(buffer);
   WriteHeader(&writer, native_module_->enabled_features());
 
-  if (!serializer.Write(&writer, buffer)) return false;
+  if (!serializer.Write(&writer)) return false;
   DCHECK_EQ(measured_size, writer.bytes_written());
   return true;
 }
@@ -1082,8 +1073,6 @@ bool IsSupportedVersion(base::Vector<const uint8_t> header,
   uint8_t current_version[WasmSerializer::kHeaderSize];
   Writer writer({current_version, WasmSerializer::kHeaderSize});
   WriteHeader(&writer, enabled_features);
-  WriteCacheLength({current_version, WasmSerializer::kHeaderSize},
-                   header.size());
   return memcmp(header.begin(), current_version, WasmSerializer::kHeaderSize) ==
          0;
 }

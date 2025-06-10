@@ -249,12 +249,7 @@ Handle<ScopeInfo> ScopeInfo::Create(IsolateT* isolate, Zone* zone, Scope* scope,
             scope->private_name_lookup_skips_outer_class()) |
         HasContextExtensionSlotBit::encode(scope->HasContextExtensionSlot()) |
         IsHiddenBit::encode(scope->is_hidden()) |
-        IsWrappedFunctionBit::encode(scope->is_wrapped_function())
-#ifdef OHOS_JS_ENGINE
-        | HasNeverHideBaseStdHintBit::encode(
-              scope->has_never_hide_base_std_hint())
-#endif
-        ;
+        IsWrappedFunctionBit::encode(scope->is_wrapped_function());
     scope_info->set_flags(flags);
 
     scope_info->set_parameter_count(parameter_count);

@@ -24,10 +24,6 @@
 #include "src/objects/code.h"
 #include "src/tracing/trace-event.h"
 
-#ifdef OHOS_JS_ENGINE
-#include "../../../arkweb/chromium_ext/v8/trace.h"
-#endif
-
 #ifdef V8_ENABLE_SPARKPLUG
 #include "src/baseline/baseline-batch-compiler.h"
 #endif  // V8_ENABLE_SPARKPLUG
@@ -530,9 +526,6 @@ void TieringManager::NotifyICChanged(Tagged<FeedbackVector> vector) {
 TieringManager::OnInterruptTickScope::OnInterruptTickScope() {
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                "V8.MarkCandidatesForOptimization");
-#ifdef OHOS_JS_ENGINE
-  auto trace = HiTrace("RCS_v8.compile_V8.MarkCandidatesForOptimization");
-#endif
 }
 
 void TieringManager::OnInterruptTick(DirectHandle<JSFunction> function,

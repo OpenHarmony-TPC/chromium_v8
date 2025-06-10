@@ -275,11 +275,6 @@ void Scanner::TryToParseMagicComment(base::uc32 hash_or_at_sign) {
     saw_source_mapping_url_magic_comment_at_sign_ = hash_or_at_sign == '@';
   } else if (name_literal == base::StaticOneByteVector("eagerCompilation")) {
     value = &compile_hints_value;
-#ifdef OHOS_JS_ENGINE
-  } else if (name_literal ==
-             base::StaticOneByteVector("@optNeverHideBaseStd")) {
-    has_never_hide_base_std_hint_ = true;
-#endif
   } else {
     return;
   }

@@ -29,12 +29,6 @@ bool ScopeInfo::HasSimpleParameters() const {
   return HasSimpleParametersBit::decode(Flags());
 }
 
-#ifdef OHOS_JS_ENGINE
-bool ScopeInfo::HasNeverHideBaseStdHint() const {
-  return HasNeverHideBaseStdHintBit::decode(Flags());
-}
-#endif
-
 uint32_t ScopeInfo::Flags() const { return flags(); }
 int ScopeInfo::ParameterCount() const { return parameter_count(); }
 int ScopeInfo::ContextLocalCount() const { return context_local_count(); }

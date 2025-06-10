@@ -214,8 +214,9 @@ TNode<Object> CodeStubAssembler::FastCloneJSObject(
     Label if_no_write_barrier(this),
         if_needs_write_barrier(this, Label::kDeferred);
 
-    TrySkipWriteBarrier(target, &if_needs_write_barrier);
-    Goto(&if_no_write_barrier);
+    TNode<BoolT> needs_write_barrier = IsPageFlagReset(
+        BitcastTaggedToWord(target), MemoryChunk::kIsInYoungGenerationMask);
+    Branch(needs_write_barrier, &if_needs_write_barrier, &if_no_write_barrier);
 
     BIND(&if_needs_write_barrier);
     EmitCopyLoop(true);

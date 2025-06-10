@@ -77,7 +77,7 @@ class SamplingHeapProfiler;
 
 namespace api_internal {
 // Called when ToLocalChecked is called on an empty Local.
-V8_EXPORT JSVM_EXPORT void ToLocalEmpty();
+V8_EXPORT void ToLocalEmpty();
 }  // namespace api_internal
 
 /**
@@ -94,7 +94,7 @@ V8_EXPORT JSVM_EXPORT void ToLocalEmpty();
  * handle and may deallocate it.  The behavior of accessing a handle
  * for which the handle scope has been deleted is undefined.
  */
-class V8_EXPORT JSVM_EXPORT V8_NODISCARD HandleScope {
+class V8_EXPORT V8_NODISCARD HandleScope {
  public:
   explicit HandleScope(Isolate* isolate);
 
@@ -702,7 +702,7 @@ class MaybeLocal {
  * A HandleScope which first allocates a handle in the current scope
  * which will be later filled with the escape value.
  */
-class V8_EXPORT JSVM_EXPORT V8_NODISCARD EscapableHandleScopeBase : public HandleScope {
+class V8_EXPORT V8_NODISCARD EscapableHandleScopeBase : public HandleScope {
  public:
   explicit EscapableHandleScopeBase(Isolate* isolate);
   V8_INLINE ~EscapableHandleScopeBase() = default;
@@ -752,7 +752,7 @@ class V8_EXPORT V8_NODISCARD EscapableHandleScope
  * are allowed. It can be useful for debugging handle leaks.
  * Handles can be allocated within inner normal HandleScopes.
  */
-class V8_EXPORT JSVM_EXPORT V8_NODISCARD SealHandleScope {
+class V8_EXPORT V8_NODISCARD SealHandleScope {
  public:
   explicit SealHandleScope(Isolate* isolate);
   ~SealHandleScope();

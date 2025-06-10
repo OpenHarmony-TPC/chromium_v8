@@ -14,34 +14,6 @@ namespace internal {
 
 namespace {
 
-#ifdef OHOS_JS_ENGINE
-void MigrateSlowPropertiesIntoEnumCache(Isolate& isolate,
-                                        Handle<JSReceiver> receiver) {
-  if (!IsJSObject(*receiver)) {
-    return;
-  }
-  Handle<JSObject> object = Cast<JSObject>(receiver);
-  if (V8_ENABLE_SWISS_NAME_DICTIONARY_BOOL ||
-      !V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL ||
-      object->HasFastProperties() ||
-      IsJSGlobalObject(*object)) {
-    return;
-  }
-  Handle<NameDictionary> dictionary(
-      object->property_dictionary(&isolate), &isolate);
-  if (dictionary->NumberOfElements() >
-      kEnumTimesCacheMaxPropertiesNum) {
-    return;
-  }
-  if (isolate.enum_times_cache()->Put(object->ptr()) >
-      kHitsObjTimesThreshold) {
-    JSObject::MigrateSlowToFast(object, 0,
-                                "MigrateSlowPropertiesIntoEnumCache");
-    isolate.enum_times_cache()->RemoveCurrentElem(object->ptr());
-  }
-}
-#endif
-
 // Returns either a FixedArray or, if the given {receiver} has an enum cache
 // that contains all enumerable properties of the {receiver} and its prototypes
 // have none, the map of the {receiver}. This is used to speed up the check for
@@ -49,9 +21,6 @@ void MigrateSlowPropertiesIntoEnumCache(Isolate& isolate,
 MaybeHandle<HeapObject> Enumerate(Isolate* isolate,
                                   Handle<JSReceiver> receiver) {
   JSObject::MakePrototypesFast(receiver, kStartAtReceiver, isolate);
-#ifdef OHOS_JS_ENGINE
-  MigrateSlowPropertiesIntoEnumCache(*isolate, receiver);
-#endif
   FastKeyAccumulator accumulator(isolate, receiver,
                                  KeyCollectionMode::kIncludePrototypes,
                                  ENUMERABLE_STRINGS, true);

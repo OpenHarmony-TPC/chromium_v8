@@ -24,10 +24,6 @@
 #include "src/parsing/parse-info.h"
 #include "src/utils/ostreams.h"
 
-#ifdef OHOS_JS_ENGINE
-#include "../../../arkweb/chromium_ext/v8/trace.h"
-#endif
-
 namespace v8 {
 namespace internal {
 namespace interpreter {
@@ -191,9 +187,6 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::ExecuteJobImpl() {
             RuntimeCallStats::kThreadSpecific);
   // TODO(lpy): add support for background compilation RCS trace.
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.CompileIgnition");
-#ifdef OHOS_JS_ENGINE
-  auto trace = HiTrace("RCS_v8.compile_V8.CompileIgnition");
-#endif
 
   // Print AST if flag is enabled. Note, if compiling on a background thread
   // then ASTs from different functions may be intersperse when printed.
@@ -256,9 +249,6 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::FinalizeJobImpl(
             RuntimeCallCounterId::kCompileIgnitionFinalization);
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                "V8.CompileIgnitionFinalization");
-#ifdef OHOS_JS_ENGINE
-  auto trace = HiTrace("RCS_v8.compile_V8.CompileIgnitionFinalization");
-#endif
   return DoFinalizeJobImpl(shared_info, isolate);
 }
 
@@ -268,9 +258,6 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::FinalizeJobImpl(
             RuntimeCallStats::kThreadSpecific);
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                "V8.CompileIgnitionFinalization");
-#ifdef OHOS_JS_ENGINE
-  auto trace = HiTrace("RCS_v8.compile_V8.CompileIgnitionFinalization");
-#endif
   return DoFinalizeJobImpl(shared_info, isolate);
 }
 
