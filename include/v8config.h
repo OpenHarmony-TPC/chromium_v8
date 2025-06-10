@@ -94,6 +94,7 @@ path. Add it with -I<path> to the command line
 //  V8_OS_AIX           - AIX
 //  V8_OS_WIN           - Microsoft Windows
 //  V8_OS_ZOS           - z/OS
+//  V8_OS_OHOS          - OHOS
 
 #if defined(__ANDROID__)
 # define V8_OS_ANDROID 1
@@ -117,6 +118,12 @@ path. Add it with -I<path> to the command line
 # define V8_OS_CYGWIN 1
 # define V8_OS_POSIX 1
 # define V8_OS_STRING "cygwin"
+
+#elif defined(OSOHOS)
+# define V8_OS_OHOS 1
+# define V8_OS_LINUX 1
+# define V8_OS_POSIX 1
+# define V8_OS_STRING "ohos"
 
 #elif defined(__linux__)
 # define V8_OS_LINUX 1
@@ -203,7 +210,8 @@ path. Add it with -I<path> to the command line
   && !defined(V8_TARGET_OS_LINUX) \
   && !defined(V8_TARGET_OS_MACOS) \
   && !defined(V8_TARGET_OS_WIN) \
-  && !defined(V8_TARGET_OS_CHROMEOS)
+  && !defined(V8_TARGET_OS_CHROMEOS) \
+  && !defined(V8_TARGET_OS_OHOS)
 #  error No known target OS defined.
 # endif
 
@@ -215,7 +223,8 @@ path. Add it with -I<path> to the command line
   || defined(V8_TARGET_OS_LINUX) \
   || defined(V8_TARGET_OS_MACOS) \
   || defined(V8_TARGET_OS_WIN) \
-  || defined(V8_TARGET_OS_CHROMEOS)
+  || defined(V8_TARGET_OS_CHROMEOS) \
+  || defined(V8_TARGET_OS_OHOS)
 #  error A target OS is defined but V8_HAVE_TARGET_OS is unset.
 # endif
 
@@ -244,6 +253,10 @@ path. Add it with -I<path> to the command line
 # define V8_TARGET_OS_WIN
 #endif
 
+#ifdef V8_OS_OHOS
+# define V8_TARGET_OS_OHOS
+#endif
+
 #endif  // V8_HAVE_TARGET_OS
 
 #if defined(V8_TARGET_OS_ANDROID)
@@ -258,6 +271,8 @@ path. Add it with -I<path> to the command line
 # define V8_TARGET_OS_STRING "macos"
 #elif defined(V8_TARGET_OS_WINDOWS)
 # define V8_TARGET_OS_STRING "windows"
+#elif defined(V8_TARGET_OS_OHOS)
+# define V8_TARGET_OS_STRING "ohos"
 #else
 # define V8_TARGET_OS_STRING "unknown"
 #endif

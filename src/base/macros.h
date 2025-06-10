@@ -264,9 +264,36 @@ struct is_trivially_copyable {
   static constexpr bool value = std::is_trivially_copyable<T>::value;
 #endif
 };
+#if defined(__clang__) && (__clang_major__ < 17)
+template<typename T, typename = void>
+struct is_std_pair : std::false_type {};
+
+template<typename First, typename Second>
+struct is_std_pair<std::pair<First, Second>> : std::true_type {};
+
+// check if both first and second members of a std::pair are
+// is_trivially_copyable
+template<typename T, typename = void>
+struct are_pair_elements_trivially_copyable : std::false_type {};
+
+template<typename First, typename Second>
+struct are_pair_elements_trivially_copyable<std::pair<First, Second>> :
+    std::integral_constant<
+      bool,
+      ::v8::base::is_trivially_copyable<First>::value
+         && ::v8::base::is_trivially_copyable<Second>::value> {};
+
+#define ASSERT_TRIVIALLY_COPYABLE(T)                                      \
+  static_assert(                                                          \
+    ::v8::base::is_trivially_copyable<T>::value                           \
+      || (::v8::base::is_std_pair<T>::value                               \
+          && ::v8::base::are_pair_elements_trivially_copyable<T>::value), \
+    #T " should be trivially copyable")
+#else
 #define ASSERT_TRIVIALLY_COPYABLE(T)                         \
   static_assert(::v8::base::is_trivially_copyable<T>::value, \
                 #T " should be trivially copyable")
+#endif
 #define ASSERT_NOT_TRIVIALLY_COPYABLE(T)                      \
   static_assert(!::v8::base::is_trivially_copyable<T>::value, \
                 #T " should not be trivially copyable")
