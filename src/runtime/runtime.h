@@ -587,6 +587,7 @@ namespace internal {
   F(IsEfficiencyModeEnabled, 0, 1)            \
   F(IsInPlaceInternalizableString, 1, 1)      \
   F(IsInternalizedString, 1, 1)               \
+  F(IsNoWriteBarrierNeeded, 1, 1)             \
   F(StringToCString, 1, 1)                    \
   F(IsMaglevEnabled, 0, 1)                    \
   F(IsSameHeapObject, 2, 1)                   \
@@ -625,6 +626,7 @@ namespace internal {
   F(SharedGC, 0, 1)                           \
   F(ShareObject, 1, 1)                        \
   F(SimulateNewspaceFull, 0, 1)               \
+  F(StringIsFlat, 1, 1)                       \
   F(StringIteratorProtector, 0, 1)            \
   F(StringWrapperToPrimitiveProtector, 0, 1)  \
   F(SystemBreak, 0, 1)                        \

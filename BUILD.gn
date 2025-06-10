@@ -3,6 +3,9 @@
 # found in the LICENSE file.
 
 import("//build/config/android/config.gni")
+if (is_ohos) {
+  import("//build/config/ohos/config.gni")
+}
 import("//build/config/arm.gni")
 import("//build/config/coverage/coverage.gni")
 import("//build/config/dcheck_always_on.gni")
@@ -298,14 +301,15 @@ declare_args() {
   # Enable snapshot compression (enabled by default for desktop) devices.
   v8_enable_snapshot_compression =
       target_os == "android" || target_os == "chromeos" ||
-      target_os == "fuchsia"
+      target_os == "fuchsia" || target_os == "ohos"
 
   # Enable control-flow integrity features, such as pointer authentication for
   # ARM64. Enable it by default for simulator builds and when native code
   # supports it as well.
   v8_control_flow_integrity =
       v8_current_cpu == "arm64" &&
-      (target_is_simulator || arm_control_flow_integrity != "none")
+      (target_is_simulator || arm_control_flow_integrity != "none") &&
+      target_os != "ohos"
 
   # A temporary flag for development of the WasmCodePointerTable.
   v8_enable_wasm_code_pointer_table = false
@@ -929,6 +933,7 @@ external_v8_defines = [
   "V8_TARGET_OS_MACOS",
   "V8_TARGET_OS_WIN",
   "V8_TARGET_OS_CHROMEOS",
+  "V8_TARGET_OS_OHOS",
 ]
 
 enabled_external_v8_defines = [
@@ -1005,6 +1010,9 @@ if (target_os == "android") {
 } else if (target_os == "chromeos") {
   enabled_external_v8_defines += [ "V8_HAVE_TARGET_OS" ]
   enabled_external_v8_defines += [ "V8_TARGET_OS_CHROMEOS" ]
+} else if (target_os == "ohos") {
+  enabled_external_v8_defines += [ "V8_HAVE_TARGET_OS" ]
+  enabled_external_v8_defines += [ "V8_TARGET_OS_OHOS" ]
 }
 
 disabled_external_v8_defines = external_v8_defines - enabled_external_v8_defines
@@ -2566,7 +2574,7 @@ template("run_mksnapshot") {
 
         # Replace this with --warn-about-builtin-profile-data to see the full
         # list of builtins with incompatible profiles.
-        "--abort-on-bad-builtin-profile-data",
+        "--warn-about-builtin-profile-data",
       ]
 
       if (!v8_enable_builtins_profiling && v8_enable_builtins_reordering) {
@@ -4665,7 +4673,7 @@ v8_header_set("v8_internal_headers") {
     if (v8_enable_webassembly) {
       # iOS Xcode simulator builds run on an x64 target. iOS and macOS are both
       # based on Darwin and thus POSIX-compliant to a similar degree.
-      if (is_linux || is_chromeos || is_mac || is_ios ||
+      if (is_linux || is_chromeos || is_mac || is_ios || is_ohos ||
           target_os == "freebsd") {
         sources += [ "src/trap-handler/handler-inside-posix.h" ]
       } else if (is_win) {
@@ -4732,7 +4740,7 @@ v8_header_set("v8_internal_headers") {
       # Trap handling is enabled on arm64 Mac and Linux and in simulators on
       # x64 on Linux and Mac.
       if ((current_cpu == "arm64" &&
-           (is_linux || is_chromeos || is_mac || is_ios)) ||
+           (is_linux || is_chromeos || is_mac || is_ios || is_ohos)) ||
           (current_cpu == "x64" && (is_linux || is_chromeos || is_mac))) {
         sources += [ "src/trap-handler/handler-inside-posix.h" ]
       }
@@ -6029,7 +6037,7 @@ v8_source_set("v8_base_without_compiler") {
     if (v8_enable_webassembly) {
       # iOS Xcode simulator builds run on an x64 target. iOS and macOS are both
       # based on Darwin and thus POSIX-compliant to a similar degree.
-      if (is_linux || is_chromeos || is_mac || is_ios ||
+      if (is_linux || is_chromeos || is_mac || is_ios || is_ohos ||
           target_os == "freebsd") {
         sources += [
           "src/trap-handler/handler-inside-posix.cc",
@@ -6080,7 +6088,7 @@ v8_source_set("v8_base_without_compiler") {
     ]
     if (v8_enable_webassembly) {
       # Trap handling is enabled on arm64 and x64, on Linux, Mac and Windows.
-      if ((current_cpu == "arm64" && (is_linux || is_chromeos || is_apple)) ||
+      if ((current_cpu == "arm64" && (is_linux || is_chromeos || is_apple || is_ohos)) ||
           (current_cpu == "x64" && (is_linux || is_chromeos || is_mac))) {
         sources += [
           "src/trap-handler/handler-inside-posix.cc",
@@ -6645,7 +6653,7 @@ v8_component("v8_libbase") {
     }
   }
 
-  if (is_linux || is_chromeos) {
+  if (is_linux || is_chromeos || is_ohos) {
     sources += [
       "src/base/debug/stack_trace_posix.cc",
       "src/base/platform/platform-linux.cc",

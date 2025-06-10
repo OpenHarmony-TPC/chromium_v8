@@ -142,6 +142,13 @@ RUNTIME_FUNCTION(Runtime_ConstructDouble) {
   return *isolate->factory()->NewNumber(base::uint64_to_double(result));
 }
 
+RUNTIME_FUNCTION(Runtime_StringIsFlat) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(args.length(), 1);
+  DirectHandle<String> s = args.at<String>(0);
+  return isolate->heap()->ToBoolean(s->IsFlat());
+}
+
 RUNTIME_FUNCTION(Runtime_ConstructConsString) {
   HandleScope scope(isolate);
   // This isn't exposed to fuzzers so doesn't need to handle invalid arguments.
@@ -2233,6 +2240,27 @@ RUNTIME_FUNCTION(Runtime_GetFeedback) {
   return ReadOnlyRoots(isolate).undefined_value();
 #endif  // OBJECT_PRINT
 #endif  // not V8_JITLESS
+}
+
+RUNTIME_FUNCTION(Runtime_IsNoWriteBarrierNeeded) {
+  HandleScope scope(isolate);
+  DisallowGarbageCollection no_gc;
+  if (args.length() != 1) {
+    return CrashUnlessFuzzing(isolate);
+  }
+  DirectHandle<Object> object = args.at(0);
+  if (!(*object).IsHeapObject()) {
+    return CrashUnlessFuzzing(isolate);
+  }
+  auto heap_object = Cast<HeapObject>(object);
+  if (HeapLayout::InReadOnlySpace(*heap_object)) {
+    return ReadOnlyRoots(isolate).true_value();
+  }
+  if (WriteBarrier::GetWriteBarrierModeForObject(*heap_object, no_gc) !=
+      WriteBarrierMode::SKIP_WRITE_BARRIER) {
+    return ReadOnlyRoots(isolate).false_value();
+  }
+  return ReadOnlyRoots(isolate).true_value();
 }
 
 }  // namespace internal
