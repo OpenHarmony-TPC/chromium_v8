@@ -473,8 +473,9 @@ PropertyAccessInfo AccessInfoFactory::ComputeDataFieldAccessInfo(
       OptionalMapRef maybe_field_map =
           TryMakeRef(broker(), descriptors_field_type->AsClass());
       if (!maybe_field_map.has_value()) return Invalid();
-      field_type = Type::For(maybe_field_map.value(), broker());
       field_map = maybe_field_map;
+      // field_type can only be inferred from field_map if it is stable and we
+      // add a stability dependency. This happens on use in the access builder.
     }
   } else {
     CHECK(details_representation.IsTagged());
@@ -909,6 +910,7 @@ PropertyAccessInfo AccessInfoFactory::ComputePropertyAccessInfo(
       return PropertyAccessInfo::NotFound(zone(), receiver_map, holder);
     }
 
+    CHECK(prototype.IsJSObject());
     holder = prototype.AsJSObject();
     map = map_prototype_map;
 
@@ -1149,8 +1151,9 @@ PropertyAccessInfo AccessInfoFactory::LookupTransition(
       OptionalMapRef maybe_field_map =
           TryMakeRef(broker(), descriptors_field_type->AsClass());
       if (!maybe_field_map.has_value()) return Invalid();
-      field_type = Type::For(maybe_field_map.value(), broker());
       field_map = maybe_field_map;
+      // field_type can only be inferred from field_map if it is stable and we
+      // add a stability dependency. This happens on use in the access builder.
     }
   }
 
