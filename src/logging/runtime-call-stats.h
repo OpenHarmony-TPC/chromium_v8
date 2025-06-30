@@ -9,7 +9,7 @@
 
 #include "src/base/macros.h"
 
-#ifdef V8_RUNTIME_CALL_STATS
+#if defined(V8_RUNTIME_CALL_STATS) || defined(HITRACE_RUNTIME_CALL_STATS)
 
 #include "src/base/atomic-utils.h"
 #include "src/base/platform/platform.h"
@@ -27,7 +27,7 @@
 namespace v8 {
 namespace internal {
 
-#ifdef V8_RUNTIME_CALL_STATS
+#if defined(V8_RUNTIME_CALL_STATS) || defined(HITRACE_RUNTIME_CALL_STATS)
 
 class RuntimeCallCounter final {
  public:

@@ -164,6 +164,9 @@ FullObjectSlot Arguments<T>::slot_from_address_at(int index, int offset) const {
     CLOBBER_DOUBLE_REGISTERS();                                            \
     TEST_AND_CALL_RCS(Name)                                                \
     auto trace = HiTrace("RCS_V8.Runtime_" #Name);                         \
+    if (V8_UNLIKELY(v8::internal::rcs_enable)) {                           \
+      HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::k##Name);           \
+    }                                                                      \
     RuntimeArguments args(args_length, args_object);                       \
     return Convert(__RT_impl_##Name(args, isolate));                       \
   }                                                                        \
