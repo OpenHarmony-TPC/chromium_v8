@@ -36,6 +36,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <optional>
+#include <string>
 
 #include "src/base/lazy-instance.h"
 #include "src/base/macros.h"
@@ -161,6 +162,14 @@ static inline int InlineMprotect(void *addr, size_t len, int prot) {
   return mprotect(addr, len, prot);
 #endif
 }
+
+#if defined(USING_OHOS) || defined(USING_OHOS_WEB)
+static inline void InlineSetVMAName(void* address, size_t size,
+                                    OS::MemoryPermission access,
+                                    const char* tagName) {
+  prctl(PR_SET_VMA, 0, address, size, tagName);
+}
+#endif
 
 DEFINE_LAZY_LEAKY_OBJECT_GETTER(RandomNumberGenerator,
                                 GetPlatformRandomNumberGenerator)
@@ -552,6 +561,19 @@ bool OS::SetPermissions(void* address, size_t size, MemoryPermission access) {
   int prot = GetProtectionFromMemoryPermission(access);
   int ret = InlineMprotect(address, size, prot);
 
+#if defined(USING_OHOS) || defined(USING_OHOS_WEB)
+  if (access == MemoryPermission::kReadWriteExecute) {
+#if defined(USING_OHOS)
+      uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
+      std::string jsvm_tag_name = "JSVM_JIT_" + std::to_string(pid);
+      InlineSetVMAName(address, size, access, jsvm_tag_name.c_str());
+#elif defined(USING_OHOS_WEB)
+      uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
+      std::string arkweb_tag_name = "ARKWEB_JIT_" + std::to_string(pid);
+      InlineSetVMAName(address, size, access, arkweb_tag_name.c_str());
+#endif
+  }
+#endif
   // Setting permissions can fail if the limit of VMAs is exceeded.
   // Any failure that's not OOM likely indicates a bug in the caller (e.g.
   // using an invalid mapping) so attempt to catch that here to facilitate
