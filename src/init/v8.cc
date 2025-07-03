@@ -179,8 +179,10 @@ void V8::Initialize() {
                       .GetBoolParameter("web.debug.rcs", false);
 #ifdef USING_OHOS_WEB
   if (rcs_enable == true) {
+    TracingFlags::runtime_stats.store(1, std::memory_order_relaxed);
     StreamHilog("RCS is on");
   } else {
+    TracingFlags::runtime_stats.store(0, std::memory_order_relaxed);
     StreamHilog("RCS is off");
   }
 #endif

@@ -3365,6 +3365,7 @@ bool ModifyCodeGenerationFromStrings(Isolate* isolate,
   // execution if it's not set.
   VMState<EXTERNAL> state(isolate);
   RCS_SCOPE(isolate, RuntimeCallCounterId::kCodeGenerationFromStringsCallbacks);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kCodeGenerationFromStringsCallbacks);
   ModifyCodeGenerationFromStringsResult result =
       isolate->modify_code_gen_callback()(v8::Utils::ToLocal(context),
                                           v8::Utils::ToLocal(*source),

@@ -12149,6 +12149,7 @@ void InvokeAccessorGetterCallback(
   // Leaving JavaScript.
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(info.GetIsolate());
   RCS_SCOPE(i_isolate, RuntimeCallCounterId::kAccessorGetterCallback);
+  HITRACE_RCS_SCOPE(i_isolate, RuntimeCallCounterId::kAccessorGetterCallback);
 
   v8::AccessorNameGetterCallback getter;
   {
@@ -12188,6 +12189,7 @@ inline void InvokeFunctionCallback(
     const v8::FunctionCallbackInfo<v8::Value>& info, CallApiCallbackMode mode) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(info.GetIsolate());
   RCS_SCOPE(i_isolate, RuntimeCallCounterId::kFunctionCallback);
+  HITRACE_RCS_SCOPE(i_isolate, RuntimeCallCounterId::kFunctionCallback);
 
   Tagged<FunctionTemplateInfo> fti = GetTargetFunctionTemplateInfo(info);
   v8::FunctionCallback callback =

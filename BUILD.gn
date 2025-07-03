@@ -474,6 +474,10 @@ declare_args() {
   v8_used_in_shared_library = enable_cef
 }
 
+declare_args() {
+  v8_enable_hitrace_runtime_call_stats = v8_enable_ohos_js_engine
+}
+
 # Derived defaults.
 pgo_exists_flag = exec_script("tools/builtins-pgo/check_pgo.py", ["--pgo_path", "profiles/ohos.profile"], "value")
 if (pgo_exists_flag) {
@@ -1583,9 +1587,18 @@ config("toolchain") {
     defines += [ "ENABLE_VERIFY_CSA" ]
   }
 
+  # "HITRACE_RUNTIME_CALL_STATS" is enbaled by default to show blink callback in HiTrace.
+  # If you want to enable v8 runtime call stats, please set v8_enable_runtime_call_stats=true.
   if (v8_enable_runtime_call_stats) {
     defines += [ "V8_RUNTIME_CALL_STATS" ]
   }
+
+  if (v8_enable_hitrace_runtime_call_stats) {
+    defines += [ "HITRACE_RUNTIME_CALL_STATS" ]
+  }
+
+  assert(!(v8_enable_runtime_call_stats && v8_enable_hitrace_runtime_call_stats),
+         "Cannot enable v8 rcs and hitrace rcs at the same time!")
 
   if (is_arkweb && !v8_component_build) {
     defines += [ "USING_OHOS_WEB" ]
