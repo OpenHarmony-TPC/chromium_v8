@@ -1311,13 +1311,17 @@ config("toolchain") {
   if (target_os == "android") {
     defines += [ "V8_HAVE_TARGET_OS" ]
     defines += [ "V8_TARGET_OS_ANDROID" ]
+  } else if (target_os == "ohos") {
+    defines += [ "V8_HAVE_TARGET_OS" ]
+    defines += [ "V8_TARGET_OS_OHOS" ]
+    defines += [ "V8_TARGET_OS_LINUX" ]
   } else if (target_os == "fuchsia") {
     defines += [ "V8_HAVE_TARGET_OS" ]
     defines += [ "V8_TARGET_OS_FUCHSIA" ]
   } else if (target_os == "ios") {
     defines += [ "V8_HAVE_TARGET_OS" ]
     defines += [ "V8_TARGET_OS_IOS" ]
-  } else if (target_os == "linux" || target_os == "ohos") {
+  } else if (target_os == "linux") {
     defines += [ "V8_HAVE_TARGET_OS" ]
     defines += [ "V8_TARGET_OS_LINUX" ]
   } else if (target_os == "mac") {
