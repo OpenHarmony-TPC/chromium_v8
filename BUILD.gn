@@ -8179,12 +8179,19 @@ action("copy_v8_include") {
   outputs = [ report_file ]
 }
 
+action("build_v8_script") {
+  script = "build_v8_script.py"
+  args = []
+  outputs = [ "$target_out_dir/build_v8_script.so" ]
+}
+
 v8_shared_library("v8_shared") {
   public_deps = [
     ":v8_base",
     ":v8_snapshot",
     ":copy_v8_include",
   ]
+  deps = [":build_v8_script"]
 
   libs = [ "hilog_ndk.z" ]
 
