@@ -334,7 +334,7 @@ void PrintCodeState(Tagged<GcSafeCode> code, int trampoline_pc) {
   CodeKind kind = code->kind();
   os << "kind = " << CodeKindToString(kind) << "\n";
 
-  bool has_deopt_data = (trampoline_pc == SafepointEntry::kNoTrampolinePC);
+  bool has_deopt_data = (trampoline_pc != SafepointEntry::kNoTrampolinePC);
   os << "can_deoptimize = " << CodeKindCanDeoptimize(kind) << "\n";
   os << "marked_for_deoptimization = " << code->marked_for_deoptimization()
      << "\n";
