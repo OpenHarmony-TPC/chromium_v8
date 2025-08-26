@@ -327,6 +327,42 @@ DeoptimizedFrameInfo* Deoptimizer::DebuggerInspectableFrame(
 }
 
 namespace {
+#ifdef OHOS_JS_ENGINE
+void PrintCodeState(Tagged<GcSafeCode> code, int trampoline_pc) {
+  std::stringstream os;
+  os << "ERROR in depot for code:\n";
+  CodeKind kind = code->kind();
+  os << "kind = " << CodeKindToString(kind) << "\n";
+
+  bool has_deopt_data = (trampoline_pc == SafepointEntry::kNoTrampolinePC);
+  os << "can_deoptimize = " << CodeKindCanDeoptimize(kind) << "\n";
+  os << "marked_for_deoptimization = " << code->marked_for_deoptimization()
+     << "\n";
+  os << "has_deopt_data = " << has_deopt_data << "\n";
+
+  const char* name = nullptr;
+  if (code->is_builtin()) {
+    name = Builtins::name(code->builtin_id());
+  }
+  if ((name != nullptr) && (name[0] != '\0')) {
+    os << "name = " << name << "\n";
+  }
+  if (CodeKindIsOptimizedJSFunction(kind)) {
+    os << "stack_slots = " << code->stack_slots() << "\n";
+  }
+  os << "compiler = "
+     << (code->is_turbofanned()       ? "turbofan"
+         : code->is_maglevved()       ? "maglev"
+         : kind == CodeKind::BASELINE ? "baseline"
+                                      : "unknown")
+     << "\n";
+  os << "address = " << reinterpret_cast<void *>(code.ptr()) << "\n";
+
+  base::OS::PrintError("%s", os.str().c_str());
+  return;
+}
+#endif
+
 class ActivationsFinder : public ThreadVisitor {
  public:
   ActivationsFinder(Tagged<GcSafeCode> topmost_optimized_code,
@@ -364,6 +400,11 @@ class ActivationsFinder : public ThreadVisitor {
           static_assert(!kAllCodeObjectsLiveInTrustedSpace);
           DCHECK_IMPLIES(code.SafeEquals(topmost_), safe_to_deopt_);
           static_assert(SafepointEntry::kNoTrampolinePC == -1);
+#ifdef OHOS_JS_ENGINE
+          if (trampoline_pc < 0) {
+            PrintCodeState(code, trampoline_pc);
+          }
+#endif
           CHECK_GE(trampoline_pc, 0);
           if (!it.frame()->InFastCCall()) {
             Address new_pc = code->instruction_start() + trampoline_pc;
