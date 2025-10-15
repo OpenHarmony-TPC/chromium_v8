@@ -265,14 +265,14 @@ path. Add it with -I<path> to the command line
 # define V8_TARGET_OS_STRING "fuchsia"
 #elif defined(V8_TARGET_OS_IOS)
 # define V8_TARGET_OS_STRING "ios"
+#elif defined(V8_TARGET_OS_OHOS)
+# define V8_TARGET_OS_STRING "ohos"
 #elif defined(V8_TARGET_OS_LINUX)
 # define V8_TARGET_OS_STRING "linux"
 #elif defined(V8_TARGET_OS_MACOS)
 # define V8_TARGET_OS_STRING "macos"
 #elif defined(V8_TARGET_OS_WINDOWS)
 # define V8_TARGET_OS_STRING "windows"
-#elif defined(V8_TARGET_OS_OHOS)
-# define V8_TARGET_OS_STRING "ohos"
 #else
 # define V8_TARGET_OS_STRING "unknown"
 #endif

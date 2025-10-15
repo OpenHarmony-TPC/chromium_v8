@@ -128,6 +128,7 @@ inline RecordWriteMode WriteBarrierKindToRecordWriteMode(
                                                                            \
   V(ArchCallCodeObject)                                                    \
   V(ArchCallJSFunction)                                                    \
+  V(ArchCallCFunction)                                                     \
   IF_WASM(V, ArchCallWasmFunction)                                         \
   V(ArchCallBuiltinPointer)                                                \
   /* Update IsCallWithDescriptorFlags if further Call opcodes are added */ \
@@ -135,8 +136,6 @@ inline RecordWriteMode WriteBarrierKindToRecordWriteMode(
   V(ArchPrepareCallCFunction)                                              \
   V(ArchSaveCallerRegisters)                                               \
   V(ArchRestoreCallerRegisters)                                            \
-  V(ArchCallCFunction)                                                     \
-  V(ArchCallCFunctionWithFrameState)                                       \
   V(ArchPrepareTailCall)                                                   \
   V(ArchJmp)                                                               \
   V(ArchBinarySearchSwitch)                                                \

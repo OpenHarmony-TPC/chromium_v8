@@ -1299,12 +1299,6 @@ bool CppHeap::IsGCAllowed() const {
   return isolate_ && HeapBase::IsGCAllowed();
 }
 
-bool CppHeap::IsGCForbidden() const {
-  return (isolate_ && isolate_->InFastCCall() &&
-          !v8_flags.allow_allocation_in_fast_api_call) ||
-         HeapBase::IsGCForbidden();
-}
-
 bool CppHeap::IsCurrentThread(int thread_id) const {
   if (isolate_ && V8_UNLIKELY(isolate_->was_locker_ever_used())) {
     // If v8::Locker has been used, we only check if the isolate is now locked
