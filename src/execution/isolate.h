@@ -1534,8 +1534,6 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
   bool IsLoggingCodeCreation() const;
 
-  inline bool InFastCCall() const;
-
   bool AllowsCodeCompaction() const;
 
   bool NeedsDetailedOptimizedCodeLineInfo() const;

@@ -1663,9 +1663,6 @@ void Heap::CollectGarbage(AllocationSpace space,
   DisallowJavascriptExecution no_js(isolate());
 
   DCHECK(AllowGarbageCollection::IsAllowed());
-  // TODO(chromium:1523607): Ensure this for standalone cppgc as well.
-  CHECK_IMPLIES(!v8_flags.allow_allocation_in_fast_api_call,
-                !isolate()->InFastCCall());
 
   const char* collector_reason = nullptr;
   const GarbageCollector collector =
@@ -1944,8 +1941,6 @@ void Heap::StartIncrementalMarking(GCFlags gc_flags,
                                    GCCallbackFlags gc_callback_flags,
                                    GarbageCollector collector) {
   DCHECK(incremental_marking()->IsStopped());
-  CHECK_IMPLIES(!v8_flags.allow_allocation_in_fast_api_call,
-                !isolate()->InFastCCall());
 
   if (v8_flags.separate_gc_phases && gc_callbacks_depth_ > 0) {
     // Do not start incremental marking while invoking GC callbacks.
