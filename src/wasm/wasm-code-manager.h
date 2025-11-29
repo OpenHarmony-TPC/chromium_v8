@@ -500,6 +500,10 @@ class V8_EXPORT_PRIVATE WasmCode final {
   using ForDebuggingField = ExecutionTierField::Next<ForDebugging, 2>;
   using FrameHasFeedbackSlotField = ForDebuggingField::Next<bool, 1>;
 
+  // Will be set to {true} the first time this code object is considered
+  // "potentially dead" (to be confirmed by the next Wasm Code GC cycle).
+  std::atomic<bool> dying_{false};
+
   // WasmCode is ref counted. Counters are held by:
   //   1) The jump table / code table.
   //   2) {WasmCodeRefScope}s.
