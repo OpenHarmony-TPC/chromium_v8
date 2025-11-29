@@ -86,11 +86,11 @@ class NodeInfo {
   }
 
   NodeType type() const { return type_; }
-  NodeType CombineType(NodeType other) {
-    return type_ = maglev::CombineType(type_, other);
-  }
   NodeType IntersectType(NodeType other) {
     return type_ = maglev::IntersectType(type_, other);
+  }
+  NodeType UnionType(NodeType other) {
+    return type_ = maglev::UnionType(type_, other);
   }
 
   // Optional alternative nodes with the equivalent value but a different
@@ -169,7 +169,7 @@ class NodeInfo {
   // being a node info that is the subset of information valid in both inputs.
   void MergeWith(const NodeInfo& other, Zone* zone,
                  bool& any_merged_map_is_unstable) {
-    IntersectType(other.type_);
+    UnionType(other.type_);
     alternative_.MergeWith(other.alternative_);
     if (possible_maps_are_known_) {
       if (other.possible_maps_are_known_) {
@@ -195,6 +195,7 @@ class NodeInfo {
     if (!any_map_is_unstable_) return;
     possible_maps_.clear();
     possible_maps_are_known_ = false;
+    type_ = MakeTypeStable(type_);
     any_map_is_unstable_ = false;
   }
 
@@ -228,8 +229,7 @@ class NodeInfo {
     if (possible_maps.size()) {
       NodeType expected = StaticTypeForMap(*possible_maps.begin(), broker);
       for (auto map : possible_maps) {
-        expected =
-            maglev::IntersectType(StaticTypeForMap(map, broker), expected);
+        expected = maglev::UnionType(StaticTypeForMap(map, broker), expected);
       }
       // Ensure the claimed type is not narrower than what can be learned from
       // the map checks.
@@ -238,10 +238,15 @@ class NodeInfo {
       DCHECK_EQ(possible_type, NodeType::kUnknown);
     }
 #endif
-    CombineType(possible_type);
+    IntersectType(possible_type);
   }
 
   bool any_map_is_unstable() const { return any_map_is_unstable_; }
+
+  void set_node_type_is_unstable() {
+    // Re-use any_map_is_unstable to signal that the node type is unstable.
+    any_map_is_unstable_ = true;
+  }
 
  private:
   NodeType type_ = NodeType::kUnknown;
@@ -332,7 +337,7 @@ struct KnownNodeAspects {
     auto info_it = FindInfo(node);
     if (IsValid(info_it)) return &info_it->second;
     auto res = &node_infos.emplace(node, NodeInfo()).first->second;
-    res->CombineType(StaticTypeForNode(broker, isolate, node));
+    res->IntersectType(StaticTypeForNode(broker, isolate, node));
     return res;
   }
 
@@ -514,7 +519,7 @@ class InterpreterFrameState {
  public:
   InterpreterFrameState(const MaglevCompilationUnit& info,
                         KnownNodeAspects* known_node_aspects,
-                        VirtualObject::List virtual_objects)
+                        VirtualObjectList virtual_objects)
       : frame_(info),
         known_node_aspects_(known_node_aspects),
         virtual_objects_(virtual_objects) {
@@ -524,7 +529,7 @@ class InterpreterFrameState {
   explicit InterpreterFrameState(const MaglevCompilationUnit& info)
       : InterpreterFrameState(info,
                               info.zone()->New<KnownNodeAspects>(info.zone()),
-                              VirtualObject::List()) {}
+                              VirtualObjectList()) {}
 
   inline void CopyFrom(const MaglevCompilationUnit& info,
                        MergePointInterpreterFrameState& state,
@@ -573,17 +578,15 @@ class InterpreterFrameState {
   void clear_known_node_aspects() { known_node_aspects_ = nullptr; }
 
   void add_object(VirtualObject* vobject) { virtual_objects_.Add(vobject); }
-  const VirtualObject::List& virtual_objects() const {
-    return virtual_objects_;
-  }
-  void set_virtual_objects(const VirtualObject::List& virtual_objects) {
+  const VirtualObjectList& virtual_objects() const { return virtual_objects_; }
+  void set_virtual_objects(const VirtualObjectList& virtual_objects) {
     virtual_objects_ = virtual_objects;
   }
 
  private:
   RegisterFrameArray<ValueNode*> frame_;
   KnownNodeAspects* known_node_aspects_;
-  VirtualObject::List virtual_objects_;
+  VirtualObjectList virtual_objects_;
 };
 
 class CompactInterpreterFrameState {
@@ -729,11 +732,9 @@ class CompactInterpreterFrameState {
     return SizeFor(info, liveness_);
   }
 
-  const VirtualObject::List& virtual_objects() const {
-    return virtual_objects_;
-  }
-  VirtualObject::List& virtual_objects() { return virtual_objects_; }
-  void set_virtual_objects(const VirtualObject::List& vos) {
+  const VirtualObjectList& virtual_objects() const { return virtual_objects_; }
+  VirtualObjectList& virtual_objects() { return virtual_objects_; }
+  void set_virtual_objects(const VirtualObjectList& vos) {
     virtual_objects_ = vos;
   }
 
@@ -749,7 +750,7 @@ class CompactInterpreterFrameState {
   static const int context_register_count_ = 1;
   ValueNode** const live_registers_and_accumulator_;
   const compiler::BytecodeLivenessState* const liveness_;
-  VirtualObject::List virtual_objects_;
+  VirtualObjectList virtual_objects_;
 };
 
 class MergePointRegisterState {
@@ -844,7 +845,7 @@ class MergePointInterpreterFrameState {
   void MergeThrow(MaglevGraphBuilder* handler_builder,
                   const MaglevCompilationUnit* handler_unit,
                   const KnownNodeAspects& known_node_aspects,
-                  const VirtualObject::List virtual_objects);
+                  const VirtualObjectList virtual_objects);
 
   // Merges a dead framestate (e.g. one which has been early terminated with a
   // deopt).
@@ -857,6 +858,12 @@ class MergePointInterpreterFrameState {
     DCHECK_LE(predecessors_so_far_, predecessor_count_);
   }
 
+  void clear_is_loop() {
+    bitfield_ =
+        kBasicBlockTypeBits::update(bitfield_, BasicBlockType::kDefault);
+    bitfield_ = kIsResumableLoopBit::update(bitfield_, false);
+  }
+
   // Merges a dead loop framestate (e.g. one where the block containing the
   // JumpLoop has been early terminated with a deopt).
   void MergeDeadLoop(const MaglevCompilationUnit& compilation_unit) {
@@ -865,9 +872,19 @@ class MergePointInterpreterFrameState {
     DCHECK(is_unmerged_loop());
     MergeDead(compilation_unit);
     // This means that this is no longer a loop.
-    bitfield_ =
-        kBasicBlockTypeBits::update(bitfield_, BasicBlockType::kDefault);
+    clear_is_loop();
   }
+
+  // Clears dead loop state, after all merges have already be done.
+  void TurnLoopIntoRegularBlock() {
+    DCHECK(is_loop());
+    predecessor_count_--;
+    predecessors_so_far_--;
+    ReducePhiPredecessorCount(1);
+    clear_is_loop();
+  }
+
+  void RemovePredecessorAt(int predecessor_id);
 
   // Returns and clears the known node aspects on this state. Expects to only
   // ever be called once, when starting a basic block with this state.
@@ -888,9 +905,9 @@ class MergePointInterpreterFrameState {
   bool has_phi() const { return !phis_.is_empty(); }
   Phi::List* phis() { return &phis_; }
 
-  int predecessor_count() const { return predecessor_count_; }
+  uint32_t predecessor_count() const { return predecessor_count_; }
 
-  int predecessors_so_far() const { return predecessors_so_far_; }
+  uint32_t predecessors_so_far() const { return predecessors_so_far_; }
 
   BasicBlock* predecessor_at(int i) const {
     DCHECK_LE(predecessors_so_far_, predecessor_count_);
@@ -903,12 +920,12 @@ class MergePointInterpreterFrameState {
     predecessors_[i] = val;
   }
 
-  void set_virtual_objects(const VirtualObject::List& vos) {
+  void set_virtual_objects(const VirtualObjectList& vos) {
     frame_state_.set_virtual_objects(vos);
   }
 
   void PrintVirtualObjects(const MaglevCompilationUnit& info,
-                           VirtualObject::List from_ifs,
+                           VirtualObjectList from_ifs,
                            const char* prelude = nullptr) {
     if (!v8_flags.trace_maglev_graph_building) return;
     if (prelude) {
@@ -941,20 +958,22 @@ class MergePointInterpreterFrameState {
     return is_loop() && predecessors_so_far_ < predecessor_count_;
   }
 
-  bool is_unreachable_loop() const {
+  bool is_unmerged_unreachable_loop() const {
     // If there is only one predecessor, and it's not set, then this is a loop
     // merge with no forward control flow entering it.
-    return is_loop() && !is_resumable_loop() && predecessor_count_ == 1 &&
-           predecessors_so_far_ == 0;
+    return is_unmerged_loop() && !is_resumable_loop() &&
+           predecessor_count_ == 1 && predecessors_so_far_ == 0;
   }
 
-  bool IsUnreachable() const;
+  bool IsUnreachableByForwardEdge() const;
 
   BasicBlockType basic_block_type() const {
     return kBasicBlockTypeBits::decode(bitfield_);
   }
   bool is_resumable_loop() const {
-    return kIsResumableLoopBit::decode(bitfield_);
+    bool res = kIsResumableLoopBit::decode(bitfield_);
+    DCHECK_IMPLIES(res, is_loop());
+    return res;
   }
   bool is_loop_with_peeled_iteration() const {
     return kIsLoopWithPeeledIterationBit::decode(bitfield_);
@@ -1037,11 +1056,11 @@ class MergePointInterpreterFrameState {
 
   void MergeVirtualObjects(MaglevGraphBuilder* builder,
                            MaglevCompilationUnit& compilation_unit,
-                           const VirtualObject::List unmerged_vos,
+                           const VirtualObjectList unmerged_vos,
                            const KnownNodeAspects& unmerged_aspects);
 
   void MergeVirtualObject(MaglevGraphBuilder* builder,
-                          const VirtualObject::List unmerged_vos,
+                          const VirtualObjectList unmerged_vos,
                           const KnownNodeAspects& unmerged_aspects,
                           VirtualObject* merged, VirtualObject* unmerged);
 
@@ -1067,8 +1086,8 @@ class MergePointInterpreterFrameState {
 
   int merge_offset_;
 
-  int predecessor_count_;
-  int predecessors_so_far_;
+  uint32_t predecessor_count_;
+  uint32_t predecessors_so_far_;
 
   uint32_t bitfield_;
 
@@ -1160,6 +1179,14 @@ void InterpreterFrameState::CopyFrom(const MaglevCompilationUnit& info,
     known_node_aspects_ = state.TakeKnownNodeAspects();
   }
   virtual_objects_ = state.frame_state().virtual_objects();
+}
+
+inline VirtualObjectList DeoptFrame::GetVirtualObjects() const {
+  if (type() == DeoptFrame::FrameType::kInterpretedFrame) {
+    return as_interpreted().frame_state()->virtual_objects();
+  }
+  DCHECK_NOT_NULL(parent());
+  return parent()->GetVirtualObjects();
 }
 
 }  // namespace maglev

@@ -30,6 +30,9 @@ class ExternalPointerMember {
   alignas(alignof(Tagged_t)) char storage_[sizeof(ExternalPointer_t)];
 };
 
+// Writes the null handle or kNullAddress into the external pointer field.
+V8_INLINE void InitLazyExternalPointerField(Address field_address);
+
 // Creates and initializes an entry in the external pointer table and writes the
 // handle for that entry to the field.
 template <ExternalPointerTag tag>
@@ -46,7 +49,7 @@ V8_INLINE void InitExternalPointerField(Address host_address,
 // fields since lazily-initialized field will initially contain
 // kNullExternalPointerHandle, which is guaranteed to result in kNullAddress
 // being returned from the external pointer table.
-template <ExternalPointerTag tag>
+template <ExternalPointerTagRange tag_range>
 V8_INLINE Address ReadExternalPointerField(Address field_address,
                                            IsolateForSandbox isolate);
 

@@ -5,8 +5,10 @@
 #ifndef V8_OBJECTS_MANAGED_INL_H_
 #define V8_OBJECTS_MANAGED_INL_H_
 
-#include "src/handles/global-handles-inl.h"
 #include "src/objects/managed.h"
+// Include the non-inl header before the rest of the headers.
+
+#include "src/handles/global-handles-inl.h"
 
 namespace v8::internal {
 
@@ -22,7 +24,7 @@ static void Destructor(void* ptr) {
 
 // static
 template <class CppType>
-Handle<Managed<CppType>> Managed<CppType>::From(
+DirectHandle<Managed<CppType>> Managed<CppType>::From(
     Isolate* isolate, size_t estimated_size,
     std::shared_ptr<CppType> shared_ptr, AllocationType allocation_type) {
   static constexpr ExternalPointerTag kTag = TagForManaged<CppType>::value;
@@ -30,11 +32,13 @@ Handle<Managed<CppType>> Managed<CppType>::From(
   auto destructor = new ManagedPtrDestructor(
       estimated_size, new std::shared_ptr<CppType>{std::move(shared_ptr)},
       detail::Destructor<CppType>);
-  destructor->external_memory_accounter_.Increase(isolate, estimated_size);
-  Handle<Managed<CppType>> handle =
+  destructor->external_memory_accounter_.Increase(
+      reinterpret_cast<v8::Isolate*>(isolate), estimated_size);
+  DirectHandle<Managed<CppType>> handle =
       Cast<Managed<CppType>>(isolate->factory()->NewForeign<kTag>(
           reinterpret_cast<Address>(destructor), allocation_type));
-  Handle<Object> global_handle = isolate->global_handles()->Create(*handle);
+  IndirectHandle<Object> global_handle =
+      isolate->global_handles()->Create(*handle);
   destructor->global_handle_location_ = global_handle.location();
   GlobalHandles::MakeWeak(destructor->global_handle_location_, destructor,
                           &ManagedObjectFinalizer,
@@ -45,17 +49,19 @@ Handle<Managed<CppType>> Managed<CppType>::From(
 
 // static
 template <class CppType>
-Handle<TrustedManaged<CppType>> TrustedManaged<CppType>::From(
+DirectHandle<TrustedManaged<CppType>> TrustedManaged<CppType>::From(
     Isolate* isolate, size_t estimated_size,
-    std::shared_ptr<CppType> shared_ptr) {
+    std::shared_ptr<CppType> shared_ptr, bool shared) {
   auto destructor = new ManagedPtrDestructor(
       estimated_size, new std::shared_ptr<CppType>{std::move(shared_ptr)},
       detail::Destructor<CppType>);
-  destructor->external_memory_accounter_.Increase(isolate, estimated_size);
-  Handle<TrustedManaged<CppType>> handle =
+  destructor->external_memory_accounter_.Increase(
+      reinterpret_cast<v8::Isolate*>(isolate), estimated_size);
+  DirectHandle<TrustedManaged<CppType>> handle =
       Cast<TrustedManaged<CppType>>(isolate->factory()->NewTrustedForeign(
-          reinterpret_cast<Address>(destructor)));
-  Handle<Object> global_handle = isolate->global_handles()->Create(*handle);
+          reinterpret_cast<Address>(destructor), shared));
+  IndirectHandle<Object> global_handle =
+      isolate->global_handles()->Create(*handle);
   destructor->global_handle_location_ = global_handle.location();
   GlobalHandles::MakeWeak(destructor->global_handle_location_, destructor,
                           &ManagedObjectFinalizer,

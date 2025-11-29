@@ -234,7 +234,7 @@ void RegExpMacroAssemblerPPC::CheckCharacterLT(base::uc16 limit,
   BranchOrBacktrack(lt, on_less);
 }
 
-void RegExpMacroAssemblerPPC::CheckGreedyLoop(Label* on_equal) {
+void RegExpMacroAssemblerPPC::CheckFixedLengthLoop(Label* on_equal) {
   Label backtrack_non_equal;
   __ LoadU64(r3, MemOperand(backtrack_stackpointer(), 0));
   __ CmpS64(current_input_offset(), r3);
@@ -731,8 +731,8 @@ void RegExpMacroAssemblerPPC::PopRegExpBasePointer(Register stack_pointer_out,
   StoreRegExpStackPointerToMemory(stack_pointer_out, scratch);
 }
 
-Handle<HeapObject> RegExpMacroAssemblerPPC::GetCode(Handle<String> source,
-                                                    RegExpFlags flags) {
+DirectHandle<HeapObject> RegExpMacroAssemblerPPC::GetCode(
+    DirectHandle<String> source, RegExpFlags flags) {
   Label return_r3;
 
   if (masm_->has_exception()) {
@@ -1142,6 +1142,7 @@ void RegExpMacroAssemblerPPC::PushBacktrack(Label* label) {
 
 void RegExpMacroAssemblerPPC::PushCurrentPosition() {
   Push(current_input_offset());
+  CheckStackLimit();
 }
 
 
@@ -1149,7 +1150,11 @@ void RegExpMacroAssemblerPPC::PushRegister(int register_index,
                                            StackCheckFlag check_stack_limit) {
   __ LoadU64(r3, register_location(register_index), r0);
   Push(r3);
-  if (check_stack_limit) CheckStackLimit();
+  if (check_stack_limit) {
+    CheckStackLimit();
+  } else if (V8_UNLIKELY(v8_flags.slow_debug_code)) {
+    AssertAboveStackLimitMinusSlack();
+  }
 }
 
 
@@ -1429,6 +1434,19 @@ void RegExpMacroAssemblerPPC::CheckStackLimit() {
   SafeCall(&stack_overflow_label_, le);
 }
 
+void RegExpMacroAssemblerPPC::AssertAboveStackLimitMinusSlack() {
+  DCHECK(v8_flags.slow_debug_code);
+  Label no_stack_overflow;
+  ASM_CODE_COMMENT_STRING(masm_.get(), "AssertAboveStackLimitMinusSlack");
+  auto l = ExternalReference::address_of_regexp_stack_limit_address(isolate());
+  __ mov(r3, Operand(l));
+  __ LoadU64(r3, MemOperand(r3));
+  __ SubS64(r3, r3, Operand(RegExpStack::kStackLimitSlackSize));
+  __ CmpU64(backtrack_stackpointer(), r3);
+  __ bgt(&no_stack_overflow);
+  __ DebugBreak();
+  __ bind(&no_stack_overflow);
+}
 
 void RegExpMacroAssemblerPPC::LoadCurrentCharacterUnchecked(int cp_offset,
                                                             int characters) {

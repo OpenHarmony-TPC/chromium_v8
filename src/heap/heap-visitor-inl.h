@@ -5,11 +5,14 @@
 #ifndef V8_HEAP_HEAP_VISITOR_INL_H_
 #define V8_HEAP_HEAP_VISITOR_INL_H_
 
+#include "src/heap/heap-visitor.h"
+// Include the non-inl header before the rest of the headers.
+
 #include <optional>
 
 #include "src/base/logging.h"
+#include "src/execution/local-isolate.h"
 #include "src/heap/heap-layout-inl.h"
-#include "src/heap/heap-visitor.h"
 #include "src/heap/mark-compact.h"
 #include "src/heap/object-lock-inl.h"
 #include "src/objects/arguments.h"
@@ -29,10 +32,6 @@
 #include "src/objects/synthetic-module-inl.h"
 #include "src/objects/torque-defined-classes.h"
 #include "src/objects/visitors.h"
-
-#if V8_ENABLE_WEBASSEMBLY
-#include "src/wasm/wasm-objects.h"
-#endif  // V8_ENABLE_WEBASSEMBLY
 
 namespace v8 {
 namespace internal {
@@ -68,21 +67,23 @@ VISITOR_IDS_WITH_READ_ONLY_MAPS_LIST(DEFINE_READ_ONLY_MAP_SPECIALIZATION)
 #undef DEFINE_READ_ONLY_MAP_SPECIALIZATION
 
 template <typename ConcreteVisitor>
-HeapVisitor<ConcreteVisitor>::HeapVisitor(PtrComprCageBase cage_base,
-                                          PtrComprCageBase code_cage_base)
-    : ObjectVisitorWithCageBases(cage_base, code_cage_base) {}
+HeapVisitor<ConcreteVisitor>::HeapVisitor(LocalIsolate* isolate)
+    : ObjectVisitorWithCageBases(PtrComprCageBase(isolate->cage_base()),
+                                 PtrComprCageBase(isolate->code_cage_base())),
+      heap_(isolate->heap()->heap()) {}
 
 template <typename ConcreteVisitor>
 HeapVisitor<ConcreteVisitor>::HeapVisitor(Isolate* isolate)
-    : ObjectVisitorWithCageBases(isolate) {}
+    : ObjectVisitorWithCageBases(isolate), heap_(isolate->heap()) {}
 
 template <typename ConcreteVisitor>
 HeapVisitor<ConcreteVisitor>::HeapVisitor(Heap* heap)
-    : ObjectVisitorWithCageBases(heap) {}
+    : ObjectVisitorWithCageBases(heap), heap_(heap) {}
 
 template <typename ConcreteVisitor>
 template <typename T>
-Tagged<T> HeapVisitor<ConcreteVisitor>::Cast(Tagged<HeapObject> object) {
+Tagged<T> HeapVisitor<ConcreteVisitor>::Cast(Tagged<HeapObject> object,
+                                             const Heap* heap) {
   if constexpr (ConcreteVisitor::ShouldUseUncheckedCast()) {
     return i::UncheckedCast<T>(object);
   }
@@ -133,9 +134,10 @@ size_t HeapVisitor<ConcreteVisitor>::Visit(Tagged<Map> map,
      * Note: This would normally be just !IsTrustedObject(obj), however we    \
      * might see trusted objects here before they've been migrated to trusted \
      * space, hence the second condition. */                                  \
-    DCHECK(!IsTrustedObject(object) || !HeapLayout::InTrustedSpace(object));  \
+    DCHECK(!InstanceTypeChecker::IsTrustedObject(map) ||                      \
+           !HeapLayout::InTrustedSpace(object));                              \
     return visitor->Visit##TypeName(                                          \
-        map, ConcreteVisitor::template Cast<TypeName>(object),                \
+        map, ConcreteVisitor::template Cast<TypeName>(object, heap_),         \
         maybe_object_size);
     TYPED_VISITOR_ID_LIST(CASE)
     TYPED_VISITOR_WITH_SLACK_ID_LIST(CASE)
@@ -143,7 +145,7 @@ size_t HeapVisitor<ConcreteVisitor>::Visit(Tagged<Map> map,
 #undef CASE
 #define CASE(TypeName)                                                     \
   case kVisit##TypeName:                                                   \
-    DCHECK(IsTrustedObject(object));                                       \
+    DCHECK(InstanceTypeChecker::IsTrustedObject(map));                     \
     /* Trusted objects are protected from modifications by an attacker as  \
      * they are located outside of the sandbox. However, an attacker can   \
      * still craft their own fake trusted objects inside the sandbox. In   \
@@ -154,28 +156,33 @@ size_t HeapVisitor<ConcreteVisitor>::Visit(Tagged<Map> map,
      * See also crbug.com/c/1505089. */                                    \
     SBXCHECK(OutsideSandboxOrInReadonlySpace(object));                     \
     return visitor->Visit##TypeName(                                       \
-        map, ConcreteVisitor::template Cast<TypeName>(object),             \
+        map, ConcreteVisitor::template Cast<TypeName>(object, heap_),      \
         maybe_object_size);
     TRUSTED_VISITOR_ID_LIST(CASE)
 #undef CASE
     case kVisitShortcutCandidate:
       return visitor->VisitShortcutCandidate(
-          map, ConcreteVisitor::template Cast<ConsString>(object),
+          map, ConcreteVisitor::template Cast<ConsString>(object, heap_),
           maybe_object_size);
     case kVisitJSObjectFast:
       return visitor->VisitJSObjectFast(
-          map, ConcreteVisitor::template Cast<JSObject>(object),
+          map, ConcreteVisitor::template Cast<JSObject>(object, heap_),
           maybe_object_size);
     case kVisitJSApiObject:
       return visitor->VisitJSApiObject(
-          map, ConcreteVisitor::template Cast<JSObject>(object),
+          map, ConcreteVisitor::template Cast<JSObject>(object, heap_),
+          maybe_object_size);
+    case kVisitCppHeapExternalObject:
+      return visitor->VisitCppHeapExternalObject(
+          map,
+          ConcreteVisitor::template Cast<CppHeapExternalObject>(object, heap_),
           maybe_object_size);
     case kVisitStruct:
       return visitor->VisitStruct(map, object, maybe_object_size);
     case kVisitFiller:
       return visitor->VisitFiller(map, object, maybe_object_size);
     case kVisitFreeSpace:
-      return visitor->VisitFreeSpace(map, Cast<FreeSpace>(object),
+      return visitor->VisitFreeSpace(map, i::Cast<FreeSpace>(object),
                                      maybe_object_size);
     case kDataOnlyVisitorIdCount:
     case kVisitorIdCount:
@@ -291,6 +298,22 @@ size_t HeapVisitor<ConcreteVisitor>::VisitJSApiObject(
       ->template VisitJSObjectSubclass<
           JSObject, JSAPIObjectWithEmbedderSlots::BodyDescriptor>(
           map, object, maybe_object_size);
+}
+
+template <typename ConcreteVisitor>
+size_t HeapVisitor<ConcreteVisitor>::VisitCppHeapExternalObject(
+    Tagged<Map> map, Tagged<CppHeapExternalObject> object,
+    MaybeObjectSize maybe_object_size) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  const size_t size =
+      ConcreteVisitor::UsePrecomputedObjectSize()
+          ? maybe_object_size.AssumeSize()
+          : CppHeapExternalObject::BodyDescriptor::SizeOf(map, object);
+  visitor->template VisitMapPointerIfNeeded<
+      VisitorId::kVisitCppHeapExternalObject>(object);
+  CppHeapExternalObject::BodyDescriptor::IterateBody(
+      map, object, static_cast<int>(size), visitor);
+  return size;
 }
 
 template <typename ConcreteVisitor>
@@ -410,7 +433,7 @@ UNSAFE_STRING_TRANSITION_SOURCES(UNCHECKED_CAST)
 template <typename ConcreteVisitor>
 template <typename T>
 Tagged<T> ConcurrentHeapVisitor<ConcreteVisitor>::Cast(
-    Tagged<HeapObject> object) {
+    Tagged<HeapObject> object, const Heap* heap) {
   if constexpr (ConcreteVisitor::EnableConcurrentVisitation()) {
     return ConcurrentVisitorCastHelper<T>::Cast(object);
   }
@@ -437,7 +460,7 @@ template <typename T>
 size_t ConcurrentHeapVisitor<ConcreteVisitor>::VisitStringLocked(
     Tagged<T> object) {
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
-  SharedObjectLockGuard guard(object);
+  ObjectLockGuard guard(object);
   // The object has been locked. At this point shared read access is
   // guaranteed but we must re-read the map and check whether the string has
   // transitioned.

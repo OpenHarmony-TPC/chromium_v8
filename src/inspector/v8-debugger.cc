@@ -22,6 +22,8 @@
 #include "src/inspector/v8-runtime-agent-impl.h"
 #include "src/inspector/v8-stack-trace-impl.h"
 #include "src/inspector/v8-value-utils.h"
+#include "src/tracing/trace-event.h"
+#include "src/tracing/trace-id.h"
 
 namespace v8_inspector {
 
@@ -174,8 +176,8 @@ std::vector<std::unique_ptr<V8DebuggerScript>> V8Debugger::getCompiledScripts(
       if (!script->ContextId().To(&contextId)) continue;
       if (m_inspector->contextGroupId(contextId) != contextGroupId) continue;
     }
-    result.push_back(V8DebuggerScript::Create(m_isolate, script, false, agent,
-                                              m_inspector->client()));
+    result.push_back(std::make_unique<V8DebuggerScript>(
+        m_isolate, script, false, agent, m_inspector->client()));
   }
   return result;
 }
@@ -611,8 +613,8 @@ void V8Debugger::ScriptCompiled(v8::Local<v8::debug::Script> script,
         auto agent = session->debuggerAgent();
         if (!agent->enabled()) return;
         agent->didParseSource(
-            V8DebuggerScript::Create(isolate, script, is_live_edited, agent,
-                                     client),
+            std::make_unique<V8DebuggerScript>(isolate, script, is_live_edited,
+                                               agent, client),
             !has_compile_error);
       });
 }
@@ -885,7 +887,7 @@ v8::MaybeLocal<v8::Value> V8Debugger::generatorScopes(
 
 v8::MaybeLocal<v8::Array> V8Debugger::collectionsEntries(
     v8::Local<v8::Context> context, v8::Local<v8::Value> collection) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Array> entries;
   bool isKeyValue = false;
   if (!collection->IsObject() || !collection.As<v8::Object>()
@@ -927,7 +929,7 @@ v8::MaybeLocal<v8::Array> V8Debugger::privateMethods(
   if (!receiver->IsObject()) {
     return v8::MaybeLocal<v8::Array>();
   }
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::LocalVector<v8::Value> names(isolate);
   v8::LocalVector<v8::Value> values(isolate);
   int filter =
@@ -1005,7 +1007,7 @@ v8::MaybeLocal<v8::Array> V8Debugger::internalProperties(
 
 v8::Local<v8::Array> V8Debugger::queryObjects(v8::Local<v8::Context> context,
                                               v8::Local<v8::Object> prototype) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   std::vector<v8::Global<v8::Object>> v8_objects;
   MatchPrototypePredicate predicate(m_inspector, context, prototype);
   isolate->GetHeapProfiler()->QueryObjects(context, &predicate, &v8_objects);
@@ -1197,9 +1199,30 @@ void V8Debugger::asyncTaskFinished(void* task) {
   asyncTaskFinishedForStack(task);
 }
 
+#ifdef V8_USE_PERFETTO
+namespace {
+void AddTraceDataWithSample(v8::Isolate* isolate,
+                            perfetto::TracedValue context) {
+  uint64_t trace_id = v8::tracing::TraceId();
+  auto dict = std::move(context).WriteDictionary();
+  v8::CpuProfiler::CpuProfiler::CollectSample(isolate, trace_id);
+  dict.Add("sampleTraceId", trace_id);
+}
+}  // namespace
+#endif  // V8_USE_PERFETTO
+
 void V8Debugger::asyncTaskScheduledForStack(const StringView& taskName,
                                             void* task, bool recurring,
                                             bool skipTopFrame) {
+#ifdef V8_USE_PERFETTO
+  TRACE_EVENT(TRACE_DISABLED_BY_DEFAULT("v8.inspector"),
+              "v8::Debugger::AsyncTaskScheduled", "taskName",
+              TRACE_STR_COPY(toString16(taskName).utf8().c_str()),
+              perfetto::Flow::ProcessScoped(reinterpret_cast<uintptr_t>(task)),
+              "data", [isolate = m_isolate](perfetto::TracedValue context) {
+                AddTraceDataWithSample(isolate, std::move(context));
+              });
+#endif  // V8_USE_PERFETTO
   if (!m_maxAsyncCallStackDepth) return;
   v8::HandleScope scope(m_isolate);
   std::shared_ptr<AsyncStackTrace> asyncStack =
@@ -1213,12 +1236,29 @@ void V8Debugger::asyncTaskScheduledForStack(const StringView& taskName,
 }
 
 void V8Debugger::asyncTaskCanceledForStack(void* task) {
+#ifdef V8_USE_PERFETTO
+  TRACE_EVENT(TRACE_DISABLED_BY_DEFAULT("v8.inspector"),
+              "v8::Debugger::AsyncTaskCanceled",
+              perfetto::Flow::ProcessScoped(reinterpret_cast<uintptr_t>(task)),
+              "data", [isolate = m_isolate](perfetto::TracedValue context) {
+                AddTraceDataWithSample(isolate, std::move(context));
+              });
+#endif  // V8_USE_PERFETTO
   if (!m_maxAsyncCallStackDepth) return;
   m_asyncTaskStacks.erase(task);
   m_recurringTasks.erase(task);
 }
 
 void V8Debugger::asyncTaskStartedForStack(void* task) {
+#ifdef V8_USE_PERFETTO
+  TRACE_EVENT_BEGIN(
+      TRACE_DISABLED_BY_DEFAULT("v8.inspector"), "v8::Debugger::AsyncTaskRun",
+      perfetto::Flow::ProcessScoped(reinterpret_cast<uintptr_t>(task)), "data",
+      [isolate = m_isolate](perfetto::TracedValue context) {
+        AddTraceDataWithSample(isolate, std::move(context));
+      });
+#endif  // V8_USE_PERFETTO
+
   if (!m_maxAsyncCallStackDepth) return;
   // Needs to support following order of events:
   // - asyncTaskScheduled
@@ -1239,6 +1279,10 @@ void V8Debugger::asyncTaskStartedForStack(void* task) {
 }
 
 void V8Debugger::asyncTaskFinishedForStack(void* task) {
+#ifdef V8_USE_PERFETTO
+  TRACE_EVENT_END0(TRACE_DISABLED_BY_DEFAULT("v8.inspector"),
+                   "v8::Debugger::AsyncTaskRun");
+#endif  // V8_USE_PERFETTO
   if (!m_maxAsyncCallStackDepth) return;
   // We could start instrumenting half way and the stack is empty.
   if (m_currentTasks.empty()) return;
@@ -1376,8 +1420,8 @@ std::shared_ptr<StackFrame> V8Debugger::symbolize(
   CachedStackFrameKey key{scriptId, lineNumber, columnNumber};
   auto functionName = toProtocolString(isolate(), v8Frame->GetFunctionName());
   auto it = m_cachedStackFrames.find(key);
-  if (it != m_cachedStackFrames.end() && !it->second.expired()) {
-    auto stackFrame = it->second.lock();
+  std::shared_ptr<StackFrame> stackFrame;
+  if (it != m_cachedStackFrames.end() && (stackFrame = it->second.lock())) {
     if (stackFrame->functionName() == functionName) {
       DCHECK_EQ(
           stackFrame->sourceURL(),
@@ -1389,9 +1433,9 @@ std::shared_ptr<StackFrame> V8Debugger::symbolize(
       toProtocolString(isolate(), v8Frame->GetScriptNameOrSourceURL());
   auto hasSourceURLComment =
       v8Frame->GetScriptName() != v8Frame->GetScriptNameOrSourceURL();
-  auto stackFrame = std::make_shared<StackFrame>(
-      std::move(functionName), scriptId, std::move(sourceURL), lineNumber,
-      columnNumber, hasSourceURLComment);
+  stackFrame = std::make_shared<StackFrame>(std::move(functionName), scriptId,
+                                            std::move(sourceURL), lineNumber,
+                                            columnNumber, hasSourceURLComment);
   m_cachedStackFrames.emplace(key, stackFrame);
   return stackFrame;
 }

@@ -2,17 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_WASM_NAMES_PROVIDER_H_
+#define V8_WASM_NAMES_PROVIDER_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
-
-#ifndef V8_WASM_NAMES_PROVIDER_H_
-#define V8_WASM_NAMES_PROVIDER_H_
 
 #include <map>
 #include <string>
 
 #include "src/base/vector.h"
+#include "src/utils/utils.h"
 #include "src/wasm/wasm-module.h"
 
 namespace v8 {
@@ -98,6 +99,36 @@ class V8_EXPORT_PRIVATE NamesProvider {
   std::map<uint32_t, std::string> import_export_memory_names_;
   std::map<uint32_t, std::string> import_export_global_names_;
   std::map<uint32_t, std::string> import_export_tag_names_;
+};
+
+// Specialized version for canonical type names.
+class CanonicalTypeNamesProvider {
+ public:
+  CanonicalTypeNamesProvider() = default;
+
+  void DecodeNameSections();
+  void DecodeNames(NativeModule* native_module);
+
+  void PrintTypeName(StringBuilder& out, CanonicalTypeIndex type_index,
+                     NamesProvider::IndexAsComment index_as_comment =
+                         NamesProvider::kDontPrintIndex);
+  void PrintValueType(StringBuilder& out, CanonicalValueType type);
+
+  void PrintFieldName(StringBuilder& out, CanonicalTypeIndex struct_index,
+                      uint32_t field_index);
+
+  size_t EstimateCurrentMemoryConsumption() const;
+
+ private:
+  // TODO(jkummerow): Use Zone allocation for the character payloads?
+  using StringT = base::OwnedVector<char>;
+
+  size_t DetectInlineStringThreshold();
+
+  std::vector<StringT> type_names_;
+  std::map<uint32_t, std::vector<StringT>> field_names_;
+  mutable base::Mutex mutex_;
+  size_t payload_size_estimate_{0};
 };
 
 }  // namespace wasm

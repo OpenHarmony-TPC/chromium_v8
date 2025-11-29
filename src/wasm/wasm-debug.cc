@@ -208,6 +208,7 @@ class DebugInfoImpl {
                                             base::Vector<const int> offsets,
                                             int dead_breakpoint) {
     mutex_.AssertHeld();  // Mutex is held externally.
+    DCHECK(!v8_flags.wasm_jitless);
 
     ForDebugging for_debugging = offsets.size() == 1 && offsets[0] == 0
                                      ? kForStepping
@@ -271,6 +272,7 @@ class DebugInfoImpl {
     if (!result.succeeded()) FATAL("Liftoff compilation failed");
     DCHECK_EQ(generate_debug_sidetable, debug_sidetable != nullptr);
 
+    DCHECK_NULL(result.assumptions);
     WasmCode* new_code =
         native_module_->PublishCode(native_module_->AddCompiledCode(result));
 
@@ -284,7 +286,7 @@ class DebugInfoImpl {
     // Insert new code into the cache. Insert before existing elements for LRU.
     cached_debugging_code_.insert(
         cached_debugging_code_.begin(),
-        CachedDebuggingCode{func_index, base::OwnedVector<int>::Of(offsets),
+        CachedDebuggingCode{func_index, base::OwnedCopyOf(offsets),
                             dead_breakpoint, new_code});
     // Increase the ref count (for the cache entry).
     new_code->IncRef();
@@ -302,6 +304,10 @@ class DebugInfoImpl {
   }
 
   void SetBreakpoint(int func_index, int offset, Isolate* isolate) {
+    // TODO(paolosev@microsoft.com) - Add support for breakpoints in Wasm
+    // interpreter.
+    if (v8_flags.wasm_jitless) return;
+
     // Put the code ref scope outside of the mutex, so we don't unnecessarily
     // hold the mutex while freeing code.
     WasmCodeRefScope wasm_code_ref_scope;
@@ -364,6 +370,9 @@ class DebugInfoImpl {
   void UpdateBreakpoints(int func_index, base::Vector<int> breakpoints,
                          Isolate* isolate, StackFrameId stepping_frame,
                          int dead_breakpoint) {
+    // TODO(paolosev@microsoft.com) - Add support for breakpoints in Wasm
+    // interpreter.
+    if (v8_flags.wasm_jitless) return;
     mutex_.AssertHeld();  // Mutex is held externally.
     WasmCode* new_code = RecompileLiftoffWithBreakpoints(
         func_index, breakpoints, dead_breakpoint);
@@ -371,6 +380,9 @@ class DebugInfoImpl {
   }
 
   void FloodWithBreakpoints(WasmFrame* frame, ReturnLocation return_location) {
+    // TODO(paolosev@microsoft.com) - Add support for breakpoints in Wasm
+    // interpreter.
+    if (v8_flags.wasm_jitless) return;
     // 0 is an invalid offset used to indicate flooding.
     constexpr int kFloodingBreakpoints[] = {0};
     DCHECK(frame->wasm_code()->is_liftoff());
@@ -411,6 +423,9 @@ class DebugInfoImpl {
   }
 
   void ClearStepping(WasmFrame* frame) {
+    // TODO(paolosev@microsoft.com) - Add support for breakpoints in Wasm
+    // interpreter.
+    if (v8_flags.wasm_jitless) return;
     WasmCodeRefScope wasm_code_ref_scope;
     base::MutexGuard guard(&mutex_);
     auto* code = frame->wasm_code();
@@ -518,7 +533,7 @@ class DebugInfoImpl {
   }
 
   size_t EstimateCurrentMemoryConsumption() const {
-    UPDATE_WHEN_CLASS_CHANGES(DebugInfoImpl, 208);
+    UPDATE_WHEN_CLASS_CHANGES(DebugInfoImpl, 144);
     UPDATE_WHEN_CLASS_CHANGES(CachedDebuggingCode, 40);
     UPDATE_WHEN_CLASS_CHANGES(PerIsolateDebugData, 48);
     size_t result = sizeof(DebugInfoImpl);
@@ -637,10 +652,12 @@ class DebugInfoImpl {
         } else if (value->type == kWasmI64) {
           return WasmValue(ReadUnalignedValue<uint64_t>(gp_addr(reg.gp())));
         } else if (value->type.is_reference()) {
-          Handle<Object> obj(
+          DirectHandle<Object> obj(
               Tagged<Object>(ReadUnalignedValue<Address>(gp_addr(reg.gp()))),
               isolate);
-          return WasmValue(obj, value->type, value->module);
+          // TODO(jkummerow): Consider changing {value->type} to be a
+          // CanonicalValueType.
+          return WasmValue(obj, value->module->canonical_type(value->type));
         } else {
           UNREACHABLE();
         }
@@ -681,12 +698,11 @@ class DebugInfoImpl {
       case kS128:
         return WasmValue(Simd128(ReadUnalignedValue<int8x16>(stack_address)));
       case kRef:
-      case kRefNull:
-      case kRtt: {
-        Handle<Object> obj(
+      case kRefNull: {
+        DirectHandle<Object> obj(
             Tagged<Object>(ReadUnalignedValue<Address>(stack_address)),
             isolate);
-        return WasmValue(obj, value->type, value->module);
+        return WasmValue(obj, value->module->canonical_type(value->type));
       }
       case kI8:
       case kI16:
@@ -911,7 +927,7 @@ void SetBreakOnEntryFlag(Tagged<Script> script, bool enabled) {
   // Update the "break_on_entry" flag on all live instances.
   i::Tagged<i::WeakArrayList> weak_instance_list =
       script->wasm_weak_instance_list();
-  i::Isolate* isolate = script->GetIsolate();
+  i::Isolate* isolate = Isolate::Current();
   for (int i = 0; i < weak_instance_list->length(); ++i) {
     if (weak_instance_list->Get(i).IsCleared()) continue;
     i::Tagged<i::WasmInstanceObject> instance = i::Cast<i::WasmInstanceObject>(
@@ -970,7 +986,7 @@ bool WasmScript::SetBreakPointOnFirstBreakableForFunction(
 bool WasmScript::SetBreakPointForFunction(
     DirectHandle<Script> script, int func_index, int offset,
     DirectHandle<BreakPoint> break_point) {
-  Isolate* isolate = script->GetIsolate();
+  Isolate* isolate = Isolate::Current();
 
   DCHECK_LE(0, func_index);
   DCHECK_NE(0, offset);
@@ -1027,7 +1043,7 @@ bool WasmScript::ClearBreakPoint(DirectHandle<Script> script, int position,
                                  DirectHandle<BreakPoint> break_point) {
   if (!script->has_wasm_breakpoint_infos()) return false;
 
-  Isolate* isolate = script->GetIsolate();
+  Isolate* isolate = Isolate::Current();
   DirectHandle<FixedArray> breakpoint_infos(script->wasm_breakpoint_infos(),
                                             isolate);
 
@@ -1075,7 +1091,7 @@ bool WasmScript::ClearBreakPointById(DirectHandle<Script> script,
   if (!script->has_wasm_breakpoint_infos()) {
     return false;
   }
-  Isolate* isolate = script->GetIsolate();
+  Isolate* isolate = Isolate::Current();
   DirectHandle<FixedArray> breakpoint_infos(script->wasm_breakpoint_infos(),
                                             isolate);
   // If the array exists, it should not be empty.
@@ -1087,7 +1103,7 @@ bool WasmScript::ClearBreakPointById(DirectHandle<Script> script,
       continue;
     }
     auto breakpoint_info = Cast<BreakPointInfo>(obj);
-    Handle<BreakPoint> breakpoint;
+    DirectHandle<BreakPoint> breakpoint;
     if (BreakPointInfo::GetBreakPointById(isolate, breakpoint_info,
                                           breakpoint_id)
             .ToHandle(&breakpoint)) {
@@ -1102,14 +1118,14 @@ bool WasmScript::ClearBreakPointById(DirectHandle<Script> script,
 // static
 void WasmScript::ClearAllBreakpoints(Tagged<Script> script) {
   script->set_wasm_breakpoint_infos(
-      ReadOnlyRoots(script->GetIsolate()).empty_fixed_array());
+      ReadOnlyRoots(Isolate::Current()).empty_fixed_array());
   SetBreakOnEntryFlag(script, false);
 }
 
 // static
 void WasmScript::AddBreakpointToInfo(DirectHandle<Script> script, int position,
                                      DirectHandle<BreakPoint> break_point) {
-  Isolate* isolate = script->GetIsolate();
+  Isolate* isolate = Isolate::Current();
   DirectHandle<FixedArray> breakpoint_infos;
   if (script->has_wasm_breakpoint_infos()) {
     breakpoint_infos = direct_handle(script->wasm_breakpoint_infos(), isolate);
@@ -1237,8 +1253,8 @@ bool CheckBreakPoint(Isolate* isolate, DirectHandle<BreakPoint> break_point,
   if (break_point->condition()->length() == 0) return true;
 
   HandleScope scope(isolate);
-  Handle<String> condition(break_point->condition(), isolate);
-  Handle<Object> result;
+  DirectHandle<String> condition(break_point->condition(), isolate);
+  DirectHandle<Object> result;
   // The Wasm engine doesn't perform any sort of inlining.
   const int inlined_jsframe_index = 0;
   const bool throw_on_side_effect = false;
@@ -1254,7 +1270,7 @@ bool CheckBreakPoint(Isolate* isolate, DirectHandle<BreakPoint> break_point,
 }  // namespace
 
 // static
-MaybeHandle<FixedArray> WasmScript::CheckBreakPoints(
+MaybeDirectHandle<FixedArray> WasmScript::CheckBreakPoints(
     Isolate* isolate, DirectHandle<Script> script, int position,
     StackFrameId frame_id) {
   if (!script->has_wasm_breakpoint_infos()) return {};
@@ -1281,13 +1297,14 @@ MaybeHandle<FixedArray> WasmScript::CheckBreakPoints(
     }
     // If breakpoint does fire, clear any prior muting behavior.
     isolate->debug()->ClearMutedLocation();
-    Handle<FixedArray> break_points_hit = isolate->factory()->NewFixedArray(1);
+    DirectHandle<FixedArray> break_points_hit =
+        isolate->factory()->NewFixedArray(1);
     break_points_hit->set(0, *break_points);
     return break_points_hit;
   }
 
   auto array = Cast<FixedArray>(break_points);
-  Handle<FixedArray> break_points_hit =
+  DirectHandle<FixedArray> break_points_hit =
       isolate->factory()->NewFixedArray(array->length());
   int break_points_hit_count = 0;
   for (int i = 0; i < array->length(); ++i) {

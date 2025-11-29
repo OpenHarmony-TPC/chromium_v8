@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_COMPILER_TURBOSHAFT_WASM_GC_TYPED_OPTIMIZATION_REDUCER_H_
+#define V8_COMPILER_TURBOSHAFT_WASM_GC_TYPED_OPTIMIZATION_REDUCER_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
-
-#ifndef V8_COMPILER_TURBOSHAFT_WASM_GC_TYPED_OPTIMIZATION_REDUCER_H_
-#define V8_COMPILER_TURBOSHAFT_WASM_GC_TYPED_OPTIMIZATION_REDUCER_H_
 
 #include "src/compiler/turboshaft/assembler.h"
 #include "src/compiler/turboshaft/operations.h"
@@ -178,7 +178,7 @@ class WasmGCTypedOptimizationReducer : public Next {
                                       cast_op.config.to.heap_type(), module_));
       bool to_nullable = cast_op.config.to.is_nullable();
       if (wasm::IsHeapSubtypeOf(type.heap_type(), cast_op.config.to.heap_type(),
-                                module_, module_)) {
+                                module_)) {
         if (to_nullable || type.is_non_nullable()) {
           // The inferred type is already as specific as the cast target, the
           // cast is guaranteed to always succeed and can therefore be removed.
@@ -192,8 +192,7 @@ class WasmGCTypedOptimizationReducer : public Next {
         }
       }
       if (wasm::HeapTypesUnrelated(type.heap_type(),
-                                   cast_op.config.to.heap_type(), module_,
-                                   module_)) {
+                                   cast_op.config.to.heap_type(), module_)) {
         // A cast between unrelated types can only succeed if the argument is
         // null. Otherwise, it always fails.
         V<Word32> non_trapping_condition =
@@ -210,15 +209,16 @@ class WasmGCTypedOptimizationReducer : public Next {
 
       // If the cast resulted in an uninhabitable type, the analyzer should have
       // returned a sentinel (bottom) type as {type}.
-      CHECK(!wasm::Intersection(type, cast_op.config.to, module_, module_)
+      CHECK(!wasm::Intersection(type, cast_op.config.to, module_)
                  .type.is_uninhabited());
 
       // The cast cannot be replaced. Still, we can refine the source type, so
       // that the lowering could potentially skip null or smi checks.
       wasm::ValueType from_type =
-          wasm::Intersection(type, cast_op.config.from, module_, module_).type;
+          wasm::Intersection(type, cast_op.config.from, module_).type;
       DCHECK(!from_type.is_uninhabited());
-      WasmTypeCheckConfig config{from_type, cast_op.config.to};
+      WasmTypeCheckConfig config{from_type, cast_op.config.to,
+                                 cast_op.config.exactness};
       return __ WasmTypeCast(__ MapToNewGraph(cast_op.object()),
                              __ MapToNewGraph(cast_op.rtt()), config);
     }
@@ -243,8 +243,7 @@ class WasmGCTypedOptimizationReducer : public Next {
           type.heap_type(), type_check.config.to.heap_type(), module_));
       bool to_nullable = type_check.config.to.is_nullable();
       if (wasm::IsHeapSubtypeOf(type.heap_type(),
-                                type_check.config.to.heap_type(), module_,
-                                module_)) {
+                                type_check.config.to.heap_type(), module_)) {
         if (to_nullable || type.is_non_nullable()) {
           // The inferred type is guaranteed to be a subtype of the checked
           // type.
@@ -257,8 +256,7 @@ class WasmGCTypedOptimizationReducer : public Next {
         }
       }
       if (wasm::HeapTypesUnrelated(type.heap_type(),
-                                   type_check.config.to.heap_type(), module_,
-                                   module_)) {
+                                   type_check.config.to.heap_type(), module_)) {
         if (to_nullable && type.is_nullable()) {
           return __ IsNull(__ MapToNewGraph(type_check.object()), type);
         } else {
@@ -269,7 +267,7 @@ class WasmGCTypedOptimizationReducer : public Next {
       // If there isn't a type that matches our known input type and the
       // type_check.config.to type, the type check always fails.
       wasm::ValueType true_type =
-          wasm::Intersection(type, type_check.config.to, module_, module_).type;
+          wasm::Intersection(type, type_check.config.to, module_).type;
       if (true_type.is_uninhabited()) {
         return __ Word32Constant(0);
       }
@@ -277,10 +275,10 @@ class WasmGCTypedOptimizationReducer : public Next {
       // The check cannot be replaced. Still, we can refine the source type, so
       // that the lowering could potentially skip null or smi checks.
       wasm::ValueType from_type =
-          wasm::Intersection(type, type_check.config.from, module_, module_)
-              .type;
+          wasm::Intersection(type, type_check.config.from, module_).type;
       DCHECK(!from_type.is_uninhabited());
-      WasmTypeCheckConfig config{from_type, type_check.config.to};
+      WasmTypeCheckConfig config{from_type, type_check.config.to,
+                                 type_check.config.exactness};
       return __ WasmTypeCheck(__ MapToNewGraph(type_check.object()),
                               __ MapToNewGraph(type_check.rtt()), config);
     }
@@ -362,7 +360,7 @@ class WasmGCTypedOptimizationReducer : public Next {
       return __ StructGet(__ MapToNewGraph(struct_get.object()),
                           struct_get.type, struct_get.type_index,
                           struct_get.field_index, struct_get.is_signed,
-                          kWithoutNullCheck);
+                          kWithoutNullCheck, struct_get.memory_order);
     }
     goto no_change;
   }
@@ -390,7 +388,7 @@ class WasmGCTypedOptimizationReducer : public Next {
       __ StructSet(__ MapToNewGraph(struct_set.object()),
                    __ MapToNewGraph(struct_set.value()), struct_set.type,
                    struct_set.type_index, struct_set.field_index,
-                   kWithoutNullCheck);
+                   kWithoutNullCheck, struct_set.memory_order);
       return OpIndex::Invalid();
     }
     goto no_change;

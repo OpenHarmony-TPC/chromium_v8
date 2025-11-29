@@ -554,6 +554,14 @@ inline void MaglevAssembler::OrInt32(Register reg, int mask) {
   orl(reg, Immediate(mask));
 }
 
+inline void MaglevAssembler::AndInt32(Register reg, Register other) {
+  andl(reg, other);
+}
+
+inline void MaglevAssembler::OrInt32(Register reg, Register other) {
+  orl(reg, other);
+}
+
 inline void MaglevAssembler::ShiftLeft(Register reg, int amount) {
   shll(reg, Immediate(amount));
 }
@@ -651,6 +659,18 @@ void MaglevAssembler::MoveTagged(Register dst, Handle<HeapObject> obj) {
 #else
   MacroAssembler::Move(dst, obj);
 #endif
+}
+
+inline void MaglevAssembler::Move(Register dst, intptr_t p) {
+  MacroAssembler::Move(dst, p);
+}
+
+inline void MaglevAssembler::LoadInt32(Register dst, MemOperand src) {
+  movl(dst, src);
+}
+
+inline void MaglevAssembler::StoreInt32(MemOperand dst, Register src) {
+  movl(dst, src);
 }
 
 inline void MaglevAssembler::LoadFloat32(DoubleRegister dst, MemOperand src) {
@@ -945,6 +965,11 @@ inline void MaglevAssembler::EmitEagerDeoptStress(Label* target) {
   }
 
   ExternalReference counter = ExternalReference::stress_deopt_count(isolate());
+  // The following code assumes that `Isolate::stress_deopt_count_` is 8 bytes
+  // wide.
+  static constexpr size_t kSizeofRAX = 8;
+  static_assert(sizeof(decltype(*isolate()->stress_deopt_count_address())) ==
+                kSizeofRAX);
 
   Label fallthrough;
   pushfq();
@@ -1009,6 +1034,17 @@ void MaglevAssembler::JumpIfByte(Condition cc, Register value, int32_t byte,
   j(cc, target, distance);
 }
 
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+void MaglevAssembler::JumpIfNotUndefinedNan(DoubleRegister value,
+                                            Register scratch, Label* target,
+                                            Label::Distance distance) {
+  JumpIfNotNan(value, target, distance);
+  Pextrd(scratch, value, 1);
+  CompareInt32AndJumpIf(scratch, kUndefinedNanUpper32, kNotEqual, target,
+                        distance);
+}
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+
 void MaglevAssembler::JumpIfHoleNan(DoubleRegister value, Register scratch,
                                     Label* target, Label::Distance distance) {
   // TODO(leszeks): Right now this only accepts Zone-allocated target labels.
@@ -1026,6 +1062,10 @@ void MaglevAssembler::JumpIfHoleNan(DoubleRegister value, Register scratch,
                masm->Pextrd(scratch, value, 1);
                masm->CompareInt32AndJumpIf(scratch, kHoleNanUpper32, kEqual,
                                            *is_hole);
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+               masm->CompareInt32AndJumpIf(scratch, kUndefinedNanUpper32,
+                                           kEqual, *is_hole);
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
                masm->Jump(*is_not_hole);
              },
              value, scratch, is_hole, is_not_hole));
@@ -1081,6 +1121,13 @@ inline void MaglevAssembler::CompareInt32AndJumpIf(Register r1, int32_t value,
   JumpIf(cond, target, distance);
 }
 
+void MaglevAssembler::CompareIntPtrAndJumpIf(Register r1, int32_t value,
+                                             Condition cond, Label* target,
+                                             Label::Distance distance) {
+  cmpq(r1, Immediate(value));
+  JumpIf(cond, target, distance);
+}
+
 inline void MaglevAssembler::CompareInt32AndBranch(
     Register r1, int32_t value, Condition cond, Label* if_true,
     Label::Distance true_distance, bool fallthrough_when_true, Label* if_false,
@@ -1095,6 +1142,15 @@ inline void MaglevAssembler::CompareInt32AndBranch(
     Label::Distance true_distance, bool fallthrough_when_true, Label* if_false,
     Label::Distance false_distance, bool fallthrough_when_false) {
   cmpl(r1, r2);
+  Branch(cond, if_true, true_distance, fallthrough_when_true, if_false,
+         false_distance, fallthrough_when_false);
+}
+
+inline void MaglevAssembler::CompareIntPtrAndBranch(
+    Register r1, int32_t value, Condition cond, Label* if_true,
+    Label::Distance true_distance, bool fallthrough_when_true, Label* if_false,
+    Label::Distance false_distance, bool fallthrough_when_false) {
+  cmpq(r1, Immediate(value));
   Branch(cond, if_true, true_distance, fallthrough_when_true, if_false,
          false_distance, fallthrough_when_false);
 }
@@ -1219,6 +1275,33 @@ inline void MaglevAssembler::TestUint8AndJumpIfAllClear(
   JumpIf(kZero, target, distance);
 }
 
+inline void MaglevAssembler::LoadContextCellState(Register state,
+                                                  Register cell) {
+  movl(state, FieldMemOperand(cell, offsetof(ContextCell, state_)));
+}
+
+inline void MaglevAssembler::LoadContextCellInt32Value(Register value,
+                                                       Register cell) {
+  AssertContextCellState(cell, ContextCell::kInt32);
+  movl(value, FieldMemOperand(cell, offsetof(ContextCell, double_value_)));
+}
+
+inline void MaglevAssembler::LoadContextCellFloat64Value(DoubleRegister value,
+                                                         Register cell) {
+  AssertContextCellState(cell, ContextCell::kFloat64);
+  Movsd(value, FieldOperand(cell, offsetof(ContextCell, double_value_)));
+}
+
+inline void MaglevAssembler::StoreContextCellInt32Value(Register cell,
+                                                        Register value) {
+  movl(FieldMemOperand(cell, offsetof(ContextCell, double_value_)), value);
+}
+
+inline void MaglevAssembler::StoreContextCellFloat64Value(
+    Register cell, DoubleRegister value) {
+  Movsd(FieldOperand(cell, offsetof(ContextCell, double_value_)), value);
+}
+
 inline void MaglevAssembler::LoadHeapNumberValue(DoubleRegister result,
                                                  Register heap_number) {
   Movsd(result, FieldOperand(heap_number, offsetof(HeapNumber, value_)));
@@ -1237,6 +1320,11 @@ inline void MaglevAssembler::Uint32ToDouble(DoubleRegister result,
   Cvtlui2sd(result, src);
 }
 
+inline void MaglevAssembler::IntPtrToDouble(DoubleRegister result,
+                                            Register src) {
+  Cvtqsi2sd(result, src);
+}
+
 inline void MaglevAssembler::Pop(Register dst) { MacroAssembler::Pop(dst); }
 
 template <typename NodeT>
@@ -1246,7 +1334,7 @@ inline void MaglevAssembler::EmitEagerDeoptIfNotEqual(DeoptimizeReason reason,
 }
 
 inline void MaglevAssembler::AssertStackSizeCorrect() {
-  if (v8_flags.debug_code) {
+  if (v8_flags.slow_debug_code) {
     movq(kScratchRegister, rbp);
     subq(kScratchRegister, rsp);
     cmpq(kScratchRegister,

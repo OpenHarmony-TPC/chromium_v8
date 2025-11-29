@@ -269,7 +269,7 @@ inline void PushAligned(MaglevAssembler* masm, Arg1 arg1, Arg2 arg2) {
   {
     // Push the first argument together with padding to ensure alignment.
     // The second argument is not pushed together with the first so we can
-    // re-use any scratch registers used to materialise the first argument for
+    // reuse any scratch registers used to materialise the first argument for
     // the second one.
     MaglevAssembler::TemporaryRegisterScope temps(masm);
     masm->MacroAssembler::Push(ToRegister(masm, &temps, arg1), padreg);
@@ -696,6 +696,14 @@ inline void MaglevAssembler::OrInt32(Register reg, int mask) {
   Orr(reg.W(), reg.W(), Immediate(mask));
 }
 
+inline void MaglevAssembler::AndInt32(Register reg, Register other) {
+  And(reg.W(), reg.W(), other.W());
+}
+
+inline void MaglevAssembler::OrInt32(Register reg, Register other) {
+  Orr(reg.W(), reg.W(), other.W());
+}
+
 inline void MaglevAssembler::ShiftLeft(Register reg, int amount) {
   Lsl(reg.W(), reg.W(), amount);
 }
@@ -757,6 +765,9 @@ inline void MaglevAssembler::Move(Register dst, int32_t i) {
 inline void MaglevAssembler::Move(Register dst, uint32_t i) {
   Mov(dst.W(), Immediate(i));
 }
+inline void MaglevAssembler::Move(Register dst, intptr_t p) {
+  Mov(dst, Immediate(p));
+}
 inline void MaglevAssembler::Move(Register dst, IndirectPointerTag i) {
   Mov(dst, Immediate(i));
 }
@@ -775,6 +786,14 @@ void MaglevAssembler::MoveTagged(Register dst, Handle<HeapObject> obj) {
 #else
   Mov(dst, Operand(obj));
 #endif
+}
+
+inline void MaglevAssembler::LoadInt32(Register dst, MemOperand src) {
+  Ldr(dst.W(), src);
+}
+
+inline void MaglevAssembler::StoreInt32(MemOperand dst, Register src) {
+  Str(src.W(), dst);
 }
 
 inline void MaglevAssembler::LoadFloat32(DoubleRegister dst, MemOperand src) {
@@ -1130,6 +1149,17 @@ void MaglevAssembler::JumpIfByte(Condition cc, Register value, int32_t byte,
   CompareAndBranch(value, Immediate(byte), cc, target);
 }
 
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+void MaglevAssembler::JumpIfNotUndefinedNan(DoubleRegister value,
+                                            Register scratch, Label* target,
+                                            Label::Distance distance) {
+  JumpIfNotNan(value, target, distance);
+  Umov(scratch.W(), value.V2S(), 1);
+  CompareInt32AndJumpIf(scratch.W(), kUndefinedNanUpper32, kNotEqual, target,
+                        distance);
+}
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+
 void MaglevAssembler::JumpIfHoleNan(DoubleRegister value, Register scratch,
                                     Label* target, Label::Distance distance) {
   // TODO(leszeks): Right now this only accepts Zone-allocated target labels.
@@ -1147,6 +1177,10 @@ void MaglevAssembler::JumpIfHoleNan(DoubleRegister value, Register scratch,
                masm->Umov(scratch.W(), value.V2S(), 1);
                masm->CompareInt32AndJumpIf(scratch.W(), kHoleNanUpper32, kEqual,
                                            *is_hole);
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+               masm->CompareInt32AndJumpIf(scratch.W(), kUndefinedNanUpper32,
+                                           kEqual, *is_hole);
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
                masm->Jump(*is_not_hole);
              },
              value, scratch, is_hole, is_not_hole));
@@ -1199,6 +1233,12 @@ void MaglevAssembler::CompareIntPtrAndJumpIf(Register r1, Register r2,
   CompareAndBranch(r1.X(), r2.X(), cond, target);
 }
 
+void MaglevAssembler::CompareIntPtrAndJumpIf(Register r1, int32_t value,
+                                             Condition cond, Label* target,
+                                             Label::Distance distance) {
+  CompareAndBranch(r1.X(), Immediate(value), cond, target);
+}
+
 inline void MaglevAssembler::CompareInt32AndJumpIf(Register r1, int32_t value,
                                                    Condition cond,
                                                    Label* target,
@@ -1233,6 +1273,15 @@ inline void MaglevAssembler::CompareInt32AndBranch(
     Label::Distance true_distance, bool fallthrough_when_true, Label* if_false,
     Label::Distance false_distance, bool fallthrough_when_false) {
   Cmp(r1.W(), value.W());
+  Branch(cond, if_true, true_distance, fallthrough_when_true, if_false,
+         false_distance, fallthrough_when_false);
+}
+
+inline void MaglevAssembler::CompareIntPtrAndBranch(
+    Register r1, int32_t value, Condition cond, Label* if_true,
+    Label::Distance true_distance, bool fallthrough_when_true, Label* if_false,
+    Label::Distance false_distance, bool fallthrough_when_false) {
+  Cmp(r1.X(), Immediate(value));
   Branch(cond, if_true, true_distance, fallthrough_when_true, if_false,
          false_distance, fallthrough_when_false);
 }
@@ -1347,6 +1396,33 @@ inline void MaglevAssembler::TestUint8AndJumpIfAllClear(
   TestAndBranchIfAllClear(value, mask, target);
 }
 
+inline void MaglevAssembler::LoadContextCellState(Register state,
+                                                  Register cell) {
+  Ldr(state, FieldMemOperand(cell, offsetof(ContextCell, state_)));
+}
+
+inline void MaglevAssembler::LoadContextCellInt32Value(Register value,
+                                                       Register cell) {
+  AssertContextCellState(cell, ContextCell::kInt32);
+  Ldr(value, FieldMemOperand(cell, offsetof(ContextCell, double_value_)));
+}
+
+inline void MaglevAssembler::LoadContextCellFloat64Value(DoubleRegister value,
+                                                         Register cell) {
+  AssertContextCellState(cell, ContextCell::kFloat64);
+  Ldr(value, FieldMemOperand(cell, offsetof(ContextCell, double_value_)));
+}
+
+inline void MaglevAssembler::StoreContextCellInt32Value(Register cell,
+                                                        Register value) {
+  Str(value, FieldMemOperand(cell, offsetof(ContextCell, double_value_)));
+}
+
+inline void MaglevAssembler::StoreContextCellFloat64Value(
+    Register cell, DoubleRegister value) {
+  Str(value, FieldMemOperand(cell, offsetof(ContextCell, double_value_)));
+}
+
 inline void MaglevAssembler::LoadHeapNumberValue(DoubleRegister result,
                                                  Register heap_number) {
   Ldr(result, FieldMemOperand(heap_number, offsetof(HeapNumber, value_)));
@@ -1362,10 +1438,15 @@ inline void MaglevAssembler::Uint32ToDouble(DoubleRegister result,
   Ucvtf(result, src.W());
 }
 
+inline void MaglevAssembler::IntPtrToDouble(DoubleRegister result,
+                                            Register src) {
+  Scvtf(result, src.X());
+}
+
 inline void MaglevAssembler::Pop(Register dst) { Pop(dst, padreg); }
 
 inline void MaglevAssembler::AssertStackSizeCorrect() {
-  if (v8_flags.debug_code) {
+  if (v8_flags.slow_debug_code) {
     TemporaryRegisterScope temps(this);
     Register scratch = temps.AcquireScratch();
     Add(scratch, sp,

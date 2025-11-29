@@ -405,12 +405,10 @@ class ImmediatesPrinter {
     if (imm.type.is_index()) use_type(imm.type.ref_index());
   }
 
-  void ValueType(HeapTypeImmediate& imm, bool is_nullable) {
+  void ValueType(ValueType type) {
     out_ << " ";
-    names()->PrintValueType(
-        out_, ValueType::RefMaybeNull(imm.type,
-                                      is_nullable ? kNullable : kNonNullable));
-    if (imm.type.is_index()) use_type(imm.type.ref_index());
+    names()->PrintValueType(out_, type);
+    if (type.has_index()) use_type(type.ref_index());
   }
 
   void BrOnCastFlags(BrOnCastImmediate& flags) {
@@ -462,6 +460,27 @@ class ImmediatesPrinter {
     }
   }
 
+  void EffectHandlerTable(EffectHandlerTableImmediate& imm) {
+    const uint8_t* pc = imm.table;
+    for (uint32_t i = 0; i < imm.table_count; i++) {
+      uint8_t kind = owner_->read_u8<ValidationTag>(pc);
+      pc += 1;
+      auto [tag, length] = owner_->read_u32v<ValidationTag>(pc);
+      out_ << "(on ";
+      names()->PrintTagName(out_, tag);
+      out_ << " ";
+      pc += length;
+      if (kind == kOnSuspend) {
+        auto [target, tlen] = owner_->read_u32v<ValidationTag>(pc);
+        PrintDepthAsLabel(target);
+        pc += tlen;
+        out_ << ")";
+      } else {
+        out_ << " switch)";
+      }
+    }
+  }
+
   void CallIndirect(CallIndirectImmediate& imm) {
     PrintSignature(imm.sig_imm.index);
     if (imm.table_imm.index != 0) TableIndex(imm.table_imm);
@@ -477,6 +496,18 @@ class ImmediatesPrinter {
     if (imm.alignment != GetDefaultAlignment(owner_->current_opcode_)) {
       out_ << " align=" << (1u << imm.alignment);
     }
+  }
+
+  void MemoryOrder(const MemoryOrderImmediate& memory_order) {
+    switch (memory_order.order) {
+      case AtomicMemoryOrder::kAcqRel:
+        out_ << " acqrel";
+        return;
+      case AtomicMemoryOrder::kSeqCst:
+        out_ << " seqcst";
+        return;
+    }
+    out_ << " INVALID(" << static_cast<int>(memory_order.order) << ')';
   }
 
   void SimdLane(SimdLaneImmediate& imm) { out_ << " " << uint32_t{imm.lane}; }
@@ -598,7 +629,8 @@ class ImmediatesPrinter {
       }
     } else {
       char buffer[100];
-      const char* str = DoubleToCString(d, base::VectorOf(buffer, 100u));
+      std::string_view str =
+          DoubleToStringView(d, base::VectorOf(buffer, 100u));
       out_ << " " << str;
     }
   }
@@ -762,7 +794,9 @@ void ModuleDisassembler::PrintTypeDefinition(uint32_t type_index,
   if (has_super) {
     out_ << " (sub ";
     if (type.is_final) out_ << "final ";
-    names_->PrintHeapType(out_, HeapType(type.supertype));
+    names_->PrintHeapType(out_,
+                          HeapType::Index(type.supertype, type.is_shared,
+                                          static_cast<RefTypeKind>(type.kind)));
   }
   if (type.kind == TypeDefinition::kArray) {
     const ArrayType* atype = type.array_type;
@@ -1026,7 +1060,7 @@ void ModuleDisassembler::PrintModule(Indentation indentation, size_t max_mb) {
         WasmEnabledFeatures::All(), wire_bytes_.module_bytes(),
         ModuleOrigin::kWasmOrigin, &unused_detected_features);
     decoder.consume_bytes(elem.elements_wire_bytes_offset);
-    for (size_t i = 0; i < elem.element_count; i++) {
+    for (size_t j = 0; j < elem.element_count; j++) {
       ConstantExpression entry = decoder.consume_element_segment_entry(
           const_cast<WasmModule*>(module_), elem);
       PrintInitExpression(entry, elem.type);
@@ -1153,22 +1187,22 @@ void ModuleDisassembler::PrintGlobal(const WasmGlobal& global) {
 void ModuleDisassembler::PrintInitExpression(const ConstantExpression& init,
                                              ValueType expected_type) {
   switch (init.kind()) {
-    case ConstantExpression::kEmpty:
+    case ConstantExpression::Kind::kEmpty:
       break;
-    case ConstantExpression::kI32Const:
+    case ConstantExpression::Kind::kI32Const:
       out_ << " (i32.const " << init.i32_value() << ")";
       break;
-    case ConstantExpression::kRefNull:
+    case ConstantExpression::Kind::kRefNull:
       out_ << " (ref.null ";
-      names_->PrintHeapType(out_, HeapType(init.repr()));
+      names_->PrintHeapType(out_, init.type());
       out_ << ")";
       break;
-    case ConstantExpression::kRefFunc:
+    case ConstantExpression::Kind::kRefFunc:
       out_ << " (ref.func ";
       names_->PrintFunctionName(out_, init.index(), NamesProvider::kDevTools);
       out_ << ")";
       break;
-    case ConstantExpression::kWireBytesRef:
+    case ConstantExpression::Kind::kWireBytesRef:
       WireBytesRef ref = init.wire_bytes_ref();
       const uint8_t* start = start_ + ref.offset();
       const uint8_t* end = start_ + ref.end_offset();
@@ -1197,31 +1231,36 @@ void ModuleDisassembler::PrintString(WireBytesRef ref) {
 // This mimics legacy wasmparser behavior. It might be a questionable choice,
 // but we'll follow suit for now.
 void ModuleDisassembler::PrintStringAsJSON(WireBytesRef ref) {
-  for (const uint8_t* ptr = start_ + ref.offset();
-       ptr < start_ + ref.end_offset(); ptr++) {
+  i::wasm::PrintStringAsJSON(out_, start_, ref);
+}
+
+void PrintStringAsJSON(StringBuilder& out, const uint8_t* start,
+                       WireBytesRef ref) {
+  for (const uint8_t* ptr = start + ref.offset();
+       ptr < start + ref.end_offset(); ptr++) {
     uint8_t b = *ptr;
     if (b <= 34) {
       switch (b) {
         // clang-format off
-        case '\b': out_ << "\\b";  break;
-        case '\t': out_ << "\\t";  break;
-        case '\n': out_ << "\\n";  break;
-        case '\f': out_ << "\\f";  break;
-        case '\r': out_ << "\\r";  break;
-        case ' ':  out_ << ' ';    break;
-        case '!':  out_ << '!';    break;
-        case '"':  out_ << "\\\""; break;
+        case '\b': out << "\\b";  break;
+        case '\t': out << "\\t";  break;
+        case '\n': out << "\\n";  break;
+        case '\f': out << "\\f";  break;
+        case '\r': out << "\\r";  break;
+        case ' ':  out << ' ';    break;
+        case '!':  out << '!';    break;
+        case '"':  out << "\\\""; break;
         // clang-format on
         default:
-          out_ << "\\u00" << kHexChars[b >> 4] << kHexChars[b & 0xF];
+          out << "\\u00" << kHexChars[b >> 4] << kHexChars[b & 0xF];
           break;
       }
     } else if (b != 127 && b != '\\') {
-      out_ << static_cast<char>(b);
+      out << static_cast<char>(b);
     } else if (b == '\\') {
-      out_ << "\\\\";
+      out << "\\\\";
     } else {
-      out_ << "\\x7F";
+      out << "\\x7F";
     }
   }
 }

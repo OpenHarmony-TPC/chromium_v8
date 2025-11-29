@@ -25,6 +25,35 @@
 
 namespace v8::internal::wasm {
 
+void UpdateComputedInformation(WasmMemory* memory, ModuleOrigin origin) {
+  const uintptr_t platform_max_pages =
+      memory->is_memory64() ? wasm::max_mem64_pages() : wasm::max_mem32_pages();
+  memory->min_memory_size = static_cast<uintptr_t>(std::min<uint64_t>(
+                                platform_max_pages, memory->initial_pages)) *
+                            kWasmPageSize;
+  memory->max_memory_size = static_cast<uintptr_t>(std::min<uint64_t>(
+                                platform_max_pages, memory->maximum_pages)) *
+                            kWasmPageSize;
+
+  if (!v8_flags.wasm_bounds_checks) {
+    memory->bounds_checks = kNoBoundsChecks;
+  } else if (v8_flags.wasm_enforce_bounds_checks) {
+    // Explicit bounds checks requested via flag (for testing).
+    memory->bounds_checks = kExplicitBoundsChecks;
+  } else if (origin != kWasmOrigin) {
+    // Asm.js modules can't use trap handling.
+    memory->bounds_checks = kExplicitBoundsChecks;
+  } else if (memory->is_memory64() && !v8_flags.wasm_memory64_trap_handling) {
+    memory->bounds_checks = kExplicitBoundsChecks;
+  } else if (trap_handler::IsTrapHandlerEnabled()) {
+    if constexpr (kSystemPointerSize == 4) UNREACHABLE();
+    memory->bounds_checks = kTrapHandler;
+  } else {
+    // If the trap handler is not enabled, fall back to explicit bounds checks.
+    memory->bounds_checks = kExplicitBoundsChecks;
+  }
+}
+
 // Ensure that the max subtyping depth can be stored in the TypeDefinition.
 static_assert(
     kV8MaxRttSubtypingDepth <=
@@ -129,7 +158,7 @@ void LazilyGeneratedNames::AddForTesting(int function_index,
 
 AsmJsOffsetInformation::AsmJsOffsetInformation(
     base::Vector<const uint8_t> encoded_offsets)
-    : encoded_offsets_(base::OwnedVector<const uint8_t>::Of(encoded_offsets)) {}
+    : encoded_offsets_(base::OwnedCopyOf(encoded_offsets)) {}
 
 AsmJsOffsetInformation::~AsmJsOffsetInformation() = default;
 
@@ -216,7 +245,20 @@ WasmModule::WasmModule(ModuleOrigin origin)
     : signature_zone(GetWasmEngine()->allocator(), "signature zone"),
       origin(origin) {}
 
-bool IsWasmCodegenAllowed(Isolate* isolate, Handle<NativeContext> context) {
+uint64_t WasmModule::signature_hash(const TypeCanonicalizer* type_canonicalizer,
+                                    uint32_t function_index) const {
+  if (function_index >= functions.size()) {
+    return kInvalidWasmSignatureHash;
+  }
+
+  CanonicalTypeIndex canonical_type_id =
+      canonical_sig_id(functions[function_index].sig_index);
+  return type_canonicalizer->LookupFunctionSignature(canonical_type_id)
+      ->signature_hash();
+}
+
+bool IsWasmCodegenAllowed(Isolate* isolate,
+                          DirectHandle<NativeContext> context) {
   // TODO(wasm): Once wasm has its own CSP policy, we should introduce a
   // separate callback that includes information about the module about to be
   // compiled. For the time being, pass an empty string as placeholder for the
@@ -240,32 +282,33 @@ namespace {
 
 // Converts the given {type} into a string representation that can be used in
 // reflective functions. Should be kept in sync with the {GetValueType} helper.
-template <typename T>
-Handle<String> ToValueTypeString(Isolate* isolate, T type) {
+DirectHandle<String> ToValueTypeString(Isolate* isolate, ValueType type) {
   return isolate->factory()->InternalizeUtf8String(base::VectorOf(type.name()));
 }
 }  // namespace
 
-template <typename T>
-Handle<JSObject> GetTypeForFunction(Isolate* isolate, const Signature<T>* sig,
-                                    bool for_exception) {
+DirectHandle<JSObject> GetTypeForFunction(Isolate* isolate,
+                                          const FunctionSig* sig,
+                                          bool for_exception) {
   Factory* factory = isolate->factory();
 
   // Extract values for the {ValueType[]} arrays.
   int param_index = 0;
   int param_count = static_cast<int>(sig->parameter_count());
   DirectHandle<FixedArray> param_values = factory->NewFixedArray(param_count);
-  for (T type : sig->parameters()) {
+  for (ValueType type : sig->parameters()) {
     DirectHandle<String> type_value = ToValueTypeString(isolate, type);
     param_values->set(param_index++, *type_value);
   }
 
   // Create the resulting {FunctionType} object.
-  Handle<JSFunction> object_function = isolate->object_function();
-  Handle<JSObject> object = factory->NewJSObject(object_function);
+  DirectHandle<JSFunction> object_function = isolate->object_function();
+  DirectHandle<JSObject> object = factory->NewJSObject(object_function);
   DirectHandle<JSArray> params = factory->NewJSArrayWithElements(param_values);
-  Handle<String> params_string = factory->InternalizeUtf8String("parameters");
-  Handle<String> results_string = factory->InternalizeUtf8String("results");
+  DirectHandle<String> params_string =
+      factory->InternalizeUtf8String("parameters");
+  DirectHandle<String> results_string =
+      factory->InternalizeUtf8String("results");
   JSObject::AddProperty(isolate, object, params_string, params, NONE);
 
   // Now add the result types if needed.
@@ -276,7 +319,7 @@ Handle<JSObject> GetTypeForFunction(Isolate* isolate, const Signature<T>* sig,
     int result_count = static_cast<int>(sig->return_count());
     DirectHandle<FixedArray> result_values =
         factory->NewFixedArray(result_count);
-    for (T type : sig->returns()) {
+    for (ValueType type : sig->returns()) {
       DirectHandle<String> type_value = ToValueTypeString(isolate, type);
       result_values->set(result_index++, *type_value);
     }
@@ -288,17 +331,15 @@ Handle<JSObject> GetTypeForFunction(Isolate* isolate, const Signature<T>* sig,
   return object;
 }
 
-template Handle<JSObject> GetTypeForFunction(
-    Isolate*, const Signature<CanonicalValueType>*, bool);
-
-Handle<JSObject> GetTypeForGlobal(Isolate* isolate, bool is_mutable,
-                                  ValueType type) {
+DirectHandle<JSObject> GetTypeForGlobal(Isolate* isolate, bool is_mutable,
+                                        ValueType type) {
   Factory* factory = isolate->factory();
 
-  Handle<JSFunction> object_function = isolate->object_function();
-  Handle<JSObject> object = factory->NewJSObject(object_function);
-  Handle<String> mutable_string = factory->InternalizeUtf8String("mutable");
-  Handle<String> value_string = factory->value_string();
+  DirectHandle<JSFunction> object_function = isolate->object_function();
+  DirectHandle<JSObject> object = factory->NewJSObject(object_function);
+  DirectHandle<String> mutable_string =
+      factory->InternalizeUtf8String("mutable");
+  DirectHandle<String> value_string = factory->value_string();
   JSObject::AddProperty(isolate, object, mutable_string,
                         factory->ToBoolean(is_mutable), NONE);
   JSObject::AddProperty(isolate, object, value_string,
@@ -307,21 +348,24 @@ Handle<JSObject> GetTypeForGlobal(Isolate* isolate, bool is_mutable,
   return object;
 }
 
-Handle<JSObject> GetTypeForMemory(Isolate* isolate, uint32_t min_size,
-                                  std::optional<uint64_t> max_size, bool shared,
-                                  AddressType address_type) {
+DirectHandle<JSObject> GetTypeForMemory(Isolate* isolate, uint32_t min_size,
+                                        std::optional<uint64_t> max_size,
+                                        bool shared, AddressType address_type) {
   Factory* factory = isolate->factory();
 
-  Handle<JSFunction> object_function = isolate->object_function();
-  Handle<JSObject> object = factory->NewJSObject(object_function);
-  Handle<String> minimum_string = factory->InternalizeUtf8String("minimum");
-  Handle<String> maximum_string = factory->InternalizeUtf8String("maximum");
-  Handle<String> shared_string = factory->InternalizeUtf8String("shared");
-  Handle<String> address_string = factory->InternalizeUtf8String("address");
+  DirectHandle<JSFunction> object_function = isolate->object_function();
+  DirectHandle<JSObject> object = factory->NewJSObject(object_function);
+  DirectHandle<String> minimum_string =
+      factory->InternalizeUtf8String("minimum");
+  DirectHandle<String> maximum_string =
+      factory->InternalizeUtf8String("maximum");
+  DirectHandle<String> shared_string = factory->InternalizeUtf8String("shared");
+  DirectHandle<String> address_string =
+      factory->InternalizeUtf8String("address");
   JSObject::AddProperty(isolate, object, minimum_string,
                         factory->NewNumberFromUint(min_size), NONE);
   if (max_size.has_value()) {
-    Handle<UnionOf<Smi, HeapNumber, BigInt>> max;
+    DirectHandle<UnionOf<Smi, HeapNumber, BigInt>> max;
     if (address_type == AddressType::kI32) {
       DCHECK_GE(kMaxUInt32, *max_size);
       max = factory->NewNumberFromUint(static_cast<uint32_t>(*max_size));
@@ -340,26 +384,29 @@ Handle<JSObject> GetTypeForMemory(Isolate* isolate, uint32_t min_size,
   return object;
 }
 
-Handle<JSObject> GetTypeForTable(Isolate* isolate, ValueType type,
-                                 uint32_t min_size,
-                                 std::optional<uint64_t> max_size,
-                                 AddressType address_type) {
+DirectHandle<JSObject> GetTypeForTable(Isolate* isolate, ValueType type,
+                                       uint32_t min_size,
+                                       std::optional<uint64_t> max_size,
+                                       AddressType address_type) {
   Factory* factory = isolate->factory();
 
   DirectHandle<String> element =
       factory->InternalizeUtf8String(base::VectorOf(type.name()));
 
-  Handle<JSFunction> object_function = isolate->object_function();
-  Handle<JSObject> object = factory->NewJSObject(object_function);
-  Handle<String> element_string = factory->element_string();
-  Handle<String> minimum_string = factory->InternalizeUtf8String("minimum");
-  Handle<String> maximum_string = factory->InternalizeUtf8String("maximum");
-  Handle<String> address_string = factory->InternalizeUtf8String("address");
+  DirectHandle<JSFunction> object_function = isolate->object_function();
+  DirectHandle<JSObject> object = factory->NewJSObject(object_function);
+  DirectHandle<String> element_string = factory->element_string();
+  DirectHandle<String> minimum_string =
+      factory->InternalizeUtf8String("minimum");
+  DirectHandle<String> maximum_string =
+      factory->InternalizeUtf8String("maximum");
+  DirectHandle<String> address_string =
+      factory->InternalizeUtf8String("address");
   JSObject::AddProperty(isolate, object, element_string, element, NONE);
   JSObject::AddProperty(isolate, object, minimum_string,
                         factory->NewNumberFromUint(min_size), NONE);
   if (max_size.has_value()) {
-    Handle<UnionOf<Smi, HeapNumber, BigInt>> max;
+    DirectHandle<UnionOf<Smi, HeapNumber, BigInt>> max;
     if (address_type == AddressType::kI32) {
       DCHECK_GE(kMaxUInt32, *max_size);
       max = factory->NewNumberFromUint(static_cast<uint32_t>(*max_size));
@@ -375,32 +422,33 @@ Handle<JSObject> GetTypeForTable(Isolate* isolate, ValueType type,
   return object;
 }
 
-Handle<JSArray> GetImports(Isolate* isolate,
-                           DirectHandle<WasmModuleObject> module_object) {
+DirectHandle<JSArray> GetImports(Isolate* isolate,
+                                 DirectHandle<WasmModuleObject> module_object) {
   auto enabled_features = i::wasm::WasmEnabledFeatures::FromIsolate(isolate);
   Factory* factory = isolate->factory();
 
-  Handle<String> module_string = factory->InternalizeUtf8String("module");
-  Handle<String> name_string = factory->name_string();
-  Handle<String> kind_string = factory->InternalizeUtf8String("kind");
-  Handle<String> type_string = factory->InternalizeUtf8String("type");
+  DirectHandle<String> module_string = factory->InternalizeUtf8String("module");
+  DirectHandle<String> name_string = factory->name_string();
+  DirectHandle<String> kind_string = factory->InternalizeUtf8String("kind");
+  DirectHandle<String> type_string = factory->InternalizeUtf8String("type");
 
-  Handle<String> function_string = factory->function_string();
-  Handle<String> table_string = factory->InternalizeUtf8String("table");
-  Handle<String> memory_string = factory->InternalizeUtf8String("memory");
-  Handle<String> global_string = factory->global_string();
-  Handle<String> tag_string = factory->InternalizeUtf8String("tag");
+  DirectHandle<String> function_string = factory->function_string();
+  DirectHandle<String> table_string = factory->InternalizeUtf8String("table");
+  DirectHandle<String> memory_string = factory->InternalizeUtf8String("memory");
+  DirectHandle<String> global_string = factory->global_string();
+  DirectHandle<String> tag_string = factory->InternalizeUtf8String("tag");
 
   // Create the result array.
   NativeModule* native_module = module_object->native_module();
   const WasmModule* module = native_module->module();
   int num_imports = static_cast<int>(module->import_table.size());
-  Handle<JSArray> array_object = factory->NewJSArray(PACKED_ELEMENTS, 0, 0);
-  Handle<FixedArray> storage = factory->NewFixedArray(num_imports);
-  JSArray::SetContent(array_object, storage);
+  DirectHandle<JSArray> array_object =
+      factory->NewJSArray(PACKED_ELEMENTS, 0, 0);
+  DirectHandle<FixedArray> storage = factory->NewFixedArray(num_imports);
+  JSArray::SetContent(isolate, array_object, storage);
 
-  Handle<JSFunction> object_function =
-      Handle<JSFunction>(isolate->native_context()->object_function(), isolate);
+  DirectHandle<JSFunction> object_function = DirectHandle<JSFunction>(
+      isolate->native_context()->object_function(), isolate);
 
   // Populate the result array.
   const WellKnownImportsList& well_known_imports =
@@ -415,10 +463,10 @@ Handle<JSArray> GetImports(Isolate* isolate,
   for (int index = 0; index < num_imports; ++index) {
     const WasmImport& import = module->import_table[index];
 
-    Handle<JSObject> entry = factory->NewJSObject(object_function);
+    DirectHandle<JSObject> entry = factory->NewJSObject(object_function);
 
-    Handle<String> import_kind;
-    Handle<JSObject> type_value;
+    DirectHandle<String> import_kind;
+    DirectHandle<JSObject> type_value;
     switch (import.kind) {
       case kExternalFunction:
         if (IsCompileTimeImport(well_known_imports.get(import.index))) {
@@ -498,18 +546,18 @@ Handle<JSArray> GetImports(Isolate* isolate,
   for (int index = cursor; index < num_imports; ++index) {
     storage->set_the_hole(isolate, cursor++);
   }
-  JSObject::ValidateElements(*array_object);
+  JSObject::ValidateElements(isolate, *array_object);
   return array_object;
 }
 
-Handle<JSArray> GetExports(Isolate* isolate,
-                           DirectHandle<WasmModuleObject> module_object) {
+DirectHandle<JSArray> GetExports(Isolate* isolate,
+                                 DirectHandle<WasmModuleObject> module_object) {
   auto enabled_features = i::wasm::WasmEnabledFeatures::FromIsolate(isolate);
   Factory* factory = isolate->factory();
 
-  Handle<String> name_string = factory->name_string();
-  Handle<String> kind_string = factory->InternalizeUtf8String("kind");
-  Handle<String> type_string = factory->InternalizeUtf8String("type");
+  DirectHandle<String> name_string = factory->name_string();
+  DirectHandle<String> kind_string = factory->InternalizeUtf8String("kind");
+  DirectHandle<String> type_string = factory->InternalizeUtf8String("type");
 
   DirectHandle<String> function_string = factory->function_string();
   DirectHandle<String> table_string = factory->InternalizeUtf8String("table");
@@ -520,20 +568,21 @@ Handle<JSArray> GetExports(Isolate* isolate,
   // Create the result array.
   const WasmModule* module = module_object->module();
   int num_exports = static_cast<int>(module->export_table.size());
-  Handle<JSArray> array_object = factory->NewJSArray(PACKED_ELEMENTS, 0, 0);
-  Handle<FixedArray> storage = factory->NewFixedArray(num_exports);
-  JSArray::SetContent(array_object, storage);
+  DirectHandle<JSArray> array_object =
+      factory->NewJSArray(PACKED_ELEMENTS, 0, 0);
+  DirectHandle<FixedArray> storage = factory->NewFixedArray(num_exports);
+  JSArray::SetContent(isolate, array_object, storage);
   DCHECK_EQ(array_object->length(), Smi::FromInt(num_exports));
 
-  Handle<JSFunction> object_function =
-      Handle<JSFunction>(isolate->native_context()->object_function(), isolate);
+  DirectHandle<JSFunction> object_function = DirectHandle<JSFunction>(
+      isolate->native_context()->object_function(), isolate);
 
   // Populate the result array.
   for (int index = 0; index < num_exports; ++index) {
     const WasmExport& exp = module->export_table[index];
 
     DirectHandle<String> export_kind;
-    Handle<JSObject> type_value;
+    DirectHandle<JSObject> type_value;
     switch (exp.kind) {
       case kExternalFunction:
         if (enabled_features.has_type_reflection()) {
@@ -580,7 +629,7 @@ Handle<JSArray> GetExports(Isolate* isolate,
         UNREACHABLE();
     }
 
-    Handle<JSObject> entry = factory->NewJSObject(object_function);
+    DirectHandle<JSObject> entry = factory->NewJSObject(object_function);
 
     DirectHandle<String> export_name =
         WasmModuleObject::ExtractUtf8StringFromModuleBytes(
@@ -595,14 +644,13 @@ Handle<JSArray> GetExports(Isolate* isolate,
     storage->set(index, *entry);
   }
 
-  JSObject::ValidateElements(*array_object);
+  JSObject::ValidateElements(isolate, *array_object);
   return array_object;
 }
 
-Handle<JSArray> GetCustomSections(Isolate* isolate,
-                                  DirectHandle<WasmModuleObject> module_object,
-                                  DirectHandle<String> name,
-                                  ErrorThrower* thrower) {
+DirectHandle<JSArray> GetCustomSections(
+    Isolate* isolate, DirectHandle<WasmModuleObject> module_object,
+    DirectHandle<String> name, ErrorThrower* thrower) {
   Factory* factory = isolate->factory();
 
   base::Vector<const uint8_t> wire_bytes =
@@ -610,7 +658,7 @@ Handle<JSArray> GetCustomSections(Isolate* isolate,
   std::vector<CustomSectionOffset> custom_sections =
       DecodeCustomSections(wire_bytes);
 
-  std::vector<Handle<Object>> matching_sections;
+  DirectHandleVector<Object> matching_sections(isolate);
 
   // Gather matching sections.
   for (auto& section : custom_sections) {
@@ -622,13 +670,13 @@ Handle<JSArray> GetCustomSections(Isolate* isolate,
 
     // Make a copy of the payload data in the section.
     size_t size = section.payload.length();
-    MaybeHandle<JSArrayBuffer> result =
+    MaybeDirectHandle<JSArrayBuffer> result =
         isolate->factory()->NewJSArrayBufferAndBackingStore(
             size, InitializedFlag::kUninitialized);
-    Handle<JSArrayBuffer> array_buffer;
+    DirectHandle<JSArrayBuffer> array_buffer;
     if (!result.ToHandle(&array_buffer)) {
       thrower->RangeError("out of memory allocating custom section data");
-      return Handle<JSArray>();
+      return DirectHandle<JSArray>();
     }
     memcpy(array_buffer->backing_store(),
            wire_bytes.begin() + section.payload.offset(),
@@ -638,16 +686,18 @@ Handle<JSArray> GetCustomSections(Isolate* isolate,
   }
 
   int num_custom_sections = static_cast<int>(matching_sections.size());
-  Handle<JSArray> array_object = factory->NewJSArray(PACKED_ELEMENTS, 0, 0);
-  Handle<FixedArray> storage = factory->NewFixedArray(num_custom_sections);
-  JSArray::SetContent(array_object, storage);
+  DirectHandle<JSArray> array_object =
+      factory->NewJSArray(PACKED_ELEMENTS, 0, 0);
+  DirectHandle<FixedArray> storage =
+      factory->NewFixedArray(num_custom_sections);
+  JSArray::SetContent(isolate, array_object, storage);
   DCHECK_EQ(array_object->length(), Smi::FromInt(num_custom_sections));
 
   for (int i = 0; i < num_custom_sections; i++) {
     storage->set(i, *matching_sections[i]);
   }
 
-  JSObject::ValidateElements(*array_object);
+  JSObject::ValidateElements(isolate, *array_object);
   return array_object;
 }
 
@@ -672,9 +722,9 @@ int GetSourcePosition(const WasmModule* module, uint32_t func_index,
 size_t WasmModule::EstimateStoredSize() const {
   UPDATE_WHEN_CLASS_CHANGES(WasmModule,
 #if V8_ENABLE_DRUMBRAKE
-                            896
+                            808
 #else   // V8_ENABLE_DRUMBRAKE
-                            832
+                            776
 #endif  // V8_ENABLE_DRUMBRAKE
   );
   return sizeof(WasmModule) +                            // --
@@ -730,10 +780,10 @@ size_t IndirectNameMap::EstimateCurrentMemoryConsumption() const {
 }
 
 size_t TypeFeedbackStorage::EstimateCurrentMemoryConsumption() const {
-  UPDATE_WHEN_CLASS_CHANGES(TypeFeedbackStorage, 152);
-  UPDATE_WHEN_CLASS_CHANGES(FunctionTypeFeedback, 48);
+  UPDATE_WHEN_CLASS_CHANGES(TypeFeedbackStorage, 112);
+  UPDATE_WHEN_CLASS_CHANGES(FunctionTypeFeedback, 40);
   // Not including sizeof(TFS) because that's contained in sizeof(WasmModule).
-  base::SharedMutexGuard<base::kShared> lock(&mutex);
+  base::MutexGuard guard(&mutex);
   size_t result = ContentSize(feedback_for_function);
   for (const auto& [func_idx, feedback] : feedback_for_function) {
     result += ContentSize(feedback.feedback_vector);
@@ -751,9 +801,9 @@ size_t TypeFeedbackStorage::EstimateCurrentMemoryConsumption() const {
 size_t WasmModule::EstimateCurrentMemoryConsumption() const {
   UPDATE_WHEN_CLASS_CHANGES(WasmModule,
 #if V8_ENABLE_DRUMBRAKE
-                            896
+                            808
 #else   // V8_ENABLE_DRUMBRAKE
-                            832
+                            776
 #endif  // V8_ENABLE_DRUMBRAKE
   );
   size_t result = EstimateStoredSize();
@@ -802,8 +852,7 @@ size_t GetWireBytesHash(base::Vector<const uint8_t> wire_bytes) {
 }
 
 int NumFeedbackSlots(const WasmModule* module, int func_index) {
-  base::SharedMutexGuard<base::kShared> type_feedback_guard{
-      &module->type_feedback.mutex};
+  base::MutexGuard mutex_guard{&module->type_feedback.mutex};
   auto it = module->type_feedback.feedback_for_function.find(func_index);
   if (it == module->type_feedback.feedback_for_function.end()) return 0;
   // The number of call instructions is capped by max function size.

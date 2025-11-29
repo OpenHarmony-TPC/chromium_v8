@@ -618,12 +618,22 @@ WASM_EXEC_TEST(Float64Unops) {
 }
 
 WASM_EXEC_TEST(Float32Neg) {
-  WasmRunner<float, float> r(execution_tier);
-  r.Build({WASM_F32_NEG(WASM_LOCAL_GET(0))});
+  WasmRunner<void> r(execution_tier);
+  enum { kMemoryElemInput = 0, kMemoryElemOutput, kMemoryElemCount };
+  float* memory = r.builder().AddMemoryElems<float>(kMemoryElemCount);
+  r.Build({WASM_STORE_MEM_OFFSET(
+      MachineType::Float32(), kMemoryElemOutput * sizeof(float), WASM_ZERO,
+      WASM_F32_NEG(WASM_LOAD_MEM_OFFSET(MachineType::Float32(),
+                                        kMemoryElemInput * sizeof(float),
+                                        WASM_ZERO)))});
 
   FOR_FLOAT32_INPUTS(i) {
-    CHECK_EQ(0x80000000,
-             base::bit_cast<uint32_t>(i) ^ base::bit_cast<uint32_t>(r.Call(i)));
+    r.builder().WriteMemory(&memory[kMemoryElemInput], i);
+    r.Call();
+    float o = r.builder().ReadMemory(&memory[kMemoryElemOutput]);
+    constexpr uint32_t float32_sign_bit = 0x8000'0000;
+    CHECK_EQ(float32_sign_bit,
+             base::bit_cast<uint32_t>(i) ^ base::bit_cast<uint32_t>(o));
   }
 }
 
@@ -2466,7 +2476,7 @@ WASM_EXEC_TEST(Regular_Factorial) {
 }
 
 namespace {
-// TODO(cleanup): Define in cctest.h and re-use where appropriate.
+// TODO(cleanup): Define in cctest.h and reuse where appropriate.
 class IsolateScope {
  public:
   IsolateScope() {
@@ -2495,9 +2505,15 @@ class IsolateScope {
 // f(N,X) where N=<1 => X
 // f(N,X) => f(N-1,X*N).
 
+int GetStackSizeKB() {
+  return static_cast<int>(base::Stack::GetStackStart() -
+                          base::Stack::GetCurrentStackPosition()) /
+         KB;
+}
+
 UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_Factorial) {
   // Run in bounded amount of stack - 8kb.
-  FlagScope<int32_t> stack_size(&v8_flags.stack_size, 8);
+  FlagScope<int32_t> stack_size(&v8_flags.stack_size, GetStackSizeKB() + 8);
 
   IsolateScope isolate_scope;
   LocalContext current(isolate_scope.isolate());
@@ -2532,7 +2548,7 @@ UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_Factorial) {
 
 UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_MutualFactorial) {
   // Run in bounded amount of stack - 8kb.
-  FlagScope<int32_t> stack_size(&v8_flags.stack_size, 8);
+  FlagScope<int32_t> stack_size(&v8_flags.stack_size, GetStackSizeKB() + 8);
 
   IsolateScope isolate_scope;
   LocalContext current(isolate_scope.isolate());
@@ -2574,7 +2590,7 @@ UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_MutualFactorial) {
 
 UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_IndirectFactorial) {
   // Run in bounded amount of stack - 8kb.
-  FlagScope<int32_t> stack_size(&v8_flags.stack_size, 8);
+  FlagScope<int32_t> stack_size(&v8_flags.stack_size, GetStackSizeKB() + 8);
 
   IsolateScope isolate_scope;
   LocalContext current(isolate_scope.isolate());
@@ -2620,7 +2636,7 @@ UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_IndirectFactorial) {
 
 UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_Sum) {
   // Run in bounded amount of stack - 8kb.
-  FlagScope<int32_t> stack_size(&v8_flags.stack_size, 8);
+  FlagScope<int32_t> stack_size(&v8_flags.stack_size, GetStackSizeKB() + 8);
 
   IsolateScope isolate_scope;
   LocalContext current(isolate_scope.isolate());
@@ -2659,7 +2675,7 @@ UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_Sum) {
 
 UNINITIALIZED_WASM_EXEC_TEST(ReturnCall_Bounce_Sum) {
   // Run in bounded amount of stack - 8kb.
-  FlagScope<int32_t> stack_size(&v8_flags.stack_size, 8);
+  FlagScope<int32_t> stack_size(&v8_flags.stack_size, GetStackSizeKB() + 8);
 
   IsolateScope isolate_scope;
   LocalContext current(isolate_scope.isolate());
@@ -3425,11 +3441,31 @@ WASM_EXEC_TEST(F64CopySign) {
 }
 
 WASM_EXEC_TEST(F32CopySign) {
-  WasmRunner<float, float, float> r(execution_tier);
-  r.Build({WASM_F32_COPYSIGN(WASM_LOCAL_GET(0), WASM_LOCAL_GET(1))});
+  WasmRunner<void> r(execution_tier);
+  enum {
+    kMemoryElemInput1 = 0,
+    kMemoryElemInput2,
+    kMemoryElemOutput,
+    kMemoryElemCount
+  };
+  float* memory = r.builder().AddMemoryElems<float>(kMemoryElemCount);
+  r.Build({WASM_STORE_MEM_OFFSET(
+      MachineType::Float32(), kMemoryElemOutput * sizeof(float), WASM_ZERO,
+      WASM_F32_COPYSIGN(
+          WASM_LOAD_MEM_OFFSET(MachineType::Float32(),
+                               kMemoryElemInput1 * sizeof(float), WASM_ZERO),
+          WASM_LOAD_MEM_OFFSET(MachineType::Float32(),
+                               kMemoryElemInput2 * sizeof(float),
+                               WASM_ZERO)))});
 
   FOR_FLOAT32_INPUTS(i) {
-    FOR_FLOAT32_INPUTS(j) { CHECK_FLOAT_EQ(copysignf(i, j), r.Call(i, j)); }
+    FOR_FLOAT32_INPUTS(j) {
+      r.builder().WriteMemory(&memory[kMemoryElemInput1], i);
+      r.builder().WriteMemory(&memory[kMemoryElemInput2], j);
+      r.Call();
+      float o = r.builder().ReadMemory(&memory[kMemoryElemOutput]);
+      CHECK_FLOAT_EQ(copysignf(i, j), o);
+    }
   }
 }
 
@@ -3604,7 +3640,8 @@ WASM_EXEC_TEST(IfInsideUnreachable) {
 
 WASM_EXEC_TEST(IndirectNull) {
   WasmRunner<int32_t> r(execution_tier);
-  FunctionSig sig(1, 0, &kWasmI32);
+  ValueType kI32 = kWasmI32;
+  FunctionSig sig(1, 0, &kI32);
   ModuleTypeIndex sig_index = r.builder().AddSignature(&sig);
   r.builder().AddIndirectFunctionTable(nullptr, 1);
 
@@ -3615,10 +3652,11 @@ WASM_EXEC_TEST(IndirectNull) {
 
 WASM_EXEC_TEST(IndirectNullTyped) {
   WasmRunner<int32_t> r(execution_tier);
-  FunctionSig sig(1, 0, &kWasmI32);
+  ValueType kI32 = kWasmI32;
+  FunctionSig sig(1, 0, &kI32);
   ModuleTypeIndex sig_index = r.builder().AddSignature(&sig);
-  r.builder().AddIndirectFunctionTable(nullptr, 1,
-                                       ValueType::RefNull(sig_index));
+  r.builder().AddIndirectFunctionTable(
+      nullptr, 1, ValueType::RefNull(sig_index, false, RefTypeKind::kFunction));
 
   r.Build({WASM_CALL_INDIRECT(sig_index, WASM_I32V(0))});
 

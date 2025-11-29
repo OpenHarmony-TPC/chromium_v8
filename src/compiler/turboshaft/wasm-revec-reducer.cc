@@ -80,37 +80,46 @@ class StoreLoadInfo {
         SetInvalid();
         return;
       }
-      // const_op->word64() won't be greater than uint32::max under 32-bits wasm
-      // memory.
-      DCHECK_EQ(const_op->word64(), const_op->word32());
-      offset_ = const_op->word32();
-    }
-    const ChangeOp* change = nullptr;
-    if constexpr (std::is_same_v<Op, Simd128LoadTransformOp>) {
-      change = graph->Get(op->index()).template TryCast<ChangeOp>();
+      offset_ = const_op->word64();
+      index_ = &(graph->Get(op->index()));
     } else {
-      if (!op->index().has_value()) return;
-      change = graph->Get(op->index().value()).template TryCast<ChangeOp>();
-    }
-    if (change == nullptr) {
-      SetInvalid();
-      return;
-    }
-    DCHECK_EQ(change->kind, ChangeOp::Kind::kZeroExtend);
-    const Operation* change_input = &graph->Get(change->input());
-    if (const ConstantOp* const_op = change_input->TryCast<ConstantOp>()) {
-      DCHECK_EQ(const_op->kind, ConstantOp::Kind::kWord32);
-      int new_offset;
-      if (base::bits::SignedAddOverflow32(static_cast<int>(const_op->word32()),
-                                          offset_, &new_offset)) {
-        // offset is overflow
+      if (!op->index().has_value()) {
         SetInvalid();
         return;
       }
-      offset_ = new_offset;
-      return;
+      index_ = &(graph->Get(op->index().value()));
     }
-    index_ = change_input;
+
+    if (const ChangeOp* change_op = index_->TryCast<ChangeOp>()) {
+      if (change_op->kind != ChangeOp::Kind::kZeroExtend) {
+        TRACE("ChangeOp kind not supported for revectorization\n");
+        SetInvalid();
+        return;
+      }
+
+      index_ = &graph->Get(change_op->input());
+      // If index_ is constant, add the constant to offset_ and set index_ to
+      // nullptr
+      if (const ConstantOp* const_op = index_->TryCast<ConstantOp>()) {
+        DCHECK_EQ(const_op->kind, ConstantOp::Kind::kWord32);
+        int32_t new_offset;
+        if (base::bits::SignedAddOverflow32(
+                static_cast<int32_t>(const_op->word32()),
+                static_cast<int32_t>(offset_), &new_offset)) {
+          // offset is overflow
+          SetInvalid();
+          return;
+        }
+        offset_ = new_offset;
+        index_ = nullptr;
+      }
+    } else {  // memory64
+      if (const ConstantOp* const_op = index_->TryCast<ConstantOp>()) {
+        DCHECK_EQ(const_op->kind, ConstantOp::Kind::kWord64);
+        offset_ += const_op->word64();
+        index_ = nullptr;
+      }
+    }
   }
 
   std::optional<int> operator-(const StoreLoadInfo<Op>& rhs) const {
@@ -139,7 +148,7 @@ class StoreLoadInfo {
   bool IsValid() const { return op_ != nullptr; }
 
   const Operation* index() const { return index_; }
-  int offset() const { return offset_; }
+  int64_t offset() const { return offset_; }
   const Op* op() const { return op_; }
 
  private:
@@ -148,7 +157,7 @@ class StoreLoadInfo {
   const Op* op_;
   const Operation* base_ = nullptr;
   const Operation* index_ = nullptr;
-  int offset_;
+  int64_t offset_;
 };
 
 struct StoreInfoCompare {
@@ -199,13 +208,21 @@ PackNode* SLPTree::GetPackNode(OpIndex node) {
   if (itr != node_to_packnode_.end()) {
     return itr->second;
   }
+  return analyzer_->GetPackNode(node);
+}
+
+ZoneVector<PackNode*>* SLPTree::GetIntersectPackNodes(OpIndex node) {
+  auto I = node_to_intersect_packnodes_.find(node);
+  if (I != node_to_intersect_packnodes_.end()) {
+    return &(I->second);
+  }
   return nullptr;
 }
 
 template <typename FunctionType>
 void ForEach(FunctionType callback,
-             ZoneUnorderedMap<OpIndex, PackNode*>& node_map) {
-  std::unordered_set<PackNode const*> visited;
+             const ZoneUnorderedMap<OpIndex, PackNode*>& node_map) {
+  absl::flat_hash_set<PackNode const*> visited;
 
   for (auto& entry : node_map) {
     PackNode const* pnode = entry.second;
@@ -218,6 +235,22 @@ void ForEach(FunctionType callback,
   }
 }
 
+template <typename FunctionType>
+void ForEach(FunctionType callback,
+             const ZoneUnorderedMap<OpIndex, ZoneVector<PackNode*>>& node_map) {
+  absl::flat_hash_set<PackNode const*> visited;
+
+  for (const auto& entry : node_map) {
+    for (auto* pnode : entry.second) {
+      if (visited.find(pnode) != visited.end()) {
+        continue;
+      }
+      visited.insert(pnode);
+      callback(pnode);
+    }
+  }
+}
+
 void SLPTree::Print(const char* info) {
   TRACE("%s, %zu Packed node:\n", info, node_to_packnode_.size());
   if (!v8_flags.trace_wasm_revectorize) {
@@ -226,6 +259,8 @@ void SLPTree::Print(const char* info) {
 
   ForEach([this](PackNode const* pnode) { pnode->Print(&graph_); },
           node_to_packnode_);
+  ForEach([this](PackNode const* pnode) { pnode->Print(&graph_); },
+          node_to_intersect_packnodes_);
 }
 
 bool SLPTree::HasInputDependencies(const NodeGroup& node_group) {
@@ -271,7 +306,7 @@ PackNode* SLPTree::NewPackNode(const NodeGroup& node_group) {
 }
 
 PackNode* SLPTree::NewForcePackNode(const NodeGroup& node_group,
-                                    PackNode::ForcePackType type,
+                                    ForcePackNode::ForcePackType type,
                                     const Graph& graph) {
   // Currently we only support force packing two nodes.
   DCHECK_EQ(node_group.size(), 2);
@@ -292,8 +327,12 @@ PackNode* SLPTree::NewForcePackNode(const NodeGroup& node_group,
   TRACE("ForcePackNode %s(#%d, #%d)\n",
         GetSimdOpcodeName(graph_.Get(node_group[0])).c_str(),
         node_group[0].id(), node_group[1].id());
-  PackNode* pnode = NewPackNode(node_group);
-  pnode->set_force_pack_type(type);
+  ForcePackNode* pnode =
+      phase_zone_->New<ForcePackNode>(phase_zone_, node_group, type);
+  for (OpIndex node : node_group) {
+    node_to_packnode_[node] = pnode;
+  }
+
   return pnode;
 }
 
@@ -312,6 +351,37 @@ BundlePackNode* SLPTree::NewBundlePackNode(const NodeGroup& node_group,
     node_to_packnode_[node] = pnode;
   }
   return pnode;
+}
+
+PackNode* SLPTree::NewIntersectPackNode(const NodeGroup& node_group) {
+  // Similar as ForcePackNode, dependent inputs are not supported.
+  if (HasInputDependencies(node_group)) {
+    TRACE("IntersectPackNode %s(#%d, #%d) failed due to input dependencies.\n",
+          GetSimdOpcodeName(graph_.Get(node_group[0])).c_str(),
+          node_group[0].id(), node_group[1].id());
+    return nullptr;
+  }
+
+  TRACE("IntersectPackNode %s(#%d, #%d)\n",
+        GetSimdOpcodeName(graph_.Get(node_group[0])).c_str(),
+        node_group[0].id(), node_group[1].id());
+  PackNode* intersect_pnode = phase_zone_->New<PackNode>(
+      phase_zone_, node_group, PackNode::kIntersectPackNode);
+
+  for (int i = 0; i < static_cast<int>(node_group.size()); i++) {
+    OpIndex op_idx = node_group[i];
+    if (i > 0 && op_idx == node_group[0]) continue;
+    auto it = node_to_intersect_packnodes_.find(op_idx);
+    if (it == node_to_intersect_packnodes_.end()) {
+      bool result;
+      std::tie(it, result) = node_to_intersect_packnodes_.emplace(
+          op_idx, ZoneVector<PackNode*>(phase_zone_));
+      DCHECK(result);
+    }
+    it->second.push_back(intersect_pnode);
+  }
+
+  return intersect_pnode;
 }
 
 PackNode* SLPTree::NewCommutativePackNodeAndRecurs(const NodeGroup& node_group,
@@ -334,7 +404,10 @@ PackNode* SLPTree::NewCommutativePackNodeAndRecurs(const NodeGroup& node_group,
     NodeGroup operands(graph_.Get(node_group[0]).input(i),
                        graph_.Get(node_group[1]).input(node1_input_index));
 
-    if (!BuildTreeRec(operands, depth + 1)) {
+    PackNode* child = BuildTreeRec(operands, depth + 1);
+    if (child) {
+      pnode->SetOperand(i, child);
+    } else {
       return nullptr;
     }
   }
@@ -345,12 +418,16 @@ PackNode* SLPTree::NewPackNodeAndRecurs(const NodeGroup& node_group,
                                         int start_index, int count,
                                         unsigned depth) {
   PackNode* pnode = NewPackNode(node_group);
-  for (int i = start_index; i < start_index + count; ++i) {
+  for (int i = 0; i < count; ++i) {
     // Prepare the operand vector.
-    NodeGroup operands(graph_.Get(node_group[0]).input(i),
-                       graph_.Get(node_group[1]).input(i));
+    int input_index = i + start_index;
+    NodeGroup operands(graph_.Get(node_group[0]).input(input_index),
+                       graph_.Get(node_group[1]).input(input_index));
 
-    if (!BuildTreeRec(operands, depth + 1)) {
+    PackNode* child = BuildTreeRec(operands, depth + 1);
+    if (child) {
+      pnode->SetOperand(i, child);
+    } else {
       return nullptr;
     }
   }
@@ -380,6 +457,11 @@ ShufflePackNode* SLPTree::Try256ShuffleMatchLoad8x8U(
   V<Simd128> op_idx1 = node_group[1];
   const Simd128ShuffleOp& op0 = graph_.Get(op_idx0).Cast<Simd128ShuffleOp>();
   const Simd128ShuffleOp& op1 = graph_.Get(op_idx1).Cast<Simd128ShuffleOp>();
+
+  if (op0.kind != Simd128ShuffleOp::Kind::kI8x16 ||
+      op1.kind != Simd128ShuffleOp::Kind::kI8x16) {
+    return nullptr;
+  }
 
   if (op0.left() == op0.right() || op1.left() == op1.right()) {
     // Here shuffle couldn't be swizzle
@@ -470,6 +552,10 @@ ShufflePackNode* SLPTree::X64TryMatch256Shuffle(const NodeGroup& node_group,
   OpIndex op_idx1 = node_group[1];
   const Simd128ShuffleOp& op0 = graph_.Get(op_idx0).Cast<Simd128ShuffleOp>();
   const Simd128ShuffleOp& op1 = graph_.Get(op_idx1).Cast<Simd128ShuffleOp>();
+  if (op0.kind != Simd128ShuffleOp::Kind::kI8x16 ||
+      op1.kind != Simd128ShuffleOp::Kind::kI8x16) {
+    return nullptr;
+  }
 
   uint8_t shuffle8x32[32];
 
@@ -703,26 +789,6 @@ bool SLPTree::TryMatchExtendIntToF32x4(const NodeGroup& node_group,
   return true;
 }
 
-void SLPTree::DeleteTree() { node_to_packnode_.clear(); }
-
-bool CannotSwapProtectedLoads(OpEffects first, OpEffects second) {
-  EffectDimensions produces = first.produces;
-  // The control flow effects produces by Loads are due to trap handler. We can
-  // ignore this kind of effect when swapping two Loads that both have trap
-  // handler.
-  produces.control_flow = false;
-  return produces.bits() & (second.consumes.bits());
-}
-
-bool IsProtectedLoad(Operation& op) {
-  if (op.opcode == Opcode::kLoad) {
-    return op.Cast<LoadOp>().kind.with_trap_handler;
-  } else if (op.opcode == Opcode::kSimd128LoadTransform) {
-    return op.Cast<Simd128LoadTransformOp>().load_kind.with_trap_handler;
-  }
-  return false;
-}
-
 bool SLPTree::IsSideEffectFree(OpIndex first, OpIndex second) {
   DCHECK_LE(first.offset(), second.offset());
   if (first == second) return true;
@@ -730,8 +796,8 @@ bool SLPTree::IsSideEffectFree(OpIndex first, OpIndex second) {
   OpIndex prev_node = graph().PreviousIndex(second);
   while (prev_node != first) {
     OpEffects prev_effects = graph().Get(prev_node).Effects();
-    if ((IsProtectedLoad(graph().Get(second)) &&
-         IsProtectedLoad(graph().Get(prev_node)))
+    if ((graph().Get(second).IsProtectedLoad() &&
+         graph().Get(prev_node).IsProtectedLoad())
             ? CannotSwapProtectedLoads(prev_effects, effects)
             : CannotSwapOperations(prev_effects, effects)) {
       TRACE("break side effect %d, %d\n", prev_node.id(), second.id());
@@ -766,13 +832,6 @@ bool SLPTree::CanBePacked(const NodeGroup& node_group) {
 
   if (graph().BlockIndexOf(node0) != graph().BlockIndexOf(node1)) {
     TRACE("Can't pack operations of different basic block\n");
-    return false;
-  }
-
-  // One node can be used more than once. Only support node to PackNode 1:1
-  // mapping now, if node A is already packed with B into PackNode (A,B), can't
-  // pack it with C into PackNode (A,C) anymore.
-  if (GetPackNode(node0) != GetPackNode(node1)) {
     return false;
   }
 
@@ -852,20 +911,77 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
   }
 
   // Check if this is a duplicate of another entry.
-  for (OpIndex op_idx : node_group) {
-    if (PackNode* p = GetPackNode(op_idx)) {
-      Operation& op = graph_.Get(op_idx);
-      if (p != nullptr && !p->IsSame(node_group)) {
-        // TODO(jiepan): Gathering due to partial overlap
-        TRACE("Failed due to partial overlap at #%d,%s!\n", op_idx.id(),
-              GetSimdOpcodeName(op).c_str());
-        return nullptr;
+  bool is_intersected = false;
+  // For revisited node_group, we only need to match from node0.
+  if (PackNode* pnode = GetPackNode(node0)) {
+    const Operation& op = graph_.Get(node0);
+    if (pnode->IsSame(node_group)) {
+      TRACE("Perfect diamond merge at #%d,%s\n", node0.id(),
+            GetSimdOpcodeName(op).c_str());
+      return pnode;
+    }
+
+    // TODO(yolanda): Support other intersect PackNode e.g. overlapped loads.
+    if (!pnode->IsForcePackNode() || recursion_depth < 1) {
+      TRACE("Unsupported partial overlap at #%d,%s!\n", node0.id(),
+            GetSimdOpcodeName(op).c_str());
+      return nullptr;
+    }
+
+    // Match intersect packnodes from current tree.
+    if (auto intersect_packnodes = GetIntersectPackNodes(node0)) {
+      for (auto intersect_pnode : *intersect_packnodes) {
+        if (intersect_pnode->IsSame(node_group)) {
+          TRACE("Perfect diamond merge at intersect pack node #%d,%s, #%d\n",
+                node0.id(), GetSimdOpcodeName(op).c_str(), node1.id());
+          return intersect_pnode;
+        }
+      }
+    }
+
+    // Match intersect packnodes from analyzer
+    if (auto intersect_packnodes = analyzer_->GetIntersectPackNodes(node0)) {
+      for (auto intersect_pnode : *intersect_packnodes) {
+        if (intersect_pnode->IsSame(node_group)) {
+          TRACE("Perfect diamond merge at intersect pack node #%d,%s, #%d\n",
+                node0.id(), GetSimdOpcodeName(op).c_str(), node1.id());
+          return intersect_pnode;
+        }
+      }
+    }
+
+    is_intersected = true;
+    TRACE("Partial overlap at #%d,%s!\n", node0.id(),
+          GetSimdOpcodeName(op).c_str());
+  }
+
+  // Catch overlapped PackNode on the other nodes.
+  if (!is_intersected) {
+    for (int i = 1; i < static_cast<int>(node_group.size()); i++) {
+      const OpIndex op_idx = node_group[i];
+      const Operation& op = graph_.Get(op_idx);
+      if (auto pnode = GetPackNode(op_idx)) {
+        if (!pnode->IsForcePackNode()) {
+          TRACE("Unsupported partial overlap at #%d,%s!\n", op_idx.id(),
+                GetSimdOpcodeName(op).c_str());
+          return nullptr;
+        }
+      } else if (!GetIntersectPackNodes(op_idx) &&
+                 !analyzer_->GetIntersectPackNodes(op_idx)) {
+        continue;
       }
 
-      TRACE("Perfect diamond merge at #%d,%s\n", op_idx.id(),
+      is_intersected = true;
+      TRACE("Partial overlap at #%d,%s!\n", op_idx.id(),
             GetSimdOpcodeName(op).c_str());
-      return p;
+      break;
     }
+  }
+
+  if (is_intersected) {
+    TRACE("Create IntersectPackNode due to partial overlap!\n");
+    PackNode* pnode = NewIntersectPackNode(node_group);
+    return pnode;
   }
 
   int value_in_count = op0.input_count;
@@ -883,6 +999,9 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
           op1.Cast<Simd128LoadTransformOp>();
       StoreLoadInfo<Simd128LoadTransformOp> info0(&graph_, &transform_op0);
       StoreLoadInfo<Simd128LoadTransformOp> info1(&graph_, &transform_op1);
+      if (!info0.IsValid() || !info1.IsValid()) {
+        return NewForcePackNode(node_group, ForcePackNode::kGeneral, graph_);
+      }
       auto stride = info1 - info0;
       if (IsLoadSplat(transform_op0)) {
         TRACE("Simd128LoadTransform: LoadSplat\n");
@@ -890,8 +1009,7 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
             (stride.has_value() && stride.value() == 0)) {
           return NewPackNode(node_group);
         }
-        return NewForcePackNode(node_group, PackNode::ForcePackType::kGeneral,
-                                graph_);
+        return NewForcePackNode(node_group, ForcePackNode::kGeneral, graph_);
       } else if (IsLoadExtend(transform_op0)) {
         TRACE("Simd128LoadTransform: LoadExtend\n");
         if (stride.has_value()) {
@@ -899,12 +1017,10 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
           if (value == kSimd128Size / 2) {
             return NewPackNode(node_group);
           } else if (value == 0) {
-            return NewForcePackNode(node_group, PackNode::ForcePackType::kSplat,
-                                    graph_);
+            return NewForcePackNode(node_group, ForcePackNode::kSplat, graph_);
           }
         }
-        return NewForcePackNode(node_group, PackNode::ForcePackType::kGeneral,
-                                graph_);
+        return NewForcePackNode(node_group, ForcePackNode::kGeneral, graph_);
       } else {
         TRACE("Load Transfrom k64Zero/k32Zero!\n");
         DCHECK(transform_op0.transform_kind ==
@@ -912,11 +1028,9 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
                transform_op0.transform_kind ==
                    Simd128LoadTransformOp::TransformKind::k64Zero);
         if (stride.has_value() && stride.value() == 0) {
-          return NewForcePackNode(node_group, PackNode::ForcePackType::kSplat,
-                                  graph_);
+          return NewForcePackNode(node_group, ForcePackNode::kSplat, graph_);
         }
-        return NewForcePackNode(node_group, PackNode::ForcePackType::kGeneral,
-                                graph_);
+        return NewForcePackNode(node_group, ForcePackNode::kGeneral, graph_);
       }
     }
 
@@ -931,18 +1045,18 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
       }
       StoreLoadInfo<LoadOp> info0(&graph_, &load0);
       StoreLoadInfo<LoadOp> info1(&graph_, &load1);
-      auto stride = info1 - info0;
-      if (stride.has_value()) {
-        if (const int value = stride.value(); value == kSimd128Size) {
-          // TODO(jiepan) Sort load
-          return NewPackNode(node_group);
-        } else if (value == 0) {
-          return NewForcePackNode(node_group, PackNode::ForcePackType::kSplat,
-                                  graph_);
+      if (info0.IsValid() && info1.IsValid()) {
+        auto stride = info1 - info0;
+        if (stride.has_value()) {
+          if (const int value = stride.value(); value == kSimd128Size) {
+            // TODO(jiepan) Sort load
+            return NewPackNode(node_group);
+          } else if (value == 0) {
+            return NewForcePackNode(node_group, ForcePackNode::kSplat, graph_);
+          }
         }
       }
-      return NewForcePackNode(node_group, PackNode::ForcePackType::kGeneral,
-                              graph_);
+      return NewForcePackNode(node_group, ForcePackNode::kGeneral, graph_);
     }
     case Opcode::kStore: {
       TRACE("Added a vector of stores.\n");
@@ -975,9 +1089,8 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
   }                                                                           \
   case Simd128UnaryOp::Kind::k##op_high: {                                    \
     if (op1.Cast<Simd128UnaryOp>().kind == op0.Cast<Simd128UnaryOp>().kind) { \
-      auto force_pack_type = node0 == node1                                   \
-                                 ? PackNode::ForcePackType::kSplat            \
-                                 : PackNode::ForcePackType::kGeneral;         \
+      auto force_pack_type =                                                  \
+          node0 == node1 ? ForcePackNode::kSplat : ForcePackNode::kGeneral;   \
       return NewForcePackNode(node_group, force_pack_type, graph_);           \
     } else {                                                                  \
       return nullptr;                                                         \
@@ -1014,9 +1127,8 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
   }                                                                           \
   case Simd128BinopOp::Kind::k##op_high: {                                    \
     if (op1.Cast<Simd128BinopOp>().kind == op0.Cast<Simd128BinopOp>().kind) { \
-      auto force_pack_type = node0 == node1                                   \
-                                 ? PackNode::ForcePackType::kSplat            \
-                                 : PackNode::ForcePackType::kGeneral;         \
+      auto force_pack_type =                                                  \
+          node0 == node1 ? ForcePackNode::kSplat : ForcePackNode::kGeneral;   \
       return NewForcePackNode(node_group, force_pack_type, graph_);           \
     } else {                                                                  \
       return nullptr;                                                         \
@@ -1087,7 +1199,7 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
     }
 
     case Opcode::kSimd128Splat: {
-      if (op0.input(0) != op1.input(0)) {
+      if (!IsEqual(op0.input(0), op1.input(0))) {
         TRACE("Failed due to different splat input!\n");
         return nullptr;
       }
@@ -1096,10 +1208,16 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
     }
 
     case Opcode::kSimd128Shuffle: {
+      const auto& shuffle_op0 = op0.Cast<Simd128ShuffleOp>();
+      const auto& shuffle_op1 = op1.Cast<Simd128ShuffleOp>();
+      if (shuffle_op0.kind != Simd128ShuffleOp::Kind::kI8x16 ||
+          shuffle_op1.kind != Simd128ShuffleOp::Kind::kI8x16) {
+        return nullptr;
+      }
       // We pack shuffles only if it can match specific patterns. We should
       // avoid packing general shuffles because it will cause regression.
-      const auto& shuffle0 = op0.Cast<Simd128ShuffleOp>().shuffle;
-      const auto& shuffle1 = op1.Cast<Simd128ShuffleOp>().shuffle;
+      const auto& shuffle0 = shuffle_op0.shuffle;
+      const auto& shuffle1 = shuffle_op1.shuffle;
 
       if (CompareCharsEqual(shuffle0, shuffle1, kSimd128Size)) {
         if (IsSplat(node_group)) {
@@ -1139,28 +1257,29 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
             pnode->info().set_splat_index(index);
             return pnode;
           }
-        } else {
-#ifdef V8_TARGET_ARCH_X64
-          if (ShufflePackNode* pnode =
-                  X64TryMatch256Shuffle(node_group, shuffle0, shuffle1)) {
-            // Manually invoke recur build tree for shuffle node
-            for (int i = 0; i < value_in_count; ++i) {
-              NodeGroup operands(graph_.Get(node_group[0]).input(i),
-                                 graph_.Get(node_group[1]).input(i));
-
-              if (!BuildTreeRec(operands, recursion_depth + 1)) {
-                return nullptr;
-              }
-            }
-            return pnode;
-          }
-#endif  // V8_TARGET_ARCH_X64
-          return nullptr;
         }
+
+#ifdef V8_TARGET_ARCH_X64
+        if (ShufflePackNode* pnode =
+                X64TryMatch256Shuffle(node_group, shuffle0, shuffle1)) {
+          // Manually invoke recur build tree for shuffle node
+          for (int i = 0; i < value_in_count; ++i) {
+            NodeGroup operands(graph_.Get(node_group[0]).input(i),
+                               graph_.Get(node_group[1]).input(i));
+
+            PackNode* child = BuildTreeRec(operands, recursion_depth + 1);
+            if (child) {
+              pnode->SetOperand(i, child);
+            } else {
+              return nullptr;
+            }
+          }
+          return pnode;
+        }
+#endif  // V8_TARGET_ARCH_X64
 
         TRACE("Unsupported Simd128Shuffle\n");
         return nullptr;
-
       } else {
         return Try256ShuffleMatchLoad8x8U(node_group, shuffle0, shuffle1);
       }
@@ -1175,7 +1294,15 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
             info.is_sign_extract, info.is_sign_convert);
         return p;
       }
-      return nullptr;
+      if (recursion_depth < 1) {
+        TRACE("Do not force pack at root #%d:%s\n", node0.id(),
+              GetSimdOpcodeName(op0).c_str());
+        return nullptr;
+      }
+      return NewForcePackNode(
+          node_group,
+          node0 == node1 ? ForcePackNode::kSplat : ForcePackNode::kGeneral,
+          graph_);
     }
 
     default:
@@ -1186,16 +1313,24 @@ PackNode* SLPTree::BuildTreeRec(const NodeGroup& node_group,
   return nullptr;
 }
 
-bool WasmRevecAnalyzer::CanMergeSLPTrees() {
-  for (auto& entry : slp_tree_->GetNodeMapping()) {
-    auto itr = revectorizable_node_.find(entry.first);
-    if (itr != revectorizable_node_.end() &&
-        !itr->second->IsSame(*entry.second)) {
-      TRACE("Can't merge slp tree\n");
-      return false;
+void WasmRevecAnalyzer::MergeSLPTree(SLPTree& slp_tree) {
+  // We ensured the SLP trees are mergable when BuildTreeRec.
+  for (const auto& entry : slp_tree.GetIntersectNodeMapping()) {
+    auto it = revectorizable_intersect_node_.find(entry.first);
+    if (it == revectorizable_intersect_node_.end()) {
+      bool result;
+      std::tie(it, result) = revectorizable_intersect_node_.emplace(
+          entry.first, ZoneVector<PackNode*>(phase_zone_));
+      DCHECK(result);
     }
+    ZoneVector<PackNode*>& intersect_pnodes = it->second;
+    intersect_pnodes.insert(intersect_pnodes.end(), entry.second.begin(),
+                            entry.second.end());
+    SLOW_DCHECK(std::unique(intersect_pnodes.begin(), intersect_pnodes.end()) ==
+                intersect_pnodes.end());
   }
-  return true;
+
+  revectorizable_node_.merge(slp_tree.GetNodeMapping());
 }
 
 bool WasmRevecAnalyzer::IsSupportedReduceSeed(const Operation& op) {
@@ -1292,7 +1427,6 @@ void WasmRevecAnalyzer::Run() {
       PrintF("}\n");
     }
   }
-  slp_tree_ = phase_zone_->New<SLPTree>(graph_, phase_zone_);
 
   ZoneVector<std::pair<OpIndex, OpIndex>> all_seeds(
       store_seeds_.begin(), store_seeds_.end(), phase_zone_);
@@ -1300,31 +1434,28 @@ void WasmRevecAnalyzer::Run() {
 
   for (auto pair : all_seeds) {
     NodeGroup roots(pair.first, pair.second);
-
-    slp_tree_->DeleteTree();
-    PackNode* root = slp_tree_->BuildTree(roots);
+    SLPTree slp_tree(graph_, this, phase_zone_);
+    PackNode* root = slp_tree.BuildTree(roots);
     if (!root) {
       TRACE("Build tree failed!\n");
       continue;
     }
 
-    slp_tree_->Print("After build tree");
-
-    if (CanMergeSLPTrees()) {
-      revectorizable_node_.merge(slp_tree_->GetNodeMapping());
-    }
+    slp_tree.Print("After build tree");
+    MergeSLPTree(slp_tree);
   }
 
   // Early exist when no revectorizable node found.
   if (revectorizable_node_.empty()) return;
 
   // Build SIMD usemap
-  use_map_ = phase_zone_->New<SimdUseMap>(graph_, phase_zone_);
+  use_map_ = phase_zone_->New<Simd128UseMap>(graph_, phase_zone_);
   if (!DecideVectorize()) {
     revectorizable_node_.clear();
+    revectorizable_intersect_node_.clear();
   } else {
     should_reduce_ = true;
-    TRACE("Decide to revectorize!\n");
+    Print("Decide to vectorize");
   }
 }
 
@@ -1343,7 +1474,7 @@ bool WasmRevecAnalyzer::DecideVectorize() {
           return;
         }
 
-        if (pnode->is_force_pack()) {
+        if (pnode->IsForcePackNode()) {
           cost++;
           return;
         }
@@ -1364,7 +1495,7 @@ bool WasmRevecAnalyzer::DecideVectorize() {
 #endif  // V8_TARGET_ARCH_X64
 
           for (auto use : use_map_->uses(nodes[i])) {
-            if (!GetPackNode(use) || GetPackNode(use)->is_force_pack()) {
+            if (!GetPackNode(use) || GetPackNode(use)->is_force_packing()) {
               TRACE("External use edge: (%d:%s) -> (%d:%s)\n", use.id(),
                     OpcodeName(graph_.Get(use).opcode), nodes[i].id(),
                     OpcodeName(graph_.Get(nodes[i]).opcode));
@@ -1378,8 +1509,30 @@ bool WasmRevecAnalyzer::DecideVectorize() {
       },
       revectorizable_node_);
 
+  ForEach(
+      [&](PackNode const* pnode) {
+        // We always generate SimdPack128To256Op for IntersectPackNode.
+        cost++;
+        return;
+      },
+      revectorizable_intersect_node_);
+
   TRACE("Save: %d, cost: %d\n", save, cost);
   return save > cost;
+}
+
+void WasmRevecAnalyzer::Print(const char* info) {
+  if (!v8_flags.trace_wasm_revectorize) {
+    return;
+  }
+
+  TRACE("%s, %zu revectorizable nodes:\n", info, revectorizable_node_.size());
+  ForEach([this](PackNode const* pnode) { pnode->Print(&graph_); },
+          revectorizable_node_);
+  TRACE("%s, %zu revectorizable intersect nodes:\n", info,
+        revectorizable_intersect_node_.size());
+  ForEach([this](PackNode const* pnode) { pnode->Print(&graph_); },
+          revectorizable_intersect_node_);
 }
 
 }  // namespace v8::internal::compiler::turboshaft

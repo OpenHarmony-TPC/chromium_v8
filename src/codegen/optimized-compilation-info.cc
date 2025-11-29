@@ -43,7 +43,11 @@ OptimizedCompilationInfo::OptimizedCompilationInfo(
   // is active, to be able to get more precise source positions at the price of
   // more memory consumption.
   if (isolate->NeedsDetailedOptimizedCodeLineInfo()) {
-    set_source_positions();
+    // We might not have source positions if collection fails (e.g. because we
+    // run out of stack space).
+    if (bytecode_array_->HasSourcePositionTable()) {
+      set_source_positions();
+    }
   }
 
   SetTracingFlags(shared->PassesFilter(v8_flags.trace_turbo_filter));
@@ -90,13 +94,16 @@ void OptimizedCompilationInfo::ConfigureFlags() {
       break;
     case CodeKind::BYTECODE_HANDLER:
       set_called_with_code_start_register();
+#ifdef V8_ENABLE_BUILTIN_JUMP_TABLE_SWITCH
+      set_switch_jump_table();
+#endif  // V8_ENABLE_BUILTIN_JUMP_TABLE_SWITCH
       if (v8_flags.turbo_splitting) set_splitting();
       if (v8_flags.enable_allocation_folding) set_allocation_folding();
       break;
     case CodeKind::BUILTIN:
 #ifdef V8_ENABLE_BUILTIN_JUMP_TABLE_SWITCH
       set_switch_jump_table();
-#endif  // V8_TARGET_ARCH_X64
+#endif  // V8_ENABLE_BUILTIN_JUMP_TABLE_SWITCH
       [[fallthrough]];
     case CodeKind::FOR_TESTING:
       if (v8_flags.turbo_splitting) set_splitting();
@@ -147,7 +154,9 @@ void OptimizedCompilationInfo::AbortOptimization(BailoutReason reason) {
   if (bailout_reason_ == BailoutReason::kNoReason) {
     bailout_reason_ = reason;
   }
-  set_disable_future_optimization();
+  if (IsTerminalBailoutReasonForTurbofan(reason)) {
+    set_disable_future_optimization();
+  }
 }
 
 void OptimizedCompilationInfo::RetryOptimization(BailoutReason reason) {
@@ -196,18 +205,6 @@ void OptimizedCompilationInfo::SetCode(IndirectHandle<Code> code) {
   code_ = code;
 }
 
-#if V8_ENABLE_WEBASSEMBLY
-void OptimizedCompilationInfo::SetWasmCompilationResult(
-    std::unique_ptr<wasm::WasmCompilationResult> wasm_compilation_result) {
-  wasm_compilation_result_ = std::move(wasm_compilation_result);
-}
-
-std::unique_ptr<wasm::WasmCompilationResult>
-OptimizedCompilationInfo::ReleaseWasmCompilationResult() {
-  return std::move(wasm_compilation_result_);
-}
-#endif  // V8_ENABLE_WEBASSEMBLY
-
 bool OptimizedCompilationInfo::has_context() const {
   return !closure().is_null();
 }
@@ -252,6 +249,10 @@ void OptimizedCompilationInfo::SetTracingFlags(bool passes_filter) {
   if (v8_flags.trace_turbo_alloc) set_trace_turbo_allocation();
   if (v8_flags.trace_heap_broker) set_trace_heap_broker();
   if (v8_flags.turboshaft_trace_reduction) set_turboshaft_trace_reduction();
+}
+
+void OptimizedCompilationInfo::mark_cancelled() {
+  was_cancelled_.store(true, std::memory_order_relaxed);
 }
 
 OptimizedCompilationInfo::InlinedFunctionHolder::InlinedFunctionHolder(

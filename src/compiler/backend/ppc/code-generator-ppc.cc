@@ -5,6 +5,7 @@
 #include "src/base/numbers/double.h"
 #include "src/codegen/assembler-inl.h"
 #include "src/codegen/callable.h"
+#include "src/codegen/interface-descriptors-inl.h"
 #include "src/codegen/macro-assembler.h"
 #include "src/codegen/optimized-compilation-info.h"
 #include "src/compiler/backend/code-generator-impl.h"
@@ -15,6 +16,7 @@
 #include "src/heap/mutable-page-metadata.h"
 
 #if V8_ENABLE_WEBASSEMBLY
+#include "src/wasm/wasm-linkage.h"
 #include "src/wasm/wasm-objects.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
@@ -632,7 +634,7 @@ static inline bool is_wasm_on_be(bool IsWasm) {
 #define ASSEMBLE_ATOMIC_BINOP_BYTE(bin_inst, _type)                          \
   do {                                                                       \
     auto bin_op = [&](Register dst, Register lhs, Register rhs) {            \
-      if (std::is_signed<_type>::value) {                                    \
+      if (std::is_signed_v<_type>) {                                         \
         __ extsb(dst, lhs);                                                  \
         __ bin_inst(dst, dst, rhs);                                          \
       } else {                                                               \
@@ -651,7 +653,7 @@ static inline bool is_wasm_on_be(bool IsWasm) {
     auto bin_op = [&](Register dst, Register lhs, Register rhs) {             \
       Register _lhs = lhs;                                                    \
       MAYBE_REVERSE_IF_WASM(dst, _lhs, reverse_op, scratch, true);            \
-      if (std::is_signed<_type>::value) {                                     \
+      if (std::is_signed_v<_type>) {                                          \
         switch (sizeof(_type)) {                                              \
           case 1:                                                             \
             UNREACHABLE();                                                    \
@@ -791,6 +793,12 @@ void CodeGenerator::AssembleCodeStartRegisterCheck() {
   __ Assert(eq, AbortReason::kWrongFunctionCodeStart);
 }
 
+#ifdef V8_ENABLE_LEAPTIERING
+void CodeGenerator::AssembleDispatchHandleRegisterCheck() {
+  CHECK(!V8_JS_LINKAGE_INCLUDES_DISPATCH_HANDLE_BOOL);
+}
+#endif  // V8_ENABLE_LEAPTIERING
+
 void CodeGenerator::BailoutIfDeoptimized() { __ BailoutIfDeoptimized(); }
 
 // Assembles an instruction after register allocation, producing machine code.
@@ -830,13 +838,17 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
 #if V8_ENABLE_WEBASSEMBLY
-    case kArchCallWasmFunction: {
+    case kArchCallWasmFunction:
+    case kArchCallWasmFunctionIndirect: {
       // We must not share code targets for calls to builtins for wasm code, as
       // they might need to be patched individually.
       if (instr->InputAt(0)->IsImmediate()) {
+        DCHECK_EQ(opcode, kArchCallWasmFunction);
         Constant constant = i.ToConstant(instr->InputAt(0));
         Address wasm_code = static_cast<Address>(constant.ToInt64());
         __ Call(wasm_code, constant.rmode());
+      } else if (opcode == kArchCallWasmFunctionIndirect) {
+        __ CallWasmCodePointer(i.InputRegister(0));
       } else {
         __ Call(i.InputRegister(0));
       }
@@ -845,13 +857,17 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       frame_access_state()->ClearSPDelta();
       break;
     }
-    case kArchTailCallWasm: {
+    case kArchTailCallWasm:
+    case kArchTailCallWasmIndirect: {
       // We must not share code targets for calls to builtins for wasm code, as
       // they might need to be patched individually.
       if (instr->InputAt(0)->IsImmediate()) {
+        DCHECK_EQ(opcode, kArchTailCallWasm);
         Constant constant = i.ToConstant(instr->InputAt(0));
         Address wasm_code = static_cast<Address>(constant.ToInt64());
         __ Jump(wasm_code, constant.rmode());
+      } else if (opcode == kArchTailCallWasmIndirect) {
+        __ CallWasmCodePointer(i.InputRegister(0), CallJumpMode::kTailCall);
       } else {
         __ Jump(i.InputRegister(0));
       }
@@ -910,10 +926,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kArchPrepareCallCFunction: {
-      int const num_gp_parameters = ParamField::decode(instr->opcode());
-      int const num_fp_parameters = FPParamField::decode(instr->opcode());
-      __ PrepareCallCFunction(num_gp_parameters + num_fp_parameters,
-                              kScratchReg);
+      int const num_parameters = MiscField::decode(instr->opcode());
+      __ PrepareCallCFunction(num_parameters, kScratchReg);
       // Frame alignment requires using FP-relative frame addressing.
       frame_access_state()->SetFrameAccessToFP();
       break;
@@ -952,10 +966,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ RecordComment(reinterpret_cast<const char*>(i.InputInt64(0)),
                        SourceLocation());
       break;
-    case kArchCallCFunctionWithFrameState:
     case kArchCallCFunction: {
-      int const num_gp_parameters = ParamField::decode(instr->opcode());
-      int const fp_param_field = FPParamField::decode(instr->opcode());
+      uint32_t param_counts = i.InputUint32(instr->InputCount() - 1);
+      int const num_gp_parameters = ParamField::decode(param_counts);
+      int const fp_param_field = FPParamField::decode(param_counts);
       int num_fp_parameters = fp_param_field;
       bool has_function_descriptor = false;
       SetIsolateDataSlots set_isolate_data_slots = SetIsolateDataSlots::kYes;
@@ -1014,9 +1028,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
 #endif  // V8_ENABLE_WEBASSEMBLY
       RecordSafepoint(instr->reference_map(), pc_offset);
 
-      bool const needs_frame_state =
-          (opcode == kArchCallCFunctionWithFrameState);
-      if (needs_frame_state) {
+      if (instr->HasCallDescriptorFlag(CallDescriptor::kHasExceptionHandler)) {
+        handlers_.push_back({nullptr, pc_offset});
+      }
+      if (instr->HasCallDescriptorFlag(CallDescriptor::kNeedsFrameState)) {
         RecordDeoptInfo(instr, pc_offset);
       }
 
@@ -1064,7 +1079,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ DebugBreak();
       break;
     case kArchNop:
-    case kArchThrowTerminator:
       // don't emit code for nops.
       DCHECK_EQ(LeaveRC, i.OutputRCBit());
       break;
@@ -1088,6 +1102,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       } else {
         __ mr(i.OutputRegister(), fp);
       }
+      break;
+    case kArchRootPointer:
+      __ mr(i.OutputRegister(), kRootRegister);
+      DCHECK_EQ(LeaveRC, i.OutputRCBit());
       break;
 #if V8_ENABLE_WEBASSEMBLY
     case kArchStackPointer:
@@ -1763,10 +1781,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       if (set_overflow_to_min_i32) {
         // Avoid INT32_MAX as an overflow indicator and use INT32_MIN instead,
         // because INT32_MIN allows easier out-of-bounds detection.
-        CRegister cr = cr7;
+        CRegister cr = cr0;
         int crbit = v8::internal::Assembler::encode_crbit(
             cr, static_cast<CRBit>(VXCVI % CRWIDTH));
-        __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr7
+        __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr0
         __ li(kScratchReg, Operand(1));
         __ ShiftLeftU64(kScratchReg, kScratchReg,
                         Operand(31));  // generate INT32_MIN.
@@ -1784,10 +1802,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       if (set_overflow_to_min_u32) {
         // Avoid UINT32_MAX as an overflow indicator and use 0 instead,
         // because 0 allows easier out-of-bounds detection.
-        CRegister cr = cr7;
+        CRegister cr = cr0;
         int crbit = v8::internal::Assembler::encode_crbit(
             cr, static_cast<CRBit>(VXCVI % CRWIDTH));
-        __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr7
+        __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr0
         __ li(kScratchReg, Operand::Zero());
         __ isel(i.OutputRegister(0), kScratchReg, i.OutputRegister(0), crbit);
       }
@@ -1795,14 +1813,14 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
 #define DOUBLE_TO_INT32(op)                                                \
   bool check_conversion = i.OutputCount() > 1;                             \
-  CRegister cr = cr7;                                                      \
+  CRegister cr = cr0;                                                      \
   FPSCRBit fps_bit = VXCVI;                                                \
   int cr_bit = v8::internal::Assembler::encode_crbit(                      \
       cr, static_cast<CRBit>(fps_bit % CRWIDTH));                          \
   __ mtfsb0(fps_bit); /* clear FPSCR:VXCVI bit */                          \
   __ op(kScratchDoubleReg, i.InputDoubleRegister(0));                      \
   __ MovDoubleLowToInt(i.OutputRegister(0), kScratchDoubleReg);            \
-  __ mcrfs(cr, VXCVI); /* extract FPSCR field containing VXCVI into cr7 */ \
+  __ mcrfs(cr, VXCVI); /* extract FPSCR field containing VXCVI into cr0 */ \
   if (check_conversion) {                                                  \
     __ li(i.OutputRegister(1), Operand(1));                                \
     __ isel(i.OutputRegister(1), r0, i.OutputRegister(1), cr_bit);         \
@@ -1823,10 +1841,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ mtfsb0(VXCVI);  // clear FPSCR:VXCVI bit
       __ ConvertDoubleToInt64(i.InputDoubleRegister(0),
                               i.OutputRegister(0), kScratchDoubleReg);
-      CRegister cr = cr7;
+      CRegister cr = cr0;
       int crbit = v8::internal::Assembler::encode_crbit(
           cr, static_cast<CRBit>(VXCVI % CRWIDTH));
-      __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr7
+      __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr0
       // Handle conversion failures (such as overflow).
       if (check_conversion) {
         __ li(i.OutputRegister(1), Operand(1));
@@ -1846,10 +1864,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                                       i.OutputRegister(0), kScratchDoubleReg);
       if (check_conversion) {
         // Set 2nd output to zero if conversion fails.
-        CRegister cr = cr7;
+        CRegister cr = cr0;
         int crbit = v8::internal::Assembler::encode_crbit(
             cr, static_cast<CRBit>(VXCVI % CRWIDTH));
-        __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr7
+        __ mcrfs(cr, VXCVI);  // extract FPSCR field containing VXCVI into cr0
         __ li(i.OutputRegister(1), Operand(1));
         __ isel(i.OutputRegister(1), r0, i.OutputRegister(1), crbit);
       }
@@ -2436,30 +2454,46 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
 #undef EMIT_SIMD_LOAD_SPLAT
 #undef SIMD_LOAD_SPLAT
 
-    case kPPC_F64x2Splat: {
-      __ F64x2Splat(i.OutputSimd128Register(), i.InputDoubleRegister(0),
-                    kScratchReg);
+    case kPPC_FSplat: {
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 32: {
+          __ F32x4Splat(i.OutputSimd128Register(), i.InputDoubleRegister(0),
+                        kScratchDoubleReg, kScratchReg);
+          break;
+        }
+        case 64: {
+          __ F64x2Splat(i.OutputSimd128Register(), i.InputDoubleRegister(0),
+                        kScratchReg);
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
-    case kPPC_F32x4Splat: {
-      __ F32x4Splat(i.OutputSimd128Register(), i.InputDoubleRegister(0),
-                    kScratchDoubleReg, kScratchReg);
-      break;
-    }
-    case kPPC_I64x2Splat: {
-      __ I64x2Splat(i.OutputSimd128Register(), i.InputRegister(0));
-      break;
-    }
-    case kPPC_I32x4Splat: {
-      __ I32x4Splat(i.OutputSimd128Register(), i.InputRegister(0));
-      break;
-    }
-    case kPPC_I16x8Splat: {
-      __ I16x8Splat(i.OutputSimd128Register(), i.InputRegister(0));
-      break;
-    }
-    case kPPC_I8x16Splat: {
-      __ I8x16Splat(i.OutputSimd128Register(), i.InputRegister(0));
+    case kPPC_ISplat: {
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 8: {
+          __ I8x16Splat(i.OutputSimd128Register(), i.InputRegister(0));
+          break;
+        }
+        case 16: {
+          __ I16x8Splat(i.OutputSimd128Register(), i.InputRegister(0));
+          break;
+        }
+        case 32: {
+          __ I32x4Splat(i.OutputSimd128Register(), i.InputRegister(0));
+          break;
+        }
+        case 64: {
+          __ I64x2Splat(i.OutputSimd128Register(), i.InputRegister(0));
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
     case kPPC_FExtractLane: {
@@ -3065,7 +3099,7 @@ void CodeGenerator::AssembleConstructFrame() {
       // efficient initialization of the constant pool pointer register).
       __ StubPrologue(type);
 #if V8_ENABLE_WEBASSEMBLY
-      if (call_descriptor->IsWasmFunctionCall() ||
+      if (call_descriptor->IsAnyWasmFunctionCall() ||
           call_descriptor->IsWasmImportWrapper() ||
           call_descriptor->IsWasmCapiFunction()) {
         // For import wrappers and C-API functions, this stack slot is only used
@@ -3125,13 +3159,38 @@ void CodeGenerator::AssembleConstructFrame() {
         __ bge(&done);
       }
 
-      __ Call(static_cast<intptr_t>(Builtin::kWasmStackOverflow),
-              RelocInfo::WASM_STUB_CALL);
-      // The call does not return, hence we can ignore any references and just
-      // define an empty safepoint.
-      ReferenceMap* reference_map = zone()->New<ReferenceMap>(zone());
-      RecordSafepoint(reference_map);
-      if (v8_flags.debug_code) __ stop();
+      if (v8_flags.experimental_wasm_growable_stacks) {
+        RegList regs_to_save;
+        regs_to_save.set(WasmHandleStackOverflowDescriptor::GapRegister());
+        regs_to_save.set(
+            WasmHandleStackOverflowDescriptor::FrameBaseRegister());
+        for (auto reg : wasm::kGpParamRegisters) regs_to_save.set(reg);
+        __ MultiPush(regs_to_save);
+        DoubleRegList fp_regs_to_save;
+        for (auto reg : wasm::kFpParamRegisters) fp_regs_to_save.set(reg);
+        __ MultiPushF64AndV128(fp_regs_to_save,
+                               Simd128RegList::FromBits(fp_regs_to_save.bits()),
+                               ip, r0);
+        __ mov(WasmHandleStackOverflowDescriptor::GapRegister(),
+               Operand(required_slots * kSystemPointerSize));
+        __ AddS64(
+            WasmHandleStackOverflowDescriptor::FrameBaseRegister(), fp,
+            Operand(call_descriptor->ParameterSlotCount() * kSystemPointerSize +
+                    CommonFrameConstants::kFixedFrameSizeAboveFp));
+        __ CallBuiltin(Builtin::kWasmHandleStackOverflow);
+        __ MultiPopF64AndV128(fp_regs_to_save,
+                              Simd128RegList::FromBits(fp_regs_to_save.bits()),
+                              ip, r0);
+        __ MultiPop(regs_to_save);
+      } else {
+        __ Call(static_cast<intptr_t>(Builtin::kWasmStackOverflow),
+                RelocInfo::WASM_STUB_CALL);
+        // The call does not return, hence we can ignore any references and just
+        // define an empty safepoint.
+        ReferenceMap* reference_map = zone()->New<ReferenceMap>(zone());
+        RecordSafepoint(reference_map);
+        if (v8_flags.debug_code) __ stop();
+      }
 
       __ bind(&done);
     }
@@ -3210,6 +3269,43 @@ void CodeGenerator::AssembleReturn(InstructionOperand* additional_pop_count) {
       __ Assert(eq, AbortReason::kUnexpectedAdditionalPopValue);
     }
   }
+
+#if V8_ENABLE_WEBASSEMBLY
+  if (call_descriptor->IsAnyWasmFunctionCall() &&
+      v8_flags.experimental_wasm_growable_stacks) {
+    {
+      UseScratchRegisterScope temps{masm()};
+      Register scratch = temps.Acquire();
+      __ LoadU64(scratch,
+                 MemOperand(fp, TypedFrameConstants::kFrameTypeOffset));
+      __ CmpU64(
+          scratch,
+          Operand(StackFrame::TypeToMarker(StackFrame::WASM_SEGMENT_START)),
+          r0);
+    }
+    Label done;
+    __ bne(&done);
+    RegList regs_to_save;
+    for (auto reg : wasm::kGpReturnRegisters) regs_to_save.set(reg);
+    __ MultiPush(regs_to_save);
+    DoubleRegList fp_regs_to_save;
+    for (auto reg : wasm::kFpParamRegisters) fp_regs_to_save.set(reg);
+    __ MultiPushF64AndV128(fp_regs_to_save,
+                           Simd128RegList::FromBits(fp_regs_to_save.bits()), ip,
+                           r0);
+    __ Move(kCArgRegs[0], ExternalReference::isolate_address());
+    __ PrepareCallCFunction(1, r0);
+    __ CallCFunction(ExternalReference::wasm_shrink_stack(), 1);
+    // Restore old FP. We don't need to restore old SP explicitly, because
+    // it will be restored from FP in LeaveFrame before return.
+    __ mr(fp, kReturnRegister0);
+    __ MultiPopF64AndV128(fp_regs_to_save,
+                          Simd128RegList::FromBits(fp_regs_to_save.bits()), ip,
+                          r0);
+    __ MultiPop(regs_to_save);
+    __ bind(&done);
+  }
+#endif  // V8_ENABLE_WEBASSEMBLY
 
   Register argc_reg = r6;
   // Functions with JS linkage have at least one parameter (the receiver).

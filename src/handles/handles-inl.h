@@ -5,10 +5,12 @@
 #ifndef V8_HANDLES_HANDLES_INL_H_
 #define V8_HANDLES_HANDLES_INL_H_
 
+#include "src/handles/handles.h"
+// Include the non-inl header before the rest of the headers.
+
 #include "src/base/sanitizer/msan.h"
 #include "src/execution/isolate.h"
 #include "src/execution/local-isolate.h"
-#include "src/handles/handles.h"
 #include "src/handles/local-handles-inl.h"
 #include "src/objects/casting.h"
 #include "src/objects/objects.h"
@@ -46,7 +48,7 @@ Handle<T> Handle<T>::New(Tagged<T> object, Isolate* isolate) {
 }
 
 template <typename T, typename U>
-inline bool Is(Handle<U> value) {
+inline bool Is(IndirectHandle<U> value) {
   return value.is_null() || Is<T>(*value);
 }
 template <typename To, typename From>
@@ -67,40 +69,40 @@ Handle<T>::Handle(Tagged<T> object, LocalHeap* local_heap)
     : HandleBase(object.ptr(), local_heap) {}
 
 template <typename T>
-V8_INLINE Handle<T> handle(Tagged<T> object, Isolate* isolate) {
+V8_INLINE IndirectHandle<T> handle(Tagged<T> object, Isolate* isolate) {
   return Handle<T>(object, isolate);
 }
 
 template <typename T>
-V8_INLINE Handle<T> handle(Tagged<T> object, LocalIsolate* isolate) {
+V8_INLINE IndirectHandle<T> handle(Tagged<T> object, LocalIsolate* isolate) {
   return Handle<T>(object, isolate);
 }
 
 template <typename T>
-V8_INLINE Handle<T> handle(Tagged<T> object, LocalHeap* local_heap) {
+V8_INLINE IndirectHandle<T> handle(Tagged<T> object, LocalHeap* local_heap) {
   return Handle<T>(object, local_heap);
 }
 
 template <typename T>
-V8_INLINE Handle<T> handle(T object, Isolate* isolate) {
+V8_INLINE IndirectHandle<T> handle(T object, Isolate* isolate) {
   static_assert(kTaggedCanConvertToRawObjects);
   return handle(Tagged<T>(object), isolate);
 }
 
 template <typename T>
-V8_INLINE Handle<T> handle(T object, LocalIsolate* isolate) {
+V8_INLINE IndirectHandle<T> handle(T object, LocalIsolate* isolate) {
   static_assert(kTaggedCanConvertToRawObjects);
   return handle(Tagged<T>(object), isolate);
 }
 
 template <typename T>
-V8_INLINE Handle<T> handle(T object, LocalHeap* local_heap) {
+V8_INLINE IndirectHandle<T> handle(T object, LocalHeap* local_heap) {
   static_assert(kTaggedCanConvertToRawObjects);
   return handle(Tagged<T>(object), local_heap);
 }
 
 template <typename T>
-inline std::ostream& operator<<(std::ostream& os, Handle<T> handle) {
+inline std::ostream& operator<<(std::ostream& os, IndirectHandle<T> handle) {
   return os << Brief(*handle);
 }
 
@@ -236,7 +238,7 @@ void HandleScope::CloseScope(Isolate* isolate, Address* prev_next,
     limit = prev_limit;
     DeleteExtensions(isolate);
   }
-#ifdef ENABLE_HANDLE_ZAPPING
+#ifdef ENABLE_LOCAL_HANDLE_ZAPPING
   ZapRange(current->next, limit);
 #endif
   MSAN_ALLOCATED_UNINITIALIZED_MEMORY(
@@ -250,7 +252,8 @@ void HandleScope::CloseScope(Isolate* isolate, Address* prev_next,
 #endif
 }
 
-template <typename T, template <typename> typename HandleType, typename>
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
 HandleType<T> HandleScope::CloseAndEscape(HandleType<T> handle_value) {
   HandleScopeData* current = isolate_->handle_scope_data();
   Tagged<T> value = *handle_value;
@@ -272,6 +275,7 @@ HandleType<T> HandleScope::CloseAndEscape(HandleType<T> handle_value) {
 
 Address* HandleScope::CreateHandle(Isolate* isolate, Address value) {
   DCHECK(AllowHandleAllocation::IsAllowed());
+  DCHECK_EQ(isolate, Isolate::TryGetCurrent());
 #ifdef DEBUG
   if (!AllowHandleUsageOnAllThreads::IsAllowed()) {
     DCHECK(isolate->main_thread_local_heap()->IsRunning());
@@ -279,7 +283,16 @@ Address* HandleScope::CreateHandle(Isolate* isolate, Address value) {
         isolate->thread_id() == ThreadId::Current(),
         "main-thread handle can only be created on the main thread.");
   }
-#endif
+  // We should only allocate handles for objects that can be referenced from the
+  // isolate's heap.
+#ifdef ENABLE_SLOW_DCHECKS
+  if (!HAS_SMI_TAG(value)) {
+    DCHECK(HAS_STRONG_HEAP_OBJECT_TAG(value));
+    Tagged<HeapObject> obj = UncheckedCast<HeapObject>(Tagged<Object>{value});
+    SLOW_DCHECK(isolate->heap()->CanReferenceHeapObject(obj));
+  }
+#endif  // ENABLE_SLOW_DCHECKS
+#endif  // DEBUG
   HandleScopeData* data = isolate->handle_scope_data();
   Address* result = data->next;
   if (V8_UNLIKELY(result == data->limit)) {

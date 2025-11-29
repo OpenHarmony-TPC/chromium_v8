@@ -181,7 +181,7 @@ LiftoffAssembler::CacheState LiftoffAssembler::MergeIntoNewState(
 
   uint32_t target_height = num_locals + stack_depth + arity;
 
-  target.stack_state.resize_no_init(target_height);
+  target.stack_state.resize(target_height);
 
   const VarState* source_begin = cache_state_.stack_state.data();
   VarState* target_begin = target.stack_state.data();
@@ -770,6 +770,7 @@ void LiftoffAssembler::PrepareCall(const ValueKindSig* sig,
                                    compiler::CallDescriptor* call_descriptor,
                                    Register* target,
                                    Register target_instance_data) {
+  ASM_CODE_COMMENT(this);
   uint32_t num_params = static_cast<uint32_t>(sig->parameter_count());
 
   LiftoffStackSlots stack_slots{this};
@@ -806,14 +807,13 @@ void LiftoffAssembler::PrepareCall(const ValueKindSig* sig,
   if (target && param_regs.has(LiftoffRegister(*target))) {
     // Try to find another free register.
     LiftoffRegList free_regs = kGpCacheRegList.MaskOut(param_regs);
+    static_assert(sizeof(WasmCodePointer) == kUInt32Size);
     if (!free_regs.is_empty()) {
       LiftoffRegister new_target = free_regs.GetFirstRegSet();
-      parallel_move.MoveRegister(new_target, LiftoffRegister(*target),
-                                 kIntPtrKind);
+      parallel_move.MoveRegister(new_target, LiftoffRegister(*target), kI32);
       *target = new_target.gp();
     } else {
-      stack_slots.Add(VarState(kIntPtrKind, LiftoffRegister(*target), 0),
-                      param_slots);
+      stack_slots.Add(VarState(kI32, LiftoffRegister(*target), 0), param_slots);
       param_slots++;
       *target = no_reg;
     }
@@ -884,6 +884,13 @@ void LiftoffAssembler::FinishCall(const ValueKindSig* sig,
         DCHECK(!loc.IsAnyRegister());
         reg_pair[pair_idx] = LiftoffRegister::from_external_code(
             rc, lowered_kind, loc.AsRegister());
+#if V8_TARGET_ARCH_64_BIT
+        // See explanation in `LiftoffCompiler::ParameterProcessor`.
+        if (return_kind == kI32) {
+          DCHECK(!needs_gp_pair);
+          clear_i32_upper_half(reg_pair[0].gp());
+        }
+#endif
       } else {
         DCHECK(loc.IsCallerFrameSlot());
         reg_pair[pair_idx] = GetUnusedRegister(rc, pinned);

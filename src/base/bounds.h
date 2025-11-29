@@ -19,7 +19,7 @@ template <typename T, typename U>
           (sizeof(U) <= sizeof(T))
 inline constexpr bool IsInRange(T value, U lower_limit, U higher_limit) {
   DCHECK_LE(lower_limit, higher_limit);
-  using unsigned_T = typename std::make_unsigned<T>::type;
+  using unsigned_T = std::make_unsigned_t<T>;
   // Use static_cast to support enum classes.
   return static_cast<unsigned_T>(static_cast<unsigned_T>(value) -
                                  static_cast<unsigned_T>(lower_limit)) <=
@@ -35,7 +35,7 @@ template <typename T, typename U>
 inline constexpr bool IsInHalfOpenRange(T value, U lower_limit,
                                         U higher_limit) {
   DCHECK_LE(lower_limit, higher_limit);
-  using unsigned_T = typename std::make_unsigned<T>::type;
+  using unsigned_T = std::make_unsigned_t<T>;
   // Use static_cast to support enum classes.
   return static_cast<unsigned_T>(static_cast<unsigned_T>(value) -
                                  static_cast<unsigned_T>(lower_limit)) <
@@ -45,9 +45,10 @@ inline constexpr bool IsInHalfOpenRange(T value, U lower_limit,
 
 // Checks if [index, index+length) is in range [0, max). Note that this check
 // works even if {index+length} would wrap around.
-template <typename T,
-          typename = typename std::enable_if<std::is_unsigned<T>::value>::type>
-inline constexpr bool IsInBounds(T index, T length, T max) {
+template <typename T>
+inline constexpr bool IsInBounds(T index, T length, T max)
+  requires std::is_unsigned_v<T>
+{
   return length <= max && index <= (max - length);
 }
 

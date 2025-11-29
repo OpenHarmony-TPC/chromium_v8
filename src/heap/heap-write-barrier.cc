@@ -48,6 +48,9 @@ MarkingBarrier* WriteBarrier::SetForThread(MarkingBarrier* marking_barrier) {
 
 void WriteBarrier::MarkingSlow(Tagged<HeapObject> host, HeapObjectSlot slot,
                                Tagged<HeapObject> value) {
+  SLOW_DCHECK_IMPLIES(kUninterestingPagesCanBeSkipped,
+                      MemoryChunk::FromHeapObject(host)->GetFlags() &
+                          MemoryChunk::kPointersFromHereAreInterestingMask);
   MarkingBarrier* marking_barrier = CurrentMarkingBarrier(host);
   marking_barrier->Write(host, slot, value);
 }
@@ -59,10 +62,9 @@ void WriteBarrier::MarkingSlowFromTracedHandle(Tagged<HeapObject> value) {
 }
 
 // static
-void WriteBarrier::MarkingSlowFromCppHeapWrappable(Heap* heap,
-                                                   Tagged<JSObject> host,
-                                                   CppHeapPointerSlot slot,
-                                                   void* object) {
+void WriteBarrier::MarkingSlowFromCppHeapWrappable(
+    Heap* heap, Tagged<CppHeapPointerWrapperObjectT> host,
+    CppHeapPointerSlot slot, void* object) {
   // Note: this is currently a combined barrier for marking both the
   // CppHeapPointerTable entry and the referenced object (if any).
 
@@ -142,9 +144,10 @@ void WriteBarrier::MarkingSlow(Tagged<HeapObject> host,
   MarkingBarrier* marking_barrier = CurrentMarkingBarrier(host);
   IsolateForPointerCompression isolate(marking_barrier->heap()->isolate());
 
-  ExternalPointerTable& table = isolate.GetExternalPointerTableFor(slot.tag());
+  ExternalPointerTable& table =
+      isolate.GetExternalPointerTableFor(slot.tag_range());
   ExternalPointerTable::Space* space =
-      isolate.GetExternalPointerTableSpaceFor(slot.tag(), host.address());
+      isolate.GetExternalPointerTableSpaceFor(slot.tag_range(), host.address());
 
   ExternalPointerHandle handle = slot.Relaxed_LoadHandle();
   table.Mark(space, handle, slot.address());
@@ -177,7 +180,7 @@ void WriteBarrier::MarkingSlow(Tagged<HeapObject> host,
   if (marking_barrier->is_minor()) return;
 
   // Mark both the table entry and its content.
-  JSDispatchTable* jdt = GetProcessWideJSDispatchTable();
+  JSDispatchTable* jdt = IsolateGroup::current()->js_dispatch_table();
   static_assert(JSDispatchTable::kWriteBarrierSetsEntryMarkBit);
   jdt->Mark(handle);
   marking_barrier->MarkValue(host, jdt->GetCode(handle));
@@ -336,6 +339,9 @@ void WriteBarrier::GenerationalBarrierForCodeSlow(
 // static
 void WriteBarrier::CombinedGenerationalAndSharedEphemeronBarrierSlow(
     Tagged<EphemeronHashTable> table, Address slot, Tagged<HeapObject> value) {
+  SLOW_DCHECK_IMPLIES(kUninterestingPagesCanBeSkipped,
+                      MemoryChunk::FromHeapObject(table)->GetFlags() &
+                          MemoryChunk::kPointersFromHereAreInterestingMask);
   if (HeapLayout::InYoungGeneration(value)) {
     MutablePageMetadata* table_chunk =
         MutablePageMetadata::FromHeapObject(table);
@@ -482,10 +488,12 @@ template <typename TSlot>
 // static
 void WriteBarrier::ForRange(Heap* heap, Tagged<HeapObject> object,
                             TSlot start_slot, TSlot end_slot) {
-  if (v8_flags.disable_write_barriers) return;
+  if (v8_flags.disable_write_barriers) {
+    return;
+  }
   MemoryChunk* source_chunk = MemoryChunk::FromHeapObject(object);
-  base::Flags<RangeWriteBarrierMode> mode;
 
+  base::Flags<RangeWriteBarrierMode> mode;
   if (!HeapLayout::InYoungGeneration(object) &&
       !source_chunk->InWritableSharedSpace()) {
     mode |= kDoGenerationalOrShared;
@@ -535,9 +543,9 @@ bool WriteBarrier::VerifyDispatchHandleMarkingState(Tagged<HeapObject> host,
                                                     JSDispatchHandle handle,
                                                     WriteBarrierMode mode) {
 #ifdef V8_ENABLE_LEAPTIERING
+  JSDispatchTable* jdt = IsolateGroup::current()->js_dispatch_table();
   if (mode == SKIP_WRITE_BARRIER &&
-      WriteBarrier::IsRequired(
-          host, GetProcessWideJSDispatchTable()->GetCode(handle))) {
+      WriteBarrier::IsRequired(host, jdt->GetCode(handle))) {
     return false;
   }
 
@@ -551,10 +559,10 @@ bool WriteBarrier::VerifyDispatchHandleMarkingState(Tagged<HeapObject> host,
       !CurrentMarkingBarrier(host)->IsMarked(host)) {
     return true;
   }
-  if (GetProcessWideJSDispatchTable()->IsMarked(handle)) {
+  if (jdt->IsMarked(handle)) {
     return true;
   }
-  Tagged<Code> value = GetProcessWideJSDispatchTable()->GetCode(handle);
+  Tagged<Code> value = jdt->GetCode(handle);
   if (ReadOnlyHeap::Contains(value)) {
     return true;
   }

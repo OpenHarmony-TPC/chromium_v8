@@ -216,7 +216,7 @@ std::string PrintCheckOperand(T val) {
 // Define PrintCheckOperand<T> for each T which defines operator<< for ostream,
 // except types explicitly specialized below.
 template <typename T>
-  requires(!std::is_function_v<typename std::remove_pointer<T>::type> &&
+  requires(!std::is_function_v<std::remove_pointer_t<T>> &&
            !std::is_enum_v<T> && has_output_operator<T, CheckMessageStream>)
 std::string PrintCheckOperand(T val) {
   return detail::PrintToString(std::forward<T>(val));
@@ -330,21 +330,20 @@ EXPLICIT_CHECK_OP_INSTANTIATION(void const*)
 #undef EXPLICIT_CHECK_OP_INSTANTIATION
 
 // comparison_underlying_type provides the underlying integral type of an enum,
-// or std::decay<T>::type if T is not an enum. Booleans are converted to
+// or std::decay_t<T> if T is not an enum. Booleans are converted to
 // "unsigned int", to allow "unsigned int == bool" comparisons.
 template <typename T>
 struct comparison_underlying_type {
   // std::underlying_type must only be used with enum types, thus use this
   // {Dummy} type if the given type is not an enum.
   enum Dummy {};
-  using decay = typename std::decay<T>::type;
+  using decay = std::decay_t<T>;
   static constexpr bool is_enum = std::is_enum_v<decay>;
-  using underlying = typename std::underlying_type<
-      typename std::conditional<is_enum, decay, Dummy>::type>::type;
-  using type_or_bool =
-      typename std::conditional<is_enum, underlying, decay>::type;
-  using type = typename std::conditional<std::is_same_v<type_or_bool, bool>,
-                                         unsigned int, type_or_bool>::type;
+  using underlying =
+      std::underlying_type_t<std::conditional_t<is_enum, decay, Dummy>>;
+  using type_or_bool = std::conditional_t<is_enum, underlying, decay>;
+  using type = std::conditional_t<std::is_same_v<type_or_bool, bool>,
+                                  unsigned int, type_or_bool>;
 };
 // Cast a value to its underlying type
 #define MAKE_UNDERLYING(Type, value) \
@@ -391,9 +390,9 @@ DEFINE_CMP_IMPL(GT, >)
 
 // Specialize the compare functions for signed vs. unsigned comparisons (via the
 // `requires` clause).
-#define MAKE_UNSIGNED(Type, value)         \
-  static_cast<typename std::make_unsigned< \
-      typename comparison_underlying_type<Type>::type>::type>(value)
+#define MAKE_UNSIGNED(Type, value)           \
+  static_cast<typename std::make_unsigned_t< \
+      typename comparison_underlying_type<Type>::type>>(value)
 #define DEFINE_SIGNED_MISMATCH_COMP(CHECK, NAME, IMPL)         \
   template <typename Lhs, typename Rhs>                        \
     requires(CHECK<Lhs, Rhs>::value)                           \
@@ -442,12 +441,6 @@ DEFINE_CHECK_OP_IMPL(GE)
 DEFINE_CHECK_OP_IMPL(GT)
 #undef DEFINE_CHECK_OP_IMPL
 
-// For CHECK_BOUNDS, define to-unsigned conversion helpers.
-template <typename T>
-constexpr std::make_unsigned_t<T> ToUnsigned(T val) {
-  return static_cast<std::make_unsigned_t<T>>(val);
-}
-
 #define CHECK_EQ(lhs, rhs) CHECK_OP(EQ, ==, lhs, rhs)
 #define CHECK_NE(lhs, rhs) CHECK_OP(NE, !=, lhs, rhs)
 #define CHECK_LE(lhs, rhs) CHECK_OP(LE, <=, lhs, rhs)
@@ -460,8 +453,9 @@ constexpr std::make_unsigned_t<T> ToUnsigned(T val) {
   CHECK_WITH_MSG(!(lhs) || (rhs), #lhs " implies " #rhs)
 // Performs a single (unsigned) comparison to check that {index} is
 // in range [0, limit).
-#define CHECK_BOUNDS(index, limit) \
-  CHECK_LT(v8::base::ToUnsigned(index), v8::base::ToUnsigned(limit))
+#define CHECK_BOUNDS(index, limit)                                    \
+  CHECK_LT(static_cast<std::make_unsigned_t<decltype(index)>>(index), \
+           static_cast<std::make_unsigned_t<decltype(limit)>>(limit))
 
 }  // namespace base
 }  // namespace v8
@@ -480,8 +474,9 @@ constexpr std::make_unsigned_t<T> ToUnsigned(T val) {
 #define DCHECK_NOT_NULL(val) DCHECK((val) != nullptr)
 #define DCHECK_IMPLIES(lhs, rhs) \
   DCHECK_WITH_MSG(!(lhs) || (rhs), #lhs " implies " #rhs)
-#define DCHECK_BOUNDS(index, limit) \
-  DCHECK_LT(v8::base::ToUnsigned(index), v8::base::ToUnsigned(limit))
+#define DCHECK_BOUNDS(index, limit)                                    \
+  DCHECK_LT(static_cast<std::make_unsigned_t<decltype(index)>>(index), \
+            static_cast<std::make_unsigned_t<decltype(limit)>>(limit))
 #else
 #define DCHECK(condition)      ((void) 0)
 #define DCHECK_WITH_LOC(condition, location) ((void)0)

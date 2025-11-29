@@ -53,6 +53,51 @@ FieldAccess AccessBuilder::ForHeapNumberValue() {
 }
 
 // static
+FieldAccess AccessBuilder::ForContextCellState() {
+  FieldAccess access = {
+      kTaggedBase,      offsetof(ContextCell, state_), MaybeHandle<Name>(),
+      OptionalMapRef(), TypeCache::Get()->kInt32,      MachineType::Int32(),
+      kNoWriteBarrier,  "ForContextCellState"};
+  return access;
+}
+
+// static
+FieldAccess AccessBuilder::ForContextCellTaggedValue() {
+  FieldAccess access = {
+      kTaggedBase,         offsetof(ContextCell, tagged_value_),
+      MaybeHandle<Name>(), OptionalMapRef(),
+      Type::Any(),         MachineType::AnyTagged(),
+      kFullWriteBarrier,   "ForContextCellTaggedValue"};
+  return access;
+}
+
+// static
+FieldAccess AccessBuilder::ForContextCellInt32Value() {
+  FieldAccess access = {kTaggedBase,
+                        offsetof(ContextCell, double_value_),
+                        MaybeHandle<Name>(),
+                        OptionalMapRef(),
+                        TypeCache::Get()->kInt32,
+                        MachineType::Int32(),
+                        kNoWriteBarrier,
+                        "ForContextCellInt32Value"};
+  return access;
+}
+
+// static
+FieldAccess AccessBuilder::ForContextCellFloat64Value() {
+  FieldAccess access = {kTaggedBase,
+                        offsetof(ContextCell, double_value_),
+                        MaybeHandle<Name>(),
+                        OptionalMapRef(),
+                        TypeCache::Get()->kFloat64,
+                        MachineType::Float64(),
+                        kNoWriteBarrier,
+                        "ContextCellFloat64Value"};
+  return access;
+}
+
+// static
 FieldAccess AccessBuilder::ForHeapNumberOrOddballOrHoleValue() {
   STATIC_ASSERT_FIELD_OFFSETS_EQUAL(offsetof(HeapNumber, value_),
                                     offsetof(Oddball, to_number_raw_));
@@ -602,11 +647,15 @@ FieldAccess AccessBuilder::ForJSDateValue() {
 
 // static
 FieldAccess AccessBuilder::ForJSDateField(JSDate::FieldIndex index) {
-  FieldAccess access = {
-      kTaggedBase,         JSDate::kYearOffset + index * kTaggedSize,
-      MaybeHandle<Name>(), OptionalMapRef(),
-      Type::Number(),      MachineType::AnyTagged(),
-      kFullWriteBarrier,   "JSDateField"};
+  DCHECK_LT(index, JSDate::kFirstUncachedField);
+  FieldAccess access = {kTaggedBase,
+                        JSDate::kYearOffset + index * kTaggedSize,
+                        MaybeHandle<Name>(),
+                        OptionalMapRef(),
+                        TypeCache::Get()->kJSDateFields[index],
+                        MachineType::AnyTagged(),
+                        kFullWriteBarrier,
+                        "JSDateField"};
   return access;
 }
 
@@ -1196,7 +1245,11 @@ ElementAccess AccessBuilder::ForFixedArrayElement(ElementsKind kind) {
       access.machine_type = MachineType::Float64();
       break;
     case HOLEY_DOUBLE_ELEMENTS:
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+      access.type = Type::NumberOrUndefinedOrHole();
+#else
       access.type = Type::NumberOrHole();
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
       access.write_barrier_kind = kNoWriteBarrier;
       access.machine_type = MachineType::Float64();
       break;
@@ -1270,8 +1323,13 @@ ElementAccess AccessBuilder::ForTypedArrayElement(ExternalArrayType type,
       return access;
     }
     case kExternalFloat16Array: {
-      // TODO(v8:14012): support machine logic
-      UNIMPLEMENTED();
+      // Accesses to Float16Array use float16 raw bits because spotty native
+      // fp16 support across architectures. See
+      // MachineRepresentation::kFloat16RawBits, which is used during simplified
+      // lowering to insert the correct conversions.
+      ElementAccess access = {taggedness, header_size, Type::Number(),
+                              MachineType::Uint16(), kNoWriteBarrier};
+      return access;
     }
     case kExternalFloat32Array: {
       ElementAccess access = {taggedness, header_size, Type::Number(),
@@ -1554,16 +1612,6 @@ FieldAccess AccessBuilder::ForWasmDispatchTableLength() {
           "WasmDispatchTableLength"};
 }
 #endif  // V8_ENABLE_WEBASSEMBLY
-
-// static
-FieldAccess AccessBuilder::ForContextSideProperty() {
-  FieldAccess access = {
-      kTaggedBase,         ContextSidePropertyCell::kPropertyDetailsRawOffset,
-      MaybeHandle<Name>(), OptionalMapRef(),
-      Type::SignedSmall(), MachineType::TaggedSigned(),
-      kNoWriteBarrier,     "ContextSidePropertyDetails"};
-  return access;
-}
 
 }  // namespace compiler
 }  // namespace internal

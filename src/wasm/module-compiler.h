@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_WASM_MODULE_COMPILER_H_
+#define V8_WASM_MODULE_COMPILER_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
-
-#ifndef V8_WASM_MODULE_COMPILER_H_
-#define V8_WASM_MODULE_COMPILER_H_
 
 #include <atomic>
 #include <functional>
@@ -56,7 +56,7 @@ std::shared_ptr<NativeModule> CompileToNativeModule(
     Isolate* isolate, WasmEnabledFeatures enabled_features,
     WasmDetectedFeatures detected_features, CompileTimeImports compile_imports,
     ErrorThrower* thrower, std::shared_ptr<const WasmModule> module,
-    ModuleWireBytes wire_bytes, int compilation_id,
+    base::OwnedVector<const uint8_t> wire_bytes, int compilation_id,
     v8::metrics::Recorder::ContextId context_id, ProfileInformation* pgo_info);
 
 V8_EXPORT_PRIVATE WasmError ValidateAndSetBuiltinImports(
@@ -67,12 +67,9 @@ V8_EXPORT_PRIVATE WasmError ValidateAndSetBuiltinImports(
 // cache entry. Assumes the key already exists in the cache but has not been
 // compiled yet.
 V8_EXPORT_PRIVATE
-WasmCode* CompileImportWrapperForTest(Isolate* isolate,
-                                      NativeModule* native_module,
-                                      ImportCallKind kind,
-                                      const CanonicalSig* sig,
-                                      CanonicalTypeIndex type_index,
-                                      int expected_arity, Suspend suspend);
+std::shared_ptr<wasm::WasmImportWrapperHandle> CompileImportWrapperForTest(
+    Isolate* isolate, ImportCallKind kind, const CanonicalSig* sig,
+    CanonicalTypeIndex type_index, int expected_arity, Suspend suspend);
 
 // Triggered by the WasmCompileLazy builtin. The return value indicates whether
 // compilation was successful. Lazy compilation can fail only if validation is
@@ -133,7 +130,7 @@ class AsyncCompileJob {
 
   Isolate* isolate() const { return isolate_; }
 
-  Handle<NativeContext> context() const { return native_context_; }
+  DirectHandle<NativeContext> context() const { return native_context_; }
   v8::metrics::Recorder::ContextId context_id() const { return context_id_; }
 
  private:
@@ -183,7 +180,7 @@ class AsyncCompileJob {
 
   void Failed();
 
-  void AsyncCompileSucceeded(Handle<WasmModuleObject> result);
+  void AsyncCompileSucceeded(DirectHandle<WasmModuleObject> result);
 
   void FinishSuccessfully();
 
@@ -224,7 +221,6 @@ class AsyncCompileJob {
   const WasmEnabledFeatures enabled_features_;
   WasmDetectedFeatures detected_features_;
   CompileTimeImports compile_imports_;
-  const DynamicTiering dynamic_tiering_;
   base::TimeTicks start_time_;
   // Copy of the module wire bytes, moved into the {native_module_} on its
   // creation.

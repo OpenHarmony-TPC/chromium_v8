@@ -20,6 +20,8 @@ namespace cppgc {
 
 namespace subtle {
 class HeapConsistency;
+template <typename, typename, typename>
+class TaggedUncompressedMember;
 }  // namespace subtle
 
 class Visitor;
@@ -116,7 +118,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
   // need to be adjusted.
   template <typename U, typename OtherBarrierPolicy, typename OtherWeaknessTag,
             typename OtherCheckingPolicy,
-            std::enable_if_t<internal::IsDecayedSameV<T, U>>* = nullptr>
+            std::enable_if_t<IsDecayedSameV<T, U>>* = nullptr>
   V8_INLINE BasicMember(  // NOLINT
       const BasicMember<U, OtherWeaknessTag, OtherBarrierPolicy,
                         OtherCheckingPolicy, StorageType>& other)
@@ -124,7 +126,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
 
   template <typename U, typename OtherBarrierPolicy, typename OtherWeaknessTag,
             typename OtherCheckingPolicy,
-            std::enable_if_t<internal::IsStrictlyBaseOfV<T, U>>* = nullptr>
+            std::enable_if_t<IsStrictlyBaseOfV<T, U>>* = nullptr>
   V8_INLINE BasicMember(  // NOLINT
       const BasicMember<U, OtherWeaknessTag, OtherBarrierPolicy,
                         OtherCheckingPolicy, StorageType>& other)
@@ -141,7 +143,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
   // need to be adjusted.
   template <typename U, typename OtherBarrierPolicy, typename OtherWeaknessTag,
             typename OtherCheckingPolicy,
-            std::enable_if_t<internal::IsDecayedSameV<T, U>>* = nullptr>
+            std::enable_if_t<IsDecayedSameV<T, U>>* = nullptr>
   V8_INLINE BasicMember(
       BasicMember<U, OtherWeaknessTag, OtherBarrierPolicy, OtherCheckingPolicy,
                   StorageType>&& other) noexcept
@@ -151,7 +153,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
 
   template <typename U, typename OtherBarrierPolicy, typename OtherWeaknessTag,
             typename OtherCheckingPolicy,
-            std::enable_if_t<internal::IsStrictlyBaseOfV<T, U>>* = nullptr>
+            std::enable_if_t<IsStrictlyBaseOfV<T, U>>* = nullptr>
   V8_INLINE BasicMember(
       BasicMember<U, OtherWeaknessTag, OtherBarrierPolicy, OtherCheckingPolicy,
                   StorageType>&& other) noexcept
@@ -163,7 +165,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
   template <typename U, typename PersistentWeaknessPolicy,
             typename PersistentLocationPolicy,
             typename PersistentCheckingPolicy,
-            typename = std::enable_if_t<std::is_base_of<T, U>::value>>
+            typename = std::enable_if_t<std::is_base_of_v<T, U>>>
   V8_INLINE BasicMember(const BasicPersistent<U, PersistentWeaknessPolicy,
                                               PersistentLocationPolicy,
                                               PersistentCheckingPolicy>& p)
@@ -182,10 +184,10 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
   V8_INLINE BasicMember& operator=(
       const BasicMember<U, OtherWeaknessTag, OtherBarrierPolicy,
                         OtherCheckingPolicy, StorageType>& other) {
-    if constexpr (internal::IsDecayedSameV<T, U>) {
+    if constexpr (IsDecayedSameV<T, U>) {
       return operator=(other.GetRawStorage());
     } else {
-      static_assert(internal::IsStrictlyBaseOfV<T, U>);
+      static_assert(IsStrictlyBaseOfV<T, U>);
       return operator=(other.Get());
     }
   }
@@ -205,10 +207,10 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
   V8_INLINE BasicMember& operator=(
       BasicMember<U, OtherWeaknessTag, OtherBarrierPolicy, OtherCheckingPolicy,
                   StorageType>&& other) noexcept {
-    if constexpr (internal::IsDecayedSameV<T, U>) {
+    if constexpr (IsDecayedSameV<T, U>) {
       operator=(other.GetRawStorage());
     } else {
-      static_assert(internal::IsStrictlyBaseOfV<T, U>);
+      static_assert(IsStrictlyBaseOfV<T, U>);
       operator=(other.Get());
     }
     other.Clear();
@@ -219,7 +221,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
   template <typename U, typename PersistentWeaknessPolicy,
             typename PersistentLocationPolicy,
             typename PersistentCheckingPolicy,
-            typename = std::enable_if_t<std::is_base_of<T, U>::value>>
+            typename = std::enable_if_t<std::is_base_of_v<T, U>>>
   V8_INLINE BasicMember& operator=(
       const BasicPersistent<U, PersistentWeaknessPolicy,
                             PersistentLocationPolicy, PersistentCheckingPolicy>&
@@ -269,9 +271,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
     return static_cast<T*>(const_cast<void*>(Base::GetRaw()));
   }
 
-  V8_INLINE void Clear() {
-    Base::SetRawStorageAtomic(RawStorage{});
-  }
+  V8_INLINE void Clear() { Base::SetRawStorageAtomic(RawStorage{}); }
 
   V8_INLINE T* Release() {
     T* result = Get();
@@ -283,9 +283,7 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
     return reinterpret_cast<const T**>(Base::GetRawSlot());
   }
 
-  V8_INLINE RawStorage GetRawStorage() const {
-    return Base::GetRawStorage();
-  }
+  V8_INLINE RawStorage GetRawStorage() const { return Base::GetRawStorage(); }
 
  private:
   V8_INLINE explicit BasicMember(RawStorage raw) : Base(raw) {
@@ -300,8 +298,10 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
     return *this;
   }
 
-  V8_INLINE const T* GetRawAtomic() const {
-    return static_cast<const T*>(Base::GetRawAtomic());
+  V8_INLINE const void* GetRawAtomic() const { return Base::GetRawAtomic(); }
+
+  V8_INLINE const T* GetAtomic() const {
+    return static_cast<const T*>(GetRawAtomic());
   }
 
   V8_INLINE void InitializingWriteBarrier(T* value) const {
@@ -332,6 +332,8 @@ class V8_TRIVIAL_ABI BasicMember final : private MemberBase<StorageType>,
   V8_INLINE T* GetFromGC() const { return Get(); }
 
   friend class cppgc::subtle::HeapConsistency;
+  template <typename, typename, typename>
+  friend class cppgc::subtle::TaggedUncompressedMember;
   friend class cppgc::Visitor;
   template <typename U>
   friend struct cppgc::TraceTrait;
@@ -350,12 +352,11 @@ V8_INLINE bool operator==(
                       StorageType>& member1,
     const BasicMember<T2, WeaknessTag2, WriteBarrierPolicy2, CheckingPolicy2,
                       StorageType>& member2) {
-  if constexpr (internal::IsDecayedSameV<T1, T2>) {
+  if constexpr (IsDecayedSameV<T1, T2>) {
     // Check compressed pointers if types are the same.
     return member1.GetRawStorage() == member2.GetRawStorage();
   } else {
-    static_assert(internal::IsStrictlyBaseOfV<T1, T2> ||
-                  internal::IsStrictlyBaseOfV<T2, T1>);
+    static_assert(IsStrictlyBaseOfV<T1, T2> || IsStrictlyBaseOfV<T2, T1>);
     // Otherwise, check decompressed pointers.
     return member1.Get() == member2.Get();
   }
@@ -381,12 +382,12 @@ V8_INLINE bool operator==(
                       StorageType>& member,
     U* raw) {
   // Never allow comparison with erased pointers.
-  static_assert(!internal::IsDecayedSameV<void, U>);
+  static_assert(!IsDecayedSameV<void, U>);
 
-  if constexpr (internal::IsDecayedSameV<T, U>) {
+  if constexpr (IsDecayedSameV<T, U>) {
     // Check compressed pointers if types are the same.
     return member.GetRawStorage() == StorageType(raw);
-  } else if constexpr (internal::IsStrictlyBaseOfV<T, U>) {
+  } else if constexpr (IsStrictlyBaseOfV<T, U>) {
     // Cast the raw pointer to T, which may adjust the pointer.
     return member.GetRawStorage() == StorageType(static_cast<T*>(raw));
   } else {
@@ -503,7 +504,7 @@ V8_INLINE bool operator<(
     const BasicMember<T2, WeaknessTag2, WriteBarrierPolicy2, CheckingPolicy2,
                       StorageType>& member2) {
   static_assert(
-      internal::IsDecayedSameV<T1, T2>,
+      IsDecayedSameV<T1, T2>,
       "Comparison works only for same pointer type modulo cv-qualifiers");
   return member1.GetRawStorage() < member2.GetRawStorage();
 }
@@ -518,7 +519,7 @@ V8_INLINE bool operator<=(
     const BasicMember<T2, WeaknessTag2, WriteBarrierPolicy2, CheckingPolicy2,
                       StorageType>& member2) {
   static_assert(
-      internal::IsDecayedSameV<T1, T2>,
+      IsDecayedSameV<T1, T2>,
       "Comparison works only for same pointer type modulo cv-qualifiers");
   return member1.GetRawStorage() <= member2.GetRawStorage();
 }
@@ -533,7 +534,7 @@ V8_INLINE bool operator>(
     const BasicMember<T2, WeaknessTag2, WriteBarrierPolicy2, CheckingPolicy2,
                       StorageType>& member2) {
   static_assert(
-      internal::IsDecayedSameV<T1, T2>,
+      IsDecayedSameV<T1, T2>,
       "Comparison works only for same pointer type modulo cv-qualifiers");
   return member1.GetRawStorage() > member2.GetRawStorage();
 }
@@ -548,16 +549,15 @@ V8_INLINE bool operator>=(
     const BasicMember<T2, WeaknessTag2, WriteBarrierPolicy2, CheckingPolicy2,
                       StorageType>& member2) {
   static_assert(
-      internal::IsDecayedSameV<T1, T2>,
+      IsDecayedSameV<T1, T2>,
       "Comparison works only for same pointer type modulo cv-qualifiers");
   return member1.GetRawStorage() >= member2.GetRawStorage();
 }
 
 template <typename T, typename WriteBarrierPolicy, typename CheckingPolicy,
           typename StorageType>
-struct IsWeak<internal::BasicMember<T, WeakMemberTag, WriteBarrierPolicy,
-                                    CheckingPolicy, StorageType>>
-    : std::true_type {};
+struct IsWeak<BasicMember<T, WeakMemberTag, WriteBarrierPolicy, CheckingPolicy,
+                          StorageType>> : std::true_type {};
 
 }  // namespace internal
 
@@ -634,5 +634,36 @@ static constexpr size_t kSizeofCompressedMember =
 }  // namespace internal
 
 }  // namespace cppgc
+
+// Mark `BasicMember<T>` and `T*` as having a common reference type of `T*` (the
+// type to which both can be converted or bound). This makes them satisfy
+// `std::equality_comparable`, which allows usage like the following:
+// ```
+//   HeapVector<Member<T>> v;
+//   T* e;
+//   auto it = std::ranges::find(v, e);
+// ```
+// Without this, the `find()` call above would fail to compile with an error
+// about being unable to invoke `std::ranges::equal_to()`.
+template <typename T, typename WeaknessTag, typename WriteBarrierPolicy,
+          typename CheckingPolicy, typename StorageType,
+          template <typename> typename TQ, template <typename> typename UQ>
+struct std::basic_common_reference<
+    cppgc::internal::BasicMember<T, WeaknessTag, WriteBarrierPolicy,
+                                 CheckingPolicy, StorageType>,
+    T*, TQ, UQ> {
+  using type = T*;
+};
+
+template <typename T, typename WeaknessTag, typename WriteBarrierPolicy,
+          typename CheckingPolicy, typename StorageType,
+          template <typename> typename TQ, template <typename> typename UQ>
+struct std::basic_common_reference<
+    T*,
+    cppgc::internal::BasicMember<T, WeaknessTag, WriteBarrierPolicy,
+                                 CheckingPolicy, StorageType>,
+    TQ, UQ> {
+  using type = T*;
+};
 
 #endif  // INCLUDE_CPPGC_MEMBER_H_

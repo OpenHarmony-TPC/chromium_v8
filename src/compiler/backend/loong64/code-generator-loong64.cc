@@ -629,6 +629,8 @@ void CodeGenerator::AssembleCodeStartRegisterCheck() {
 void CodeGenerator::AssembleDispatchHandleRegisterCheck() {
   DCHECK(linkage()->GetIncomingDescriptor()->IsJSFunctionCall());
 
+  if (!V8_JS_LINKAGE_INCLUDES_DISPATCH_HANDLE_BOOL) return;
+
   // We currently don't check this for JS builtins as those are sometimes
   // called directly (e.g. from other builtins) and not through the dispatch
   // table. This is fine as builtin functions don't use the dispatch handle,
@@ -651,24 +653,7 @@ void CodeGenerator::AssembleDispatchHandleRegisterCheck() {
 }
 #endif  // V8_ENABLE_LEAPTIERING
 
-// Check if the code object is marked for deoptimization. If it is, then it
-// jumps to the CompileLazyDeoptimizedCode builtin. In order to do this we need
-// to:
-//    1. read from memory the word that contains that bit, which can be found in
-//       the flags in the referenced {Code} object;
-//    2. test kMarkedForDeoptimizationBit in those flags; and
-//    3. if it is not zero then it jumps to the builtin.
-void CodeGenerator::BailoutIfDeoptimized() {
-  UseScratchRegisterScope temps(masm());
-  Register scratch = temps.Acquire();
-  int offset = InstructionStream::kCodeOffset - InstructionStream::kHeaderSize;
-  __ LoadProtectedPointerField(
-      scratch, MemOperand(kJavaScriptCallCodeStartRegister, offset));
-  __ Ld_wu(scratch, FieldMemOperand(scratch, Code::kFlagsOffset));
-  __ And(scratch, scratch, Operand(1 << Code::kMarkedForDeoptimizationBit));
-  __ TailCallBuiltin(Builtin::kCompileLazyDeoptimizedCode, ne, scratch,
-                     Operand(zero_reg));
-}
+void CodeGenerator::BailoutIfDeoptimized() { __ BailoutIfDeoptimized(); }
 
 // Assembles an instruction after register allocation, producing machine code.
 CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
@@ -706,11 +691,17 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
 #if V8_ENABLE_WEBASSEMBLY
-    case kArchCallWasmFunction: {
+    case kArchCallWasmFunction:
+    case kArchCallWasmFunctionIndirect: {
       if (instr->InputAt(0)->IsImmediate()) {
+        DCHECK_EQ(arch_opcode, kArchCallWasmFunction);
         Constant constant = i.ToConstant(instr->InputAt(0));
         Address wasm_code = static_cast<Address>(constant.ToInt64());
         __ Call(wasm_code, constant.rmode());
+      } else if (arch_opcode == kArchCallWasmFunctionIndirect) {
+        __ CallWasmCodePointer(
+            i.InputRegister(0),
+            i.InputInt64(instr->WasmSignatureHashInputIndex()));
       } else {
         __ Call(i.InputRegister(0));
       }
@@ -718,11 +709,18 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       frame_access_state()->ClearSPDelta();
       break;
     }
-    case kArchTailCallWasm: {
+    case kArchTailCallWasm:
+    case kArchTailCallWasmIndirect: {
       if (instr->InputAt(0)->IsImmediate()) {
+        DCHECK_EQ(arch_opcode, kArchTailCallWasm);
         Constant constant = i.ToConstant(instr->InputAt(0));
         Address wasm_code = static_cast<Address>(constant.ToInt64());
         __ Jump(wasm_code, constant.rmode());
+      } else if (arch_opcode == kArchTailCallWasmIndirect) {
+        __ CallWasmCodePointer(
+            i.InputRegister(0),
+            i.InputInt64(instr->WasmSignatureHashInputIndex()),
+            CallJumpMode::kTailCall);
       } else {
         __ Jump(i.InputRegister(0));
       }
@@ -815,18 +813,21 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArchPrepareTailCall:
       AssemblePrepareTailCall();
       break;
-    case kArchCallCFunctionWithFrameState:
     case kArchCallCFunction: {
-      int const num_gp_parameters = ParamField::decode(instr->opcode());
-      int const num_fp_parameters = FPParamField::decode(instr->opcode());
+      uint32_t param_counts = i.InputUint32(instr->InputCount() - 1);
+      int const num_gp_parameters = ParamField::decode(param_counts);
+      int const num_fp_parameters = FPParamField::decode(param_counts);
       SetIsolateDataSlots set_isolate_data_slots = SetIsolateDataSlots::kYes;
       Label return_location;
 #if V8_ENABLE_WEBASSEMBLY
       bool isWasmCapiFunction =
           linkage()->GetIncomingDescriptor()->IsWasmCapiFunction();
       if (isWasmCapiFunction) {
-        __ LoadLabelRelative(t7, &return_location);
-        __ St_d(t7, MemOperand(fp, WasmExitFrameConstants::kCallingPCOffset));
+        UseScratchRegisterScope temps(masm());
+        Register scratch = temps.Acquire();
+        __ LoadLabelRelative(scratch, &return_location);
+        __ St_d(scratch,
+                MemOperand(fp, WasmExitFrameConstants::kCallingPCOffset));
         set_isolate_data_slots = SetIsolateDataSlots::kNo;
       }
 #endif  // V8_ENABLE_WEBASSEMBLY
@@ -842,9 +843,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       }
       RecordSafepoint(instr->reference_map(), pc_offset);
 
-      bool const needs_frame_state =
-          (arch_opcode == kArchCallCFunctionWithFrameState);
-      if (needs_frame_state) {
+      if (instr->HasCallDescriptorFlag(CallDescriptor::kHasExceptionHandler)) {
+        handlers_.push_back({nullptr, pc_offset});
+      }
+      if (instr->HasCallDescriptorFlag(CallDescriptor::kNeedsFrameState)) {
         RecordDeoptInfo(instr, pc_offset);
       }
 
@@ -894,7 +896,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                        SourceLocation());
       break;
     case kArchNop:
-    case kArchThrowTerminator:
       // don't emit code for nops.
       break;
     case kArchDeoptimize: {
@@ -918,16 +919,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
 #endif  // V8_ENABLE_WEBASSEMBLY
-    case kArchStackPointerGreaterThan: {
-      Register lhs_register = sp;
-      uint32_t offset;
-      if (ShouldApplyOffsetToStackCheck(instr, &offset)) {
-        lhs_register = i.TempRegister(1);
-        __ Sub_d(lhs_register, sp, offset);
-      }
-      __ Sltu(i.TempRegister(0), i.InputRegister(0), lhs_register);
+    case kArchStackPointerGreaterThan:
+      // Pseudo-instruction used for cmp/branch. No codes emitted here.
       break;
-    }
     case kArchStackCheckOffset:
       __ Move(i.OutputRegister(), Smi::FromInt(GetStackCheckOffset()));
       break;
@@ -940,6 +934,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       } else {
         __ mov(i.OutputRegister(), fp);
       }
+      break;
+    case kArchRootPointer:
+      __ mov(i.OutputRegister(), kRootRegister);
       break;
     case kArchTruncateDoubleToI:
       __ TruncateDoubleToI(isolate(), zone(), i.OutputRegister(),
@@ -985,6 +982,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kArchAtomicStoreWithWriteBarrier: {
+      MacroAssembler::BlockTrampolinePoolScope block_trampoline_pool(masm());
       RecordWriteMode mode = RecordWriteModeField::decode(instr->opcode());
       // Indirect pointer writes must use a different opcode.
       DCHECK_NE(mode, RecordWriteMode::kValueIsIndirectPointer);
@@ -994,7 +992,15 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
 
       auto ool = zone()->New<OutOfLineRecordWrite>(
           this, object, Operand(offset), value, mode, DetermineStubCallMode());
-      __ AtomicStoreTaggedField(value, MemOperand(object, offset));
+      MemOperand dst_op = MemOperand(object, offset);
+      __ dbar(0);
+      if (COMPRESS_POINTERS_BOOL) {
+        __ St_w(value, dst_op);
+      } else {
+        __ St_d(value, dst_op);
+      }
+      RecordTrapInfoIfNeeded(zone(), this, opcode, instr,
+                             __ pc_offset() - kInstrSize);
       // Skip the write barrier if the value is a Smi. However, this is only
       // valid if the value isn't an indirect pointer. Otherwise the value will
       // be a pointer table index, which will always look like a Smi (but
@@ -1127,10 +1133,14 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kLoong64Add_d:
       __ Add_d(i.OutputRegister(), i.InputRegister(0), i.InputOperand(1));
       break;
-    case kLoong64AddOvf_d:
+    case kLoong64AddOvf_d: {
+      UseScratchRegisterScope temps(masm());
+      DCHECK(temps.hasAvailable());
+      temps.Exclude(t8);
       __ AddOverflow_d(i.OutputRegister(), i.InputRegister(0),
                        i.InputOperand(1), t8);
       break;
+    }
     case kLoong64Sub_w:
       __ Sub_w(i.OutputRegister(), i.InputRegister(0), i.InputOperand(1));
       break;
@@ -1144,14 +1154,22 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kLoong64Mul_w:
       __ Mul_w(i.OutputRegister(), i.InputRegister(0), i.InputOperand(1));
       break;
-    case kLoong64MulOvf_w:
+    case kLoong64MulOvf_w: {
+      UseScratchRegisterScope temps(masm());
+      DCHECK(temps.hasAvailable());
+      temps.Exclude(t8);
       __ MulOverflow_w(i.OutputRegister(), i.InputRegister(0),
                        i.InputOperand(1), t8);
       break;
-    case kLoong64MulOvf_d:
+    }
+    case kLoong64MulOvf_d: {
+      UseScratchRegisterScope temps(masm());
+      DCHECK(temps.hasAvailable());
+      temps.Exclude(t8);
       __ MulOverflow_d(i.OutputRegister(), i.InputRegister(0),
                        i.InputOperand(1), t8);
       break;
+    }
     case kLoong64Mulh_w:
       __ Mulh_w(i.OutputRegister(), i.InputRegister(0), i.InputOperand(1));
       break;
@@ -1198,12 +1216,12 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kLoong64Alsl_d:
       DCHECK(instr->InputAt(2)->IsImmediate());
       __ Alsl_d(i.OutputRegister(), i.InputRegister(0), i.InputRegister(1),
-                i.InputInt8(2), t7);
+                i.InputInt8(2));
       break;
     case kLoong64Alsl_w:
       DCHECK(instr->InputAt(2)->IsImmediate());
       __ Alsl_w(i.OutputRegister(), i.InputRegister(0), i.InputRegister(1),
-                i.InputInt8(2), t7);
+                i.InputInt8(2));
       break;
     case kLoong64And:
     case kLoong64And32:
@@ -1318,10 +1336,14 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kLoong64Rotr_d:
       __ Rotr_d(i.OutputRegister(), i.InputRegister(0), i.InputOperand(1));
       break;
-    case kLoong64Tst:
+    case kLoong64Tst: {
+      UseScratchRegisterScope temps(masm());
+      DCHECK(temps.hasAvailable());
+      temps.Exclude(t8);
       __ And(t8, i.InputRegister(0), i.InputOperand(1));
       // Pseudo-instruction used for cmp/branch. No opcode emitted here.
       break;
+    }
     case kLoong64Cmp32:
     case kLoong64Cmp64:
       // Pseudo-instruction used for cmp/branch. No opcode emitted here.
@@ -1786,9 +1808,12 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kLoong64AtomicLoadDecompressTaggedSigned:
       __ AtomicDecompressTaggedSigned(i.OutputRegister(), i.MemoryOperand());
       break;
-    case kLoong64AtomicLoadDecompressTagged:
-      __ AtomicDecompressTagged(i.OutputRegister(), i.MemoryOperand());
+    case kLoong64AtomicLoadDecompressTagged: {
+      const int pc_offset =
+          __ AtomicDecompressTagged(i.OutputRegister(), i.MemoryOperand());
+      RecordTrapInfoIfNeeded(zone(), this, opcode, instr, pc_offset);
       break;
+    }
     case kLoong64AtomicStoreCompressTagged: {
       size_t index = 0;
       MemOperand mem = i.MemoryOperand(&index);
@@ -2193,6 +2218,8 @@ void AssembleBranchToLabels(CodeGenerator* gen, MacroAssembler* masm,
   if (instr->arch_opcode() == kLoong64Tst) {
     Condition cc = FlagsConditionToConditionTst(condition);
     __ Branch(tlabel, cc, t8, Operand(zero_reg));
+    UseScratchRegisterScope temps(masm);
+    temps.Include(t8);
   } else if (instr->arch_opcode() == kLoong64Add_d ||
              instr->arch_opcode() == kLoong64Sub_d) {
     UseScratchRegisterScope temps(masm);
@@ -2215,6 +2242,8 @@ void AssembleBranchToLabels(CodeGenerator* gen, MacroAssembler* masm,
       default:
         UNSUPPORTED_COND(instr->arch_opcode(), condition);
     }
+    UseScratchRegisterScope temps(masm);
+    temps.Include(t8);
   } else if (instr->arch_opcode() == kLoong64MulOvf_w ||
              instr->arch_opcode() == kLoong64MulOvf_d) {
     // Overflow occurs if overflow register is not zero
@@ -2228,6 +2257,8 @@ void AssembleBranchToLabels(CodeGenerator* gen, MacroAssembler* masm,
       default:
         UNSUPPORTED_COND(instr->arch_opcode(), condition);
     }
+    UseScratchRegisterScope temps(masm);
+    temps.Include(t8);
   } else if (instr->arch_opcode() == kLoong64Cmp32 ||
              instr->arch_opcode() == kLoong64Cmp64) {
     Condition cc = FlagsConditionToConditionCmp(condition);
@@ -2243,10 +2274,13 @@ void AssembleBranchToLabels(CodeGenerator* gen, MacroAssembler* masm,
   } else if (instr->arch_opcode() == kArchStackPointerGreaterThan) {
     Condition cc = FlagsConditionToConditionCmp(condition);
     DCHECK((cc == ls) || (cc == hi));
-    if (cc == ls) {
-      __ xori(i.TempRegister(0), i.TempRegister(0), 1);
+    Register lhs_register = sp;
+    uint32_t offset;
+    if (gen->ShouldApplyOffsetToStackCheck(instr, &offset)) {
+      lhs_register = i.TempRegister(1);
+      __ Sub_d(lhs_register, sp, offset);
     }
-    __ Branch(tlabel, ne, i.TempRegister(0), Operand(zero_reg));
+    __ Branch(tlabel, cc, lhs_register, Operand(i.InputRegister(0)));
   } else if (instr->arch_opcode() == kLoong64Float32Cmp ||
              instr->arch_opcode() == kLoong64Float64Cmp) {
     bool predicate;
@@ -2306,7 +2340,7 @@ void CodeGenerator::AssembleArchBoolean(Instruction* instr,
                                         FlagsCondition condition) {
   Loong64OperandConverter i(this, instr);
 
-  // Materialize a full 32-bit 1 or 0 value. The result register is always the
+  // Materialize a full 64-bit 1 or 0 value. The result register is always the
   // last output of the instruction.
   DCHECK_NE(0u, instr->OutputCount());
   Register result = i.OutputRegister(instr->OutputCount() - 1);
@@ -2321,6 +2355,8 @@ void CodeGenerator::AssembleArchBoolean(Instruction* instr,
     } else {
       __ Sltu(result, zero_reg, t8);
     }
+    UseScratchRegisterScope temps(masm());
+    temps.Include(t8);
     return;
   } else if (instr->arch_opcode() == kLoong64Add_d ||
              instr->arch_opcode() == kLoong64Sub_d) {
@@ -2338,10 +2374,14 @@ void CodeGenerator::AssembleArchBoolean(Instruction* instr,
              instr->arch_opcode() == kLoong64SubOvf_d) {
     // Overflow occurs if overflow register is negative
     __ slt(result, t8, zero_reg);
+    UseScratchRegisterScope temps(masm());
+    temps.Include(t8);
   } else if (instr->arch_opcode() == kLoong64MulOvf_w ||
              instr->arch_opcode() == kLoong64MulOvf_d) {
     // Overflow occurs if overflow register is not zero
     __ Sgtu(result, t8, zero_reg);
+    UseScratchRegisterScope temps(masm());
+    temps.Include(t8);
   } else if (instr->arch_opcode() == kLoong64Cmp32 ||
              instr->arch_opcode() == kLoong64Cmp64) {
     Condition cc = FlagsConditionToConditionCmp(condition);
@@ -2374,8 +2414,15 @@ void CodeGenerator::AssembleArchBoolean(Instruction* instr,
   } else if (instr->arch_opcode() == kArchStackPointerGreaterThan) {
     Condition cc = FlagsConditionToConditionCmp(condition);
     DCHECK((cc == ls) || (cc == hi));
+    Register lhs_register = sp;
+    uint32_t offset;
+    if (ShouldApplyOffsetToStackCheck(instr, &offset)) {
+      lhs_register = i.TempRegister(1);
+      __ Sub_d(lhs_register, sp, offset);
+    }
+    __ sltu(i.OutputRegister(), i.InputRegister(0), lhs_register);
     if (cc == ls) {
-      __ xori(i.OutputRegister(), i.TempRegister(0), 1);
+      __ xori(i.OutputRegister(), i.OutputRegister(), 1);
     }
     return;
   } else {
@@ -2470,7 +2517,7 @@ void CodeGenerator::AssembleConstructFrame() {
     } else {
       __ StubPrologue(info()->GetOutputStackFrameType());
 #if V8_ENABLE_WEBASSEMBLY
-      if (call_descriptor->IsWasmFunctionCall() ||
+      if (call_descriptor->IsAnyWasmFunctionCall() ||
           call_descriptor->IsWasmImportWrapper() ||
           call_descriptor->IsWasmCapiFunction()) {
         // For import wrappers and C-API functions, this stack slot is only used
@@ -2537,6 +2584,9 @@ void CodeGenerator::AssembleConstructFrame() {
 
         for (auto reg : wasm::kGpParamRegisters) regs_to_save.set(reg);
         __ MultiPush(regs_to_save);
+        DoubleRegList fp_regs_to_save;
+        for (auto reg : wasm::kFpParamRegisters) fp_regs_to_save.set(reg);
+        __ MultiPushFPU(fp_regs_to_save);
         __ li(WasmHandleStackOverflowDescriptor::GapRegister(),
               required_slots * kSystemPointerSize);
         __ Add_d(
@@ -2544,6 +2594,7 @@ void CodeGenerator::AssembleConstructFrame() {
             Operand(call_descriptor->ParameterSlotCount() * kSystemPointerSize +
                     CommonFrameConstants::kFixedFrameSizeAboveFp));
         __ CallBuiltin(Builtin::kWasmHandleStackOverflow);
+        __ MultiPopFPU(fp_regs_to_save);
         __ MultiPop(regs_to_save);
       } else {
         __ Call(static_cast<intptr_t>(Builtin::kWasmStackOverflow),
@@ -2633,7 +2684,7 @@ void CodeGenerator::AssembleReturn(InstructionOperand* additional_pop_count) {
   }
 
 #if V8_ENABLE_WEBASSEMBLY
-  if (call_descriptor->IsWasmFunctionCall() &&
+  if (call_descriptor->IsAnyWasmFunctionCall() &&
       v8_flags.experimental_wasm_growable_stacks) {
     Label done;
     {

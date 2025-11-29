@@ -214,7 +214,7 @@ void RegExpMacroAssemblerX64::CheckCharacterLT(base::uc16 limit,
   BranchOrBacktrack(less, on_less);
 }
 
-void RegExpMacroAssemblerX64::CheckGreedyLoop(Label* on_equal) {
+void RegExpMacroAssemblerX64::CheckFixedLengthLoop(Label* on_equal) {
   Label fallthrough;
   __ cmpl(rdi, Operand(backtrack_stackpointer(), 0));
   __ j(not_equal, &fallthrough);
@@ -898,8 +898,8 @@ void RegExpMacroAssemblerX64::PopRegExpBasePointer(Register stack_pointer_out,
   StoreRegExpStackPointerToMemory(stack_pointer_out, scratch);
 }
 
-Handle<HeapObject> RegExpMacroAssemblerX64::GetCode(Handle<String> source,
-                                                    RegExpFlags flags) {
+DirectHandle<HeapObject> RegExpMacroAssemblerX64::GetCode(
+    DirectHandle<String> source, RegExpFlags flags) {
   Label return_rax;
   // Finalize code - write the entry point code now we know how many registers
   // we need.
@@ -1265,10 +1265,11 @@ Handle<HeapObject> RegExpMacroAssemblerX64::GetCode(Handle<String> source,
   CodeDesc code_desc;
   Isolate* isolate = this->isolate();
   masm_.GetCode(isolate, &code_desc);
-  Handle<Code> code = Factory::CodeBuilder(isolate, code_desc, CodeKind::REGEXP)
-                          .set_self_reference(masm_.CodeObject())
-                          .set_empty_source_position_table()
-                          .Build();
+  DirectHandle<Code> code =
+      Factory::CodeBuilder(isolate, code_desc, CodeKind::REGEXP)
+          .set_self_reference(masm_.CodeObject())
+          .set_empty_source_position_table()
+          .Build();
   PROFILE(isolate,
           RegExpCodeCreateEvent(Cast<AbstractCode>(code), source, flags));
   return Cast<HeapObject>(code);
@@ -1324,6 +1325,7 @@ void RegExpMacroAssemblerX64::PushBacktrack(Label* label) {
 
 void RegExpMacroAssemblerX64::PushCurrentPosition() {
   Push(rdi);
+  CheckStackLimit();
 }
 
 
@@ -1331,7 +1333,11 @@ void RegExpMacroAssemblerX64::PushRegister(int register_index,
                                            StackCheckFlag check_stack_limit) {
   __ movq(rax, register_location(register_index));
   Push(rax);
-  if (check_stack_limit) CheckStackLimit();
+  if (check_stack_limit) {
+    CheckStackLimit();
+  } else if (V8_UNLIKELY(v8_flags.slow_debug_code)) {
+    AssertAboveStackLimitMinusSlack();
+  }
 }
 
 void RegExpMacroAssemblerX64::ReadCurrentPositionFromRegister(int reg) {
@@ -1600,6 +1606,18 @@ void RegExpMacroAssemblerX64::CheckStackLimit() {
   __ bind(&no_stack_overflow);
 }
 
+void RegExpMacroAssemblerX64::AssertAboveStackLimitMinusSlack() {
+  DCHECK(v8_flags.slow_debug_code);
+  Label no_stack_overflow;
+  ASM_CODE_COMMENT_STRING(&masm_, "AssertAboveStackLimitMinusSlack");
+  auto l = ExternalReference::address_of_regexp_stack_limit_address(isolate());
+  __ load_rax(l);
+  __ subq(rax, Immediate(RegExpStack::kStackLimitSlackSize));
+  __ cmpq(backtrack_stackpointer(), rax);
+  __ j(above, &no_stack_overflow);
+  __ int3();
+  __ bind(&no_stack_overflow);
+}
 
 void RegExpMacroAssemblerX64::LoadCurrentCharacterUnchecked(int cp_offset,
                                                             int characters) {

@@ -77,11 +77,11 @@ TEST_F(ConcurrentPrototypeTest, ProtoWalkBackground) {
   auto factory = i_isolate()->factory();
   HandleScope handle_scope(i_isolate());
 
-  Handle<JSFunction> function =
+  DirectHandle<JSFunction> function =
       factory->NewFunctionForTesting(factory->empty_string());
   Handle<JSObject> js_object = factory->NewJSObject(function);
-  Handle<String> name = MakeString("property");
-  Handle<Object> value = MakeString("dummy_value");
+  DirectHandle<String> name = MakeString("property");
+  DirectHandle<Object> value = MakeString("dummy_value");
   // For the default constructor function no in-object properties are reserved
   // hence adding a single property will initialize the property-array.
   JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, name, value,
@@ -113,11 +113,11 @@ TEST_F(ConcurrentPrototypeTest, ProtoWalkBackground_DescriptorArrayWrite) {
   auto factory = i_isolate()->factory();
   HandleScope handle_scope(i_isolate());
 
-  Handle<JSFunction> function =
+  DirectHandle<JSFunction> function =
       factory->NewFunctionForTesting(factory->empty_string());
   Handle<JSObject> js_object = factory->NewJSObject(function);
-  Handle<String> name = MakeString("property");
-  Handle<Object> value = MakeString("dummy_value");
+  DirectHandle<String> name = MakeString("property");
+  DirectHandle<Object> value = MakeString("dummy_value");
   // For the default constructor function no in-object properties are reserved
   // hence adding a single property will initialize the property-array.
   JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, name, value,
@@ -139,8 +139,8 @@ TEST_F(ConcurrentPrototypeTest, ProtoWalkBackground_DescriptorArrayWrite) {
 
   // Exercise descriptor array.
   for (int i = 0; i < 20; ++i) {
-    Handle<String> filler_name = MakeName("filler_property_", i);
-    Handle<Object> filler_value = MakeString("dummy_value");
+    DirectHandle<String> filler_name = MakeName("filler_property_", i);
+    DirectHandle<Object> filler_value = MakeString("dummy_value");
     JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, filler_name,
                                                       filler_value, NONE)
         .Check();
@@ -156,7 +156,7 @@ TEST_F(ConcurrentPrototypeTest, ProtoWalkBackground_PrototypeChainWrite) {
   auto factory = i_isolate()->factory();
   HandleScope handle_scope(i_isolate());
 
-  Handle<JSFunction> function =
+  DirectHandle<JSFunction> function =
       factory->NewFunctionForTesting(factory->empty_string());
   Handle<JSObject> js_object = factory->NewJSObject(function);
 

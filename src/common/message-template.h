@@ -81,6 +81,7 @@ namespace internal {
   T(CannotFreezeArrayBufferView,                                               \
     "Cannot freeze array buffer views with elements")                          \
   T(CannotSeal, "Cannot seal")                                                 \
+  T(CannotSealArrayBufferView, "Cannot seal array buffer views with elements") \
   T(CannotWrap, "Cannot wrap target callable (%)")                             \
   T(CircularStructure, "Converting circular structure to JSON%")               \
   T(ConstructAbstractClass, "Abstract class % not directly constructable")     \
@@ -126,6 +127,7 @@ namespace internal {
     "Function has non-object prototype '%' in instanceof check")               \
   T(InvalidArgument, "invalid_argument")                                       \
   T(InvalidArgumentForTemporal, "Invalid argument for Temporal %")             \
+  T(InvalidOption, "invalid option %")                                         \
   T(InvalidInOperatorUse, "Cannot use 'in' operator to search for '%' in %")   \
   T(InvalidRawJsonValue, "Invalid value for JSON.rawJSON")                     \
   T(InvalidRegExpExecResult,                                                   \
@@ -357,6 +359,7 @@ namespace internal {
   T(SymbolKeyFor, "% is not a symbol")                                         \
   T(SymbolToNumber, "Cannot convert a Symbol value to a number")               \
   T(SymbolToString, "Cannot convert a Symbol value to a string")               \
+  T(TemporalRsError, "Internal error. temporal_rs error.")                     \
   T(ThrowMethodMissing, "The iterator does not provide a 'throw' method.")     \
   T(TopLevelAwaitStalled, "Top-level await promise never resolved")            \
   T(UndefinedOrNullToObject, "Cannot convert undefined or null to object")     \
@@ -448,6 +451,11 @@ namespace internal {
     "The requested module '%' contains conflicting star exports for name '%'") \
   T(BadGetterArity, "Getter must not have any formal parameters.")             \
   T(BadSetterArity, "Setter must have exactly one formal parameter.")          \
+  T(Base64ExtraBits,                                                           \
+    "The base64 input terminates with non-zero padding bits.")                 \
+  T(Base64InputRemainder,                                                      \
+    "The base64 input terminates with a single "                               \
+    "character, excluding padding (=).")                                       \
   T(BigIntInvalidString, "Invalid BigInt string")                              \
   T(ConstructorIsAccessor, "Class constructor may not be an accessor")         \
   T(ConstructorIsGenerator, "Class constructor may not be a generator")        \
@@ -481,6 +489,8 @@ namespace internal {
     "Illegal '%' directive in function with non-simple parameter list")        \
   T(IllegalReturn, "Illegal return statement")                                 \
   T(IntrinsicWithSpread, "Intrinsic calls do not support spread arguments")    \
+  T(InvalidBase64Character,                                                    \
+    "Found a character that cannot be part of a valid base64 string.")         \
   T(InvalidRestBindingPattern,                                                 \
     "`...` must be followed by an identifier in declaration contexts")         \
   T(InvalidPropertyBindingPattern, "Illegal property in declaration context")  \
@@ -497,6 +507,8 @@ namespace internal {
     "Invalid left-hand side expression in postfix operation")                  \
   T(InvalidLhsInPrefixOp,                                                      \
     "Invalid left-hand side expression in prefix operation")                   \
+  T(InvalidHexString,                                                          \
+    "Input string must contain hex characters in even length")                 \
   T(InvalidModuleExportName,                                                   \
     "Invalid module export name: contains unpaired surrogate")                 \
   T(InvalidRegExpFlags, "Invalid flags supplied to RegExp constructor '%'")    \
@@ -697,11 +709,10 @@ namespace internal {
   T(WasmTrapStringInvalidUtf8, "invalid UTF-8 string")                         \
   T(WasmTrapStringInvalidWtf8, "invalid WTF-8 string")                         \
   T(WasmTrapStringOffsetOutOfBounds, "string offset out of bounds")            \
-  T(WasmTrapBadSuspender,                                                      \
-    "attempting to suspend without a WebAssembly.promising export")            \
+  T(WasmSuspendError, "trying to suspend without WebAssembly.promising")       \
   T(WasmTrapStringIsolatedSurrogate,                                           \
     "Failed to encode string as UTF-8: contains unpaired surrogate")           \
-  T(WasmTrapSuspendJSFrames, "trying to suspend JS frames")                    \
+  T(WasmSuspendJSFrames, "trying to suspend JS frames")                        \
   T(WasmExceptionError, "wasm exception")                                      \
   T(WasmObjectsAreOpaque, "WebAssembly objects are opaque")                    \
   /* Asm.js validation related */                                              \

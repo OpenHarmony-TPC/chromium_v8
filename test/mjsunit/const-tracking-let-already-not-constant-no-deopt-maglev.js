@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --const-tracking-let --allow-natives-syntax
+// Flags: --script-context-cells --allow-natives-syntax
 // Flags: --turbofan --no-always-turbofan --maglev --no-stress-maglev
 // Flags: --sparkplug --no-always-sparkplug
 
@@ -42,5 +42,4 @@ write(1);
 // Now it depends on Sminess of the context slot.
 assertOptimized(write);
 
-assertUnoptimized(read);
 assertEquals(1, read());

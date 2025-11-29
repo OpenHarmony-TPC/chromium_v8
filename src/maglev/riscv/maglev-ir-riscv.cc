@@ -164,7 +164,7 @@ void BuiltinStringFromCharCode::GenerateCode(MaglevAssembler* masm,
 }
 
 void InlinedAllocation::SetValueLocationConstraints() {
-  UseRegister(allocation_block());
+  UseRegister(allocation_block_input());
   if (offset() == 0) {
     DefineSameAsFirst(this);
   } else {
@@ -175,7 +175,7 @@ void InlinedAllocation::SetValueLocationConstraints() {
 void InlinedAllocation::GenerateCode(MaglevAssembler* masm,
                                      const ProcessingState& state) {
   Register out = ToRegister(result());
-  Register value = ToRegister(allocation_block());
+  Register value = ToRegister(allocation_block_input());
   if (offset() != 0) {
     __ AddWord(out, value, Operand(offset()));
   }
@@ -207,6 +207,56 @@ void RestLength::GenerateCode(MaglevAssembler* masm,
 }
 
 int CheckedObjectToIndex::MaxCallStackArgs() const { return 0; }
+
+void CheckedIntPtrToInt32::SetValueLocationConstraints() {
+  UseRegister(input());
+  DefineSameAsFirst(this);
+}
+
+void CheckedIntPtrToInt32::GenerateCode(MaglevAssembler* masm,
+                                        const ProcessingState& state) {
+  Register input_reg = ToRegister(input());
+  __ MacroAssembler::Branch(__ GetDeoptLabel(this, DeoptimizeReason::kNotInt32),
+                            gt, input_reg,
+                            Operand(std::numeric_limits<int32_t>::max()));
+  __ MacroAssembler::Branch(__ GetDeoptLabel(this, DeoptimizeReason::kNotInt32),
+                            lt, input_reg,
+                            Operand(std::numeric_limits<int32_t>::min()));
+}
+
+void CheckFloat64SameValue::SetValueLocationConstraints() {
+  UseRegister(target_input());
+  // We need two because LoadFPRImmediate needs to acquire one as well in the
+  // case where value() is not 0.0 or -0.0.
+  set_temporaries_needed((value().get_scalar() == 0) ? 1 : 2);
+  set_double_temporaries_needed(
+      value().is_nan() || (value().get_scalar() == 0) ? 0 : 1);
+}
+
+void CheckFloat64SameValue::GenerateCode(MaglevAssembler* masm,
+                                         const ProcessingState& state) {
+  Label* fail = __ GetDeoptLabel(this, deoptimize_reason());
+  MaglevAssembler::TemporaryRegisterScope temps(masm);
+  DoubleRegister target = ToDoubleRegister(target_input());
+  if (value().is_nan()) {
+    __ JumpIfNotNan(target, fail);
+  } else {
+    DoubleRegister double_scratch = temps.AcquireScratchDouble();
+    Register scratch = temps.AcquireScratch();
+    __ Move(double_scratch, value().get_scalar());
+    __ CompareF64(scratch, EQ, double_scratch, target);
+    __ BranchFalseF(scratch, fail);
+    if (value().get_scalar() == 0) {  // +0.0 or -0.0.
+      __ MacroAssembler::Move(scratch, target);
+      __ And(scratch, scratch, Operand(1ULL << 63));
+      if (value().get_bits() == 0) {
+        __ BranchTrueF(scratch, fail);
+      } else {
+        __ BranchFalseF(scratch, fail);
+      }
+    }
+  }
+}
 
 void Int32AddWithOverflow::SetValueLocationConstraints() {
   UseRegister(left_input());
@@ -283,7 +333,7 @@ void Int32MultiplyWithOverflow::GenerateCode(MaglevAssembler* masm,
   }
 
   Register scratch = temps.Acquire();
-  __ MulOverflow32(res, left, Operand(right), scratch);
+  __ MulOverflow32(res, left, Operand(right), scratch, false);
 
   static_assert(Int32MultiplyWithOverflow::kProperties.can_eager_deopt());
   // if res != (res[0:31] sign extended to 64 bits), then the multiplication
@@ -655,27 +705,17 @@ void Float64Round::GenerateCode(MaglevAssembler* masm,
   MaglevAssembler::TemporaryRegisterScope temps(masm);
   DoubleRegister fscratch1 = temps.AcquireScratchDouble();
 
-  // TODO(Yuri Gaevsky): can we be better here?
   if (kind_ == Kind::kNearest) {
-    Register tmp = temps.AcquireScratch();
-    DoubleRegister half_one = temps.AcquireDouble();  // available in this mode
-    __ Round_d_d(out, in, fscratch1);
     // RISC-V Rounding Mode RNE means "Round to Nearest, ties to Even", while JS
     // expects it to round towards +Infinity (see ECMA-262, 20.2.2.28).
-    // Fix the difference by checking if we rounded down by exactly 0.5, and
-    // if so, round to the other side.
-    DoubleRegister fsubtract = fscratch1;
-    __ fmv_d(fsubtract, in);
-    __ fsub_d(fsubtract, fsubtract, out);
+    // The best seems to be to add 0.5 then round with RDN mode.
+
+    DoubleRegister half_one = temps.AcquireDouble();  // available in this mode
     __ LoadFPRImmediate(half_one, 0.5);
-    __ CompareF64(tmp, FPUCondition::NE, fsubtract, half_one);
-    Label done;
-    // (in - rounded(in)) != 0.5?
-    __ MacroAssembler::Branch(&done, ne, tmp, Operand(zero_reg), Label::kNear);
-    // Fix wrong tie-to-even by adding 0.5 twice.
-    __ fadd_d(out, out, half_one);
-    __ fadd_d(out, out, half_one);
-    __ bind(&done);
+    DoubleRegister tmp = half_one;
+    __ fadd_d(tmp, in, half_one);
+    __ Floor_d_d(out, tmp, fscratch1);
+    __ fsgnj_d(out, out, in);
   } else if (kind_ == Kind::kCeil) {
     __ Ceil_d_d(out, in, fscratch1);
   } else if (kind_ == Kind::kFloor) {
@@ -724,12 +764,11 @@ void LoadTypedArrayLength::GenerateCode(MaglevAssembler* masm,
   }
   __ LoadBoundedSizeFromObject(result_register, object,
                                JSTypedArray::kRawByteLengthOffset);
-  int element_size = ElementsKindSize(elements_kind_);
-  if (element_size > 1) {
+  int shift_size = ElementsKindToShiftSize(elements_kind_);
+  if (shift_size > 0) {
     // TODO(leszeks): Merge this shift with the one in LoadBoundedSize.
-    DCHECK(element_size == 2 || element_size == 4 || element_size == 8);
-    __ SrlWord(result_register, result_register,
-               Operand(base::bits::CountTrailingZeros(element_size)));
+    DCHECK(shift_size == 1 || shift_size == 2 || shift_size == 3);
+    __ SrlWord(result_register, result_register, Operand(shift_size));
   }
 }
 
@@ -839,16 +878,12 @@ void HandleInterruptsAndTiering(MaglevAssembler* masm, ZoneLabelRef done,
 }
 
 void GenerateReduceInterruptBudget(MaglevAssembler* masm, Node* node,
+                                   Register feedback_cell,
                                    ReduceInterruptBudgetType type, int amount) {
   MaglevAssembler::TemporaryRegisterScope temps(masm);
   Register scratch = temps.Acquire();
-  Register feedback_cell = scratch;
-  Register budget = temps.Acquire();
-  __ LoadWord(feedback_cell,
-              MemOperand(fp, StandardFrameConstants::kFunctionOffset));
-  __ LoadTaggedField(
-      feedback_cell,
-      FieldMemOperand(feedback_cell, JSFunction::kFeedbackCellOffset));
+  Register budget = scratch;
+
   __ Lw(budget,
         FieldMemOperand(feedback_cell, FeedbackCell::kInterruptBudgetOffset));
   __ Sub32(budget, budget, Operand(amount));
@@ -871,22 +906,24 @@ void GenerateReduceInterruptBudget(MaglevAssembler* masm, Node* node,
 
 int ReduceInterruptBudgetForLoop::MaxCallStackArgs() const { return 1; }
 void ReduceInterruptBudgetForLoop::SetValueLocationConstraints() {
-  set_temporaries_needed(2);
+  UseRegister(feedback_cell());
+  set_temporaries_needed(1);
 }
 void ReduceInterruptBudgetForLoop::GenerateCode(MaglevAssembler* masm,
                                                 const ProcessingState& state) {
-  GenerateReduceInterruptBudget(masm, this, ReduceInterruptBudgetType::kLoop,
-                                amount());
+  GenerateReduceInterruptBudget(masm, this, ToRegister(feedback_cell()),
+                                ReduceInterruptBudgetType::kLoop, amount());
 }
 
 int ReduceInterruptBudgetForReturn::MaxCallStackArgs() const { return 1; }
 void ReduceInterruptBudgetForReturn::SetValueLocationConstraints() {
-  set_temporaries_needed(2);
+  UseRegister(feedback_cell());
+  set_temporaries_needed(1);
 }
 void ReduceInterruptBudgetForReturn::GenerateCode(
     MaglevAssembler* masm, const ProcessingState& state) {
-  GenerateReduceInterruptBudget(masm, this, ReduceInterruptBudgetType::kReturn,
-                                amount());
+  GenerateReduceInterruptBudget(masm, this, ToRegister(feedback_cell()),
+                                ReduceInterruptBudgetType::kReturn, amount());
 }
 
 // ---
@@ -908,29 +945,27 @@ void Return::GenerateCode(MaglevAssembler* masm, const ProcessingState& state) {
   // We cannot use scratch registers, since they're used in LeaveFrame and
   // DropArguments.
   Register actual_params_size = a5;
-  Register params_size = a6;
 
   // Compute the size of the actual parameters + receiver (in bytes).
-  // TODO(leszeks): Consider making this an input into Return to re-use the
+  // TODO(leszeks): Consider making this an input into Return to reuse the
   // incoming argc's register (if it's still valid).
   __ LoadWord(actual_params_size,
               MemOperand(fp, StandardFrameConstants::kArgCOffset));
-  __ Move(params_size, formal_params_size);
-
-  // If actual is bigger than formal, then we should use it to free up the stack
-  // arguments.
-  Label corrected_args_count;
-  __ MacroAssembler::Branch(&corrected_args_count, ge, params_size,
-                            Operand(actual_params_size),
-                            Label::Distance::kNear);
-  __ Move(params_size, actual_params_size);
-  __ bind(&corrected_args_count);
 
   // Leave the frame.
   __ LeaveFrame(StackFrame::MAGLEV);
 
+  // If actual is bigger than formal, then we should use it to free up the stack
+  // arguments.
+  Label corrected_args_count;
+  __ MacroAssembler::Branch(&corrected_args_count, gt, actual_params_size,
+                            Operand(formal_params_size),
+                            Label::Distance::kNear);
+  __ Move(actual_params_size, formal_params_size);
+
+  __ bind(&corrected_args_count);
   // Drop receiver + arguments according to dynamic arguments size.
-  __ DropArguments(params_size);
+  __ DropArguments(actual_params_size);
   __ Ret();
 }
 

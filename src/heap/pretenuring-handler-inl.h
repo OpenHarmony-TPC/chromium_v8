@@ -5,11 +5,13 @@
 #ifndef V8_HEAP_PRETENURING_HANDLER_INL_H_
 #define V8_HEAP_PRETENURING_HANDLER_INL_H_
 
+#include "src/heap/pretenuring-handler.h"
+// Include the non-inl header before the rest of the headers.
+
 #include "src/base/sanitizer/msan.h"
 #include "src/heap/heap-layout-inl.h"
 #include "src/heap/new-spaces.h"
 #include "src/heap/page-metadata.h"
-#include "src/heap/pretenuring-handler.h"
 #include "src/heap/spaces.h"
 #include "src/objects/allocation-site-inl.h"
 #include "src/objects/allocation-site.h"
@@ -60,14 +62,22 @@ Tagged<AllocationMemento> PretenuringHandler::FindAllocationMemento(
 template <PretenuringHandler::FindMementoMode mode>
 Tagged<AllocationMemento> PretenuringHandler::FindAllocationMemento(
     Heap* heap, Tagged<Map> map, Tagged<HeapObject> object, int object_size) {
-  DCHECK_EQ(object_size, object->SizeFromMap(map));
+  // For uses from within the GC, the size here may actually change when e.g.
+  // updating mementos during marking in the young generation collector. This is
+  // not an issue with Scavenger that stops the mutator.
+  DCHECK_IMPLIES(mode != FindMementoMode::kForGC || !v8_flags.minor_ms,
+                 object_size == object->SizeFromMap(map));
+  // For configurations where object size changes, we can check that it only
+  // shinks in case the sizes are not matching.
+  DCHECK_IMPLIES(mode == FindMementoMode::kForGC && v8_flags.minor_ms,
+                 object_size >= object->SizeFromMap(map));
   Address object_address = object.address();
   Address memento_address =
       object_address + ALIGN_TO_ALLOCATION_ALIGNMENT(object_size);
   Address last_memento_word_address = memento_address + kTaggedSize;
   // If the memento would be on another page, bail out immediately.
   if (!PageMetadata::OnSamePage(object_address, last_memento_word_address)) {
-    return AllocationMemento();
+    return {};
   }
 
   // If the page is being swept, treat it as if the memento was already swept
@@ -76,7 +86,7 @@ Tagged<AllocationMemento> PretenuringHandler::FindAllocationMemento(
     MemoryChunk* object_chunk = MemoryChunk::FromAddress(object_address);
     PageMetadata* object_page = PageMetadata::cast(object_chunk->Metadata());
     if (!object_page->SweepingDone()) {
-      return AllocationMemento();
+      return {};
     }
   }
 
@@ -88,23 +98,15 @@ Tagged<AllocationMemento> PretenuringHandler::FindAllocationMemento(
   MSAN_MEMORY_IS_INITIALIZED(candidate_map_slot.address(), kTaggedSize);
   if (!candidate_map_slot.Relaxed_ContainsMapValue(
           ReadOnlyRoots(heap).allocation_memento_map().ptr())) {
-    return AllocationMemento();
+    return {};
   }
 
-  // Bail out if the memento is below the age mark, which can happen when
-  // mementos survived because a page got moved within new space.
-  MemoryChunk* object_chunk = MemoryChunk::FromAddress(object_address);
-  if (object_chunk->IsFlagSet(MemoryChunk::NEW_SPACE_BELOW_AGE_MARK)) {
-    PageMetadata* object_page = PageMetadata::cast(object_chunk->Metadata());
-    Address age_mark =
-        reinterpret_cast<SemiSpace*>(object_page->owner())->age_mark();
-    if (!object_page->Contains(age_mark)) {
-      return AllocationMemento();
-    }
-    // Do an exact check in the case where the age mark is on the same page.
-    if (object_address < age_mark) {
-      return AllocationMemento();
-    }
+  // Bailout if memento is below the age mark. This is only possible for pinned
+  // pages in the scavenger. Full GC has page promotion but clears the
+  // NEW_SPACE_BELOW_AGE_MARK page flags before checking mementos.
+  if (!v8_flags.minor_ms &&
+      heap->semi_space_new_space()->IsAddressBelowAgeMark(object_address)) {
+    return {};
   }
 
   Tagged<AllocationMemento> memento_candidate =
@@ -117,19 +119,19 @@ Tagged<AllocationMemento> PretenuringHandler::FindAllocationMemento(
     case kForGC:
       return memento_candidate;
     case kForRuntime:
-      if (memento_candidate.is_null()) return AllocationMemento();
+      if (memento_candidate.is_null()) return {};
       // Either the object is the last object in the new space, or there is
       // another object of at least word size (the header map word) following
       // it, so suffices to compare ptr and top here.
       top = heap->NewSpaceTop();
       DCHECK(memento_address >= heap->NewSpaceLimit() ||
              memento_address +
-                     ALIGN_TO_ALLOCATION_ALIGNMENT(AllocationMemento::kSize) <=
+                     ALIGN_TO_ALLOCATION_ALIGNMENT(sizeof(AllocationMemento)) <=
                  top);
       if ((memento_address != top) && memento_candidate->IsValid()) {
         return memento_candidate;
       }
-      return AllocationMemento();
+      return {};
     default:
       UNREACHABLE();
   }

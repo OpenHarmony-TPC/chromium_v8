@@ -5,6 +5,9 @@
 #ifndef V8_HEAP_HEAP_INL_H_
 #define V8_HEAP_HEAP_INL_H_
 
+#include "src/heap/heap.h"
+// Include the non-inl header before the rest of the headers.
+
 #include <atomic>
 #include <optional>
 
@@ -19,7 +22,6 @@
 #include "src/heap/heap-allocator-inl.h"
 #include "src/heap/heap-layout-inl.h"
 #include "src/heap/heap-write-barrier.h"
-#include "src/heap/heap.h"
 #include "src/heap/large-spaces.h"
 #include "src/heap/memory-allocator.h"
 #include "src/heap/memory-chunk-inl.h"
@@ -72,11 +74,6 @@ RootsTable& Heap::roots_table() { return isolate()->roots_table(); }
   }
 MUTABLE_ROOT_LIST(ROOT_ACCESSOR)
 #undef ROOT_ACCESSOR
-
-Tagged<FixedArray> Heap::single_character_string_table() {
-  return Cast<FixedArray>(
-      Tagged<Object>(roots_table()[RootIndex::kSingleCharacterStringTable]));
-}
 
 #define STATIC_ROOTS_FAILED_MSG                                            \
   "Read-only heap layout changed. Run `tools/dev/gen-static-roots.py` to " \
@@ -135,10 +132,19 @@ void Heap::SetFunctionsMarkedForManualOptimization(Tagged<Object> hash_table) {
       hash_table.ptr();
 }
 
+void Heap::SetSmiStringCache(Tagged<SmiStringCache> cache) {
+  set_smi_string_cache(cache);
+}
+
+void Heap::SetDoubleStringCache(Tagged<DoubleStringCache> cache) {
+  set_double_string_cache(cache);
+}
+
 #if V8_ENABLE_WEBASSEMBLY
-void Heap::SetWasmCanonicalRttsAndJSToWasmWrappers(
-    Tagged<WeakFixedArray> rtts, Tagged<WeakFixedArray> js_to_wasm_wrappers) {
+void Heap::SetWasmCanonicalRtts(Tagged<WeakFixedArray> rtts) {
   set_wasm_canonical_rtts(rtts);
+}
+void Heap::SetJSToWasmWrappers(Tagged<WeakFixedArray> js_to_wasm_wrappers) {
   set_js_to_wasm_wrappers(js_to_wasm_wrappers);
 }
 #endif  // V8_ENABLE_WEBASSEMBLY
@@ -320,8 +326,7 @@ bool Heap::IsPendingAllocationInternal(Tagged<HeapObject> object) {
     case NEW_LO_SPACE: {
       LargeObjectSpace* large_space =
           static_cast<LargeObjectSpace*>(base_space);
-      base::SharedMutexGuard<base::kShared> guard(
-          large_space->pending_allocation_mutex());
+      base::MutexGuard guard(large_space->pending_allocation_mutex());
       return addr == large_space->pending_object();
     }
 
@@ -378,23 +383,19 @@ Tagged<Boolean> Heap::ToBoolean(bool condition) {
   return roots.boolean_value(condition);
 }
 
-int Heap::GetNextTemplateSerialNumber() {
-  int next_serial_number = next_template_serial_number().value();
-  set_next_template_serial_number(Smi::FromInt(next_serial_number + 1));
+uint32_t Heap::GetNextTemplateSerialNumber() {
+  uint32_t next_serial_number =
+      static_cast<uint32_t>(next_template_serial_number().value());
+  if (next_serial_number < Smi::kMaxValue) {
+    ++next_serial_number;
+  } else {
+    // In case of overflow, restart from a range where it's ok for serial
+    // numbers to be non-unique.
+    next_serial_number = TemplateInfo::kFirstNonUniqueSerialNumber;
+  }
+  DCHECK_NE(next_serial_number, TemplateInfo::kUninitializedSerialNumber);
+  set_next_template_serial_number(Smi::FromInt(next_serial_number));
   return next_serial_number;
-}
-
-int Heap::MaxNumberToStringCacheSize() const {
-  // Compute the size of the number string cache based on the max newspace size.
-  // The number string cache has a minimum size based on twice the initial cache
-  // size to ensure that it is bigger after being made 'full size'.
-  size_t number_string_cache_size = max_semi_space_size_ / 512;
-  number_string_cache_size =
-      std::max(static_cast<size_t>(kInitialNumberStringCacheSize * 2),
-               std::min(static_cast<size_t>(0x4000), number_string_cache_size));
-  // There is a string and a number per entry so the length is twice the number
-  // of entries.
-  return static_cast<int>(number_string_cache_size * 2);
 }
 
 void Heap::IncrementExternalBackingStoreBytes(ExternalBackingStoreType type,

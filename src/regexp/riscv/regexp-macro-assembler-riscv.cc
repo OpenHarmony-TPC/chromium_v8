@@ -202,7 +202,7 @@ void RegExpMacroAssemblerRISCV::CheckCharacterLT(base::uc16 limit,
   BranchOrBacktrack(on_less, lt, current_character(), Operand(limit));
 }
 
-void RegExpMacroAssemblerRISCV::CheckGreedyLoop(Label* on_equal) {
+void RegExpMacroAssemblerRISCV::CheckFixedLengthLoop(Label* on_equal) {
   Label backtrack_non_equal;
   __ Lw(a0, MemOperand(backtrack_stackpointer(), 0));
   __ BranchShort(&backtrack_non_equal, ne, current_input_offset(), Operand(a0));
@@ -659,8 +659,8 @@ void RegExpMacroAssemblerRISCV::PopRegExpBasePointer(Register stack_pointer_out,
   StoreRegExpStackPointerToMemory(stack_pointer_out, scratch);
 }
 
-Handle<HeapObject> RegExpMacroAssemblerRISCV::GetCode(Handle<String> source,
-                                                      RegExpFlags flags) {
+DirectHandle<HeapObject> RegExpMacroAssemblerRISCV::GetCode(
+    DirectHandle<String> source, RegExpFlags flags) {
   Label return_a0;
   if (masm_->has_exception()) {
     // If the code gets corrupted due to long regular expressions and lack of
@@ -1081,13 +1081,18 @@ void RegExpMacroAssemblerRISCV::PushBacktrack(Label* label) {
 
 void RegExpMacroAssemblerRISCV::PushCurrentPosition() {
   Push(current_input_offset());
+  CheckStackLimit();
 }
 
 void RegExpMacroAssemblerRISCV::PushRegister(int register_index,
                                              StackCheckFlag check_stack_limit) {
   __ LoadWord(a0, register_location(register_index));
   Push(a0);
-  if (check_stack_limit) CheckStackLimit();
+  if (check_stack_limit) {
+    CheckStackLimit();
+  } else if (V8_UNLIKELY(v8_flags.slow_debug_code)) {
+    AssertAboveStackLimitMinusSlack();
+  }
 }
 
 void RegExpMacroAssemblerRISCV::ReadCurrentPositionFromRegister(int reg) {
@@ -1336,6 +1341,27 @@ void RegExpMacroAssemblerRISCV::CheckStackLimit() {
   __ LoadWord(a0, MemOperand(a0));
   SafeCall(&stack_overflow_label_, Uless_equal, backtrack_stackpointer(),
            Operand(a0));
+}
+
+void RegExpMacroAssemblerRISCV::AssertAboveStackLimitMinusSlack() {
+  // ExternalReference stack_limit =
+  //     ExternalReference::address_of_regexp_stack_limit_address(
+  //         masm_->isolate());
+  // __ li(a0, Operand(stack_limit));
+  // __ LoadWord(a0, MemOperand(a0, 0));
+  // SafeCall(&stack_overflow_label_, ls, backtrack_stackpointer(),
+  // Operand(a0));
+  DCHECK(v8_flags.slow_debug_code);
+  Label no_stack_overflow;
+  ASM_CODE_COMMENT_STRING(masm_.get(), "AssertAboveStackLimitMinusSlack");
+  auto l = ExternalReference::address_of_regexp_stack_limit_address(isolate());
+  __ li(a0, l);
+  __ LoadWord(a0, MemOperand(a0, 0));
+  __ SubWord(a0, a0, Operand(RegExpStack::kStackLimitSlackSize));
+  __ Branch(&no_stack_overflow, Ugreater, backtrack_stackpointer(),
+            Operand(a0));
+  __ DebugBreak();
+  __ bind(&no_stack_overflow);
 }
 
 void RegExpMacroAssemblerRISCV::LoadCurrentCharacterUnchecked(int cp_offset,

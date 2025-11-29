@@ -14,6 +14,7 @@
 #include "src/codegen/macro-assembler.h"
 #include "src/codegen/reloc-info-inl.h"
 #include "src/common/globals.h"
+#include "src/common/ptr-compr.h"
 #include "src/handles/global-handles-inl.h"
 #include "src/handles/handles-inl.h"
 #include "src/handles/handles.h"
@@ -92,6 +93,7 @@ class ConcurrentAllocationThread final : public v8::base::Thread {
 };
 
 UNINITIALIZED_TEST(ConcurrentAllocationInOldSpace) {
+  v8_flags.detect_ineffective_gcs_near_heap_limit = false;
   v8_flags.max_old_space_size = 32;
   v8_flags.stress_concurrent_allocation = false;
 
@@ -134,21 +136,17 @@ UNINITIALIZED_TEST(ConcurrentAllocationInOldSpaceFromMainThread) {
   Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
 
   {
-    PtrComprCageAccessScope ptr_compr_cage_access_scope(i_isolate);
+    v8::Isolate::Scope isolate_scope(isolate);
     AllocateSomeObjects(i_isolate->main_thread_local_heap());
   }
   isolate->Dispose();
 }
 
 UNINITIALIZED_TEST(ConcurrentAllocationWhileMainThreadIsParked) {
-#ifndef V8_ENABLE_CONSERVATIVE_STACK_SCANNING
-  v8_flags.max_old_space_size = 4;
-#else
   // With CSS, it is expected that the GCs triggered by concurrent allocation
   // will reclaim less memory. If this test fails, this limit should probably
   // be further increased.
-  v8_flags.max_old_space_size = 10;
-#endif
+  v8_flags.max_old_space_size = v8_flags.conservative_stack_scanning ? 10 : 4;
   v8_flags.stress_concurrent_allocation = false;
 
   v8::Isolate::CreateParams create_params;
@@ -177,14 +175,10 @@ UNINITIALIZED_TEST(ConcurrentAllocationWhileMainThreadIsParked) {
 }
 
 UNINITIALIZED_TEST(ConcurrentAllocationWhileMainThreadParksAndUnparks) {
-#ifndef V8_ENABLE_CONSERVATIVE_STACK_SCANNING
-  v8_flags.max_old_space_size = 4;
-#else
   // With CSS, it is expected that the GCs triggered by concurrent allocation
   // will reclaim less memory. If this test fails, this limit should probably
   // be further increased.
-  v8_flags.max_old_space_size = 10;
-#endif
+  v8_flags.max_old_space_size = v8_flags.conservative_stack_scanning ? 10 : 4;
   v8_flags.stress_concurrent_allocation = false;
   v8_flags.incremental_marking = false;
   i::FlagList::EnforceFlagImplications();
@@ -222,14 +216,10 @@ UNINITIALIZED_TEST(ConcurrentAllocationWhileMainThreadParksAndUnparks) {
 }
 
 UNINITIALIZED_TEST(ConcurrentAllocationWhileMainThreadRunsWithSafepoints) {
-#ifndef V8_ENABLE_CONSERVATIVE_STACK_SCANNING
-  v8_flags.max_old_space_size = 4;
-#else
   // With CSS, it is expected that the GCs triggered by concurrent allocation
   // will reclaim less memory. If this test fails, this limit should probably
   // be further increased.
-  v8_flags.max_old_space_size = 10;
-#endif
+  v8_flags.max_old_space_size = v8_flags.conservative_stack_scanning ? 10 : 4;
   v8_flags.stress_concurrent_allocation = false;
   v8_flags.incremental_marking = false;
   i::FlagList::EnforceFlagImplications();
@@ -302,6 +292,7 @@ class LargeObjectConcurrentAllocationThread final : public v8::base::Thread {
 };
 
 UNINITIALIZED_TEST(ConcurrentAllocationInLargeSpace) {
+  v8_flags.detect_ineffective_gcs_near_heap_limit = false;
   v8_flags.max_old_space_size = 32;
   v8_flags.stress_concurrent_allocation = false;
 
@@ -385,7 +376,7 @@ UNINITIALIZED_TEST(ConcurrentBlackAllocation) {
   Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
   Heap* heap = i_isolate->heap();
   {
-    PtrComprCageAccessScope ptr_compr_cage_access_scope(i_isolate);
+    v8::Isolate::Scope isolate_scope(isolate);
 
     std::vector<Address> objects;
 
@@ -555,14 +546,14 @@ UNINITIALIZED_TEST(ConcurrentRecordRelocSlot) {
       // Arm64 requires stack alignment.
       UseScratchRegisterScope temps(&masm);
       Register tmp = temps.AcquireX();
-      masm.Mov(tmp, Operand(ReadOnlyRoots(heap).undefined_value_handle()));
+      masm.Mov(tmp, Operand(i_isolate->factory()->undefined_value()));
       masm.Push(tmp, padreg);
 #else
-      masm.Push(ReadOnlyRoots(heap).undefined_value_handle());
+      masm.Push(i_isolate->factory()->undefined_value());
 #endif
       CodeDesc desc;
       masm.GetCode(i_isolate, &desc);
-      Handle<Code> code_handle =
+      DirectHandle<Code> code_handle =
           Factory::CodeBuilder(i_isolate, desc, CodeKind::FOR_TESTING).Build();
       // Globalize the handle for |code| for the incremental marker to mark it.
       i_isolate->global_handles()->Create(*code_handle);

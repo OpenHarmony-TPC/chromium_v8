@@ -106,7 +106,7 @@ class JSHeapBroker;
 #endif
 
 // Similar to TEST, but used when test definitions appear as members of a
-// (probably parameterized) class. This allows re-using the given tests multiple
+// (probably parameterized) class. This allows reusing the given tests multiple
 // times. For this to work, the following conditions must hold:
 //   1. The class has a template parameter named kTestFileName of type  char
 //      const*, which is instantiated with __FILE__ at the *use site*, in order
@@ -333,16 +333,17 @@ class LocalContext {
                v8::ExtensionConfiguration* extensions = nullptr,
                v8::Local<v8::ObjectTemplate> global_template =
                    v8::Local<v8::ObjectTemplate>(),
-               v8::Local<v8::Value> global_object = v8::Local<v8::Value>()) {
-    Initialize(isolate, extensions, global_template, global_object);
+               v8::Local<v8::Value> global_object = v8::Local<v8::Value>())
+      : isolate_(isolate) {
+    Initialize(extensions, global_template, global_object);
   }
 
   LocalContext(v8::ExtensionConfiguration* extensions = nullptr,
                v8::Local<v8::ObjectTemplate> global_template =
                    v8::Local<v8::ObjectTemplate>(),
-               v8::Local<v8::Value> global_object = v8::Local<v8::Value>()) {
-    Initialize(CcTest::isolate(), extensions, global_template, global_object);
-  }
+               v8::Local<v8::Value> global_object = v8::Local<v8::Value>())
+      : LocalContext(CcTest::isolate(), extensions, global_template,
+                     global_object) {}
 
   virtual ~LocalContext();
 
@@ -350,17 +351,21 @@ class LocalContext {
   v8::Context* operator*() { return operator->(); }
   bool IsReady() { return !context_.IsEmpty(); }
 
+  v8::Isolate* isolate() const { return isolate_; }
+  i::Isolate* i_isolate() const {
+    return reinterpret_cast<i::Isolate*>(isolate_);
+  }
   v8::Local<v8::Context> local() const {
     return v8::Local<v8::Context>::New(isolate_, context_);
   }
 
  private:
-  void Initialize(v8::Isolate* isolate, v8::ExtensionConfiguration* extensions,
+  void Initialize(v8::ExtensionConfiguration* extensions,
                   v8::Local<v8::ObjectTemplate> global_template,
                   v8::Local<v8::Value> global_object);
 
   v8::Persistent<v8::Context> context_;
-  v8::Isolate* isolate_;
+  v8::Isolate* const isolate_;
 };
 
 
@@ -381,12 +386,12 @@ static inline uint16_t* AsciiToTwoByteString(const char16_t* source,
 }
 
 template <typename T>
-static inline i::Handle<T> GetGlobal(const char* name) {
+static inline i::DirectHandle<T> GetGlobal(const char* name) {
   i::Isolate* isolate = CcTest::i_isolate();
-  i::Handle<i::String> str_name =
+  i::DirectHandle<i::String> str_name =
       isolate->factory()->InternalizeUtf8String(name);
 
-  i::Handle<i::Object> value =
+  i::DirectHandle<i::Object> value =
       i::Object::GetProperty(isolate, isolate->global_object(), str_name)
           .ToHandleChecked();
   return i::Cast<T>(value);

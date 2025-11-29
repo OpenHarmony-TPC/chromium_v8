@@ -14,10 +14,10 @@ namespace internal {
 
 class FeedbackVectorTest : public TestWithContext {
  protected:
-  Handle<JSFunction> GetFunction(const char* name) {
+  DirectHandle<JSFunction> GetFunction(const char* name) {
     v8::MaybeLocal<v8::Value> v8_f =
         v8_context()->Global()->Get(v8_context(), NewString(name));
-    Handle<JSFunction> f =
+    DirectHandle<JSFunction> f =
         Cast<JSFunction>(v8::Utils::OpenHandle(*v8_f.ToLocalChecked()));
     return f;
   }
@@ -474,7 +474,7 @@ TEST_F(FeedbackVectorTest, VectorLoadICStates) {
 
   TryRunJS("f({ blarg: 3, torino: 10, foo: 2 })");
   CHECK_EQ(InlineCacheState::POLYMORPHIC, nexus.ic_state());
-  MapHandles maps;
+  MapHandles maps(isolate);
   nexus.ExtractMaps(&maps);
   CHECK_EQ(4, maps.size());
 
@@ -561,7 +561,7 @@ TEST_F(FeedbackVectorTest, VectorLoadICOnSmi) {
   TryRunJS("f(o)");
   CHECK_EQ(InlineCacheState::POLYMORPHIC, nexus.ic_state());
 
-  MapHandles maps;
+  MapHandles maps(isolate);
   nexus.ExtractMaps(&maps);
   CHECK_EQ(2, maps.size());
 
@@ -583,7 +583,7 @@ TEST_F(FeedbackVectorTest, VectorLoadICOnSmi) {
   // The degree of polymorphism doesn't change.
   TryRunJS("f(100)");
   CHECK_EQ(InlineCacheState::POLYMORPHIC, nexus.ic_state());
-  MapHandles maps2;
+  MapHandles maps2(isolate);
   nexus.ExtractMaps(&maps2);
   CHECK_EQ(2, maps2.size());
 }
@@ -750,7 +750,7 @@ TEST_F(FeedbackVectorTest, VectorStoreICBasic) {
       "f(a);");
   DirectHandle<JSFunction> f = GetFunction("f");
   // There should be one IC slot.
-  Handle<FeedbackVector> feedback_vector(f->feedback_vector(), f->GetIsolate());
+  Handle<FeedbackVector> feedback_vector(f->feedback_vector(), i_isolate());
   FeedbackVectorHelper helper(feedback_vector);
   CHECK_EQ(1, helper.slot_count());
   FeedbackSlot slot(0);
@@ -775,7 +775,7 @@ TEST_F(FeedbackVectorTest, DefineNamedOwnIC) {
       "f(3);");
   DirectHandle<JSFunction> f = GetFunction("f");
   // There should be one IC slot.
-  Handle<FeedbackVector> feedback_vector(f->feedback_vector(), f->GetIsolate());
+  Handle<FeedbackVector> feedback_vector(f->feedback_vector(), i_isolate());
   FeedbackVectorHelper helper(feedback_vector);
   CHECK_EQ(2, helper.slot_count());
   CHECK_SLOT_KIND(helper, 0, FeedbackSlotKind::kLiteral);

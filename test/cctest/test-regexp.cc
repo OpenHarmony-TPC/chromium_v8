@@ -62,7 +62,7 @@ class InterruptTest {
   InterruptTest()
       : i_thread(this),
         env_(),
-        isolate_(env_->GetIsolate()),
+        isolate_(env_.isolate()),
         sem_(0),
         ran_test_body_(false),
         ran_to_completion_(false) {}
@@ -160,7 +160,7 @@ class InterruptTest {
     HandleScope handle_scope(isolate_);
     i::Isolate* i_isolate = this->i_isolate();
     // The string must be in old space to support externalization.
-    i::Handle<i::String> i_one_byte_string =
+    i::DirectHandle<i::String> i_one_byte_string =
         i_isolate->factory()->NewStringFromAsciiChecked(
             &kOneByteSubjectString[0], i::AllocationType::kOld);
     SetSubjectString(Utils::ToLocal(i_one_byte_string));
@@ -170,7 +170,7 @@ class InterruptTest {
     HandleScope handle_scope(isolate_);
     i::Isolate* i_isolate = this->i_isolate();
     // The string must be in old space to support externalization.
-    i::Handle<i::String> i_two_byte_string =
+    i::DirectHandle<i::String> i_two_byte_string =
         i_isolate->factory()
             ->NewStringFromTwoByte(
                 base::Vector<const base::uc16>(&kTwoByteSubjectString[0],
@@ -184,7 +184,7 @@ class InterruptTest {
     env_->Global()
         ->Set(env_.local(), v8_str("subject_string"), subject)
         .FromJust();
-    subject_string_handle_.Reset(env_->GetIsolate(), subject);
+    subject_string_handle_.Reset(env_.isolate(), subject);
   }
 
   Local<String> GetSubjectString() const {
@@ -208,7 +208,7 @@ class InterruptTest {
 
     DCHECK(!subject_string_handle_.IsEmpty());
 
-    TryCatch try_catch(env_->GetIsolate());
+    TryCatch try_catch(env_.isolate());
 
     isolate_->RequestInterrupt(&SignalSemaphore, this);
     MaybeLocal<Object> result = regexp_handle_.Get(isolate_)->Exec(

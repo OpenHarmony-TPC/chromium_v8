@@ -50,7 +50,7 @@ inline Maybe<OuterContext> GetModuleContext(OptimizedCompilationInfo* info) {
   while (!IsNativeContext(*current)) {
     if (current->IsModuleContext()) {
       return Just(OuterContext(
-          info->CanonicalHandle(current, current->GetIsolate()), distance));
+          info->CanonicalHandle(current, Isolate::Current()), distance));
     }
     current = current->previous();
     distance++;
@@ -84,7 +84,7 @@ class TFPipelineData {
         register_allocation_zone_(register_allocation_zone_scope_.zone()),
         assembler_options_(AssemblerOptions::Default(isolate)) {
     PhaseScope scope(pipeline_statistics, "V8.TFInitPipelineData");
-    graph_ = graph_zone_->New<Graph>(graph_zone_);
+    graph_ = graph_zone_->New<TFGraph>(graph_zone_);
     source_positions_ = graph_zone_->New<SourcePositionTable>(graph_);
     node_origins_ = info->trace_turbo_json()
                         ? graph_zone_->New<NodeOriginTable>(graph_)
@@ -122,7 +122,7 @@ class TFPipelineData {
         allocator_(wasm_engine->allocator()),
         info_(info),
         debug_name_(info_->GetDebugName()),
-        may_have_unverifiable_graph_(v8_flags.turboshaft_wasm),
+        may_have_unverifiable_graph_(true),
         zone_stats_(zone_stats),
         pipeline_statistics_(pipeline_statistics),
         graph_zone_(zone_stats_, kGraphZoneName, kCompressGraphZone),
@@ -149,8 +149,8 @@ class TFPipelineData {
 
   // For CodeStubAssembler and machine graph testing entry point.
   TFPipelineData(ZoneStats* zone_stats, OptimizedCompilationInfo* info,
-                 Isolate* isolate, AccountingAllocator* allocator, Graph* graph,
-                 JSGraph* jsgraph, Schedule* schedule,
+                 Isolate* isolate, AccountingAllocator* allocator,
+                 TFGraph* graph, JSGraph* jsgraph, Schedule* schedule,
                  SourcePositionTable* source_positions,
                  NodeOriginTable* node_origins, JumpOptimizationInfo* jump_opt,
                  const AssemblerOptions& assembler_options,
@@ -253,8 +253,8 @@ class TFPipelineData {
   bool MayHaveUnverifiableGraph() const { return may_have_unverifiable_graph_; }
 
   Zone* graph_zone() { return graph_zone_; }
-  Graph* graph() const { return graph_; }
-  void set_graph(Graph* graph) { graph_ = graph; }
+  TFGraph* graph() const { return graph_; }
+  void set_graph(TFGraph* graph) { graph_ = graph; }
   template <typename T>
   using GraphZonePointer = turboshaft::ZoneWithNamePointer<T, kGraphZoneName>;
   void InitializeWithGraphZone(
@@ -271,7 +271,7 @@ class TFPipelineData {
     node_origins_ = node_origins;
 
     // Allocate a new graph and schedule.
-    graph_ = graph_zone_.New<Graph>(graph_zone_);
+    graph_ = graph_zone_.New<TFGraph>(graph_zone_);
     schedule_ = graph_zone_.New<Schedule>(graph_zone_, node_count_hint);
 
     // Initialize node builders.
@@ -304,11 +304,11 @@ class TFPipelineData {
   JSOperatorBuilder* javascript() const { return javascript_; }
   JSGraph* jsgraph() const { return jsgraph_; }
   MachineGraph* mcgraph() const { return mcgraph_; }
-  Handle<NativeContext> native_context() const {
-    return handle(info()->native_context(), isolate());
+  DirectHandle<NativeContext> native_context() const {
+    return direct_handle(info()->native_context(), isolate());
   }
-  Handle<JSGlobalObject> global_object() const {
-    return handle(info()->global_object(), isolate());
+  DirectHandle<JSGlobalObject> global_object() const {
+    return direct_handle(info()->global_object(), isolate());
   }
 
   JSHeapBroker* broker() const { return broker_.get(); }
@@ -588,7 +588,7 @@ class TFPipelineData {
   // All objects in the following group of fields are allocated in graph_zone_.
   // They are all set to nullptr when the graph_zone_ is destroyed.
   turboshaft::ZoneWithName<kGraphZoneName> graph_zone_;
-  Graph* graph_ = nullptr;
+  TFGraph* graph_ = nullptr;
   SourcePositionTable* source_positions_ = nullptr;
   NodeOriginTable* node_origins_ = nullptr;
   SimplifiedOperatorBuilder* simplified_ = nullptr;

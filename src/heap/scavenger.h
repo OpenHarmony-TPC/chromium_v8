@@ -5,12 +5,15 @@
 #ifndef V8_HEAP_SCAVENGER_H_
 #define V8_HEAP_SCAVENGER_H_
 
+#include <atomic>
+
 #include "src/base/platform/condition-variable.h"
 #include "src/heap/base/worklist.h"
 #include "src/heap/ephemeron-remembered-set.h"
 #include "src/heap/evacuation-allocator.h"
 #include "src/heap/heap-visitor.h"
 #include "src/heap/index-generator.h"
+#include "src/heap/memory-chunk.h"
 #include "src/heap/mutable-page-metadata.h"
 #include "src/heap/parallel-work-item.h"
 #include "src/heap/pretenuring-handler.h"
@@ -29,7 +32,6 @@ enum class CopyAndForwardResult {
   FAILURE
 };
 
-using ObjectAndSize = std::pair<Tagged<HeapObject>, int>;
 using SurvivingNewLargeObjectsMap =
     std::unordered_map<Tagged<HeapObject>, Tagged<Map>, Object::Hasher>;
 using SurvivingNewLargeObjectMapEntry =
@@ -39,59 +41,30 @@ class ScavengerCollector;
 
 class Scavenger {
  public:
-  struct PromotionListEntry {
+  static constexpr int kCopiedListSegmentSize = 256;
+  static constexpr int kPinnedListSegmentSize = 64;
+  static constexpr int kPromotedListSegmentSize = 256;
+
+  using CopiedList =
+      ::heap::base::Worklist<Tagged<HeapObject>, kCopiedListSegmentSize>;
+
+  using ObjectAndMap = std::pair<Tagged<HeapObject>, Tagged<Map>>;
+  using PinnedList =
+      ::heap::base::Worklist<ObjectAndMap, kPinnedListSegmentSize>;
+
+  struct PromotedListEntry {
     Tagged<HeapObject> heap_object;
     Tagged<Map> map;
     int size;
   };
+  using PromotedList =
+      ::heap::base::Worklist<PromotedListEntry, kPromotedListSegmentSize>;
 
-  class PromotionList {
-   public:
-    static constexpr size_t kRegularObjectPromotionListSegmentSize = 256;
-    static constexpr size_t kLargeObjectPromotionListSegmentSize = 4;
-
-    using RegularObjectPromotionList =
-        ::heap::base::Worklist<ObjectAndSize,
-                               kRegularObjectPromotionListSegmentSize>;
-    using LargeObjectPromotionList =
-        ::heap::base::Worklist<PromotionListEntry,
-                               kLargeObjectPromotionListSegmentSize>;
-
-    class Local {
-     public:
-      explicit Local(PromotionList* promotion_list);
-
-      inline void PushRegularObject(Tagged<HeapObject> object, int size);
-      inline void PushLargeObject(Tagged<HeapObject> object, Tagged<Map> map,
-                                  int size);
-      inline size_t LocalPushSegmentSize() const;
-      inline bool Pop(struct PromotionListEntry* entry);
-      inline bool IsGlobalPoolEmpty() const;
-      inline bool ShouldEagerlyProcessPromotionList() const;
-      inline void Publish();
-
-     private:
-      RegularObjectPromotionList::Local regular_object_promotion_list_local_;
-      LargeObjectPromotionList::Local large_object_promotion_list_local_;
-    };
-
-    inline bool IsEmpty() const;
-    inline size_t Size() const;
-
-   private:
-    RegularObjectPromotionList regular_object_promotion_list_;
-    LargeObjectPromotionList large_object_promotion_list_;
-  };
-
-  static const int kCopiedListSegmentSize = 256;
-
-  using CopiedList =
-      ::heap::base::Worklist<ObjectAndSize, kCopiedListSegmentSize>;
   using EmptyChunksList = ::heap::base::Worklist<MutablePageMetadata*, 64>;
 
   Scavenger(ScavengerCollector* collector, Heap* heap, bool is_logging,
             EmptyChunksList* empty_chunks, CopiedList* copied_list,
-            PromotionList* promotion_list,
+            PinnedList* pinned_list, PromotedList* promoted_list,
             EphemeronRememberedSet::TableList* ephemeron_table_list);
 
   // Entry point for scavenging an old generation page. For scavenging single
@@ -108,6 +81,13 @@ class Scavenger {
 
   void AddEphemeronHashTable(Tagged<EphemeronHashTable> table);
 
+  // Returns true if the object is a large young object, and false otherwise.
+  bool PromoteIfLargeObject(Tagged<HeapObject> object);
+
+  void PinAndPushObject(MemoryChunk* chunk, Tagged<HeapObject> object,
+                        MapWord map_word);
+  void VisitPinnedObjects();
+
   size_t bytes_copied() const { return copied_size_; }
   size_t bytes_promoted() const { return promoted_size_; }
 
@@ -120,7 +100,7 @@ class Scavenger {
 
   inline Heap* heap() { return heap_; }
 
-  inline void PageMemoryFence(Tagged<MaybeObject> object);
+  inline void SynchronizePageAccess(Tagged<MaybeObject> object) const;
 
   void AddPageToSweeperIfNecessary(MutablePageMetadata* page);
 
@@ -202,11 +182,19 @@ class Scavenger {
                                         Tagged<Map> map, int size);
   void RememberPromotedEphemeron(Tagged<EphemeronHashTable> table, int index);
 
+  V8_INLINE bool ShouldEagerlyProcessPromotedList() const;
+
+  void PushPinnedObject(Tagged<HeapObject> object, Tagged<Map> map,
+                        int object_size);
+  void PushPinnedPromotedObject(Tagged<HeapObject> object, Tagged<Map> map,
+                                int object_size);
+
   ScavengerCollector* const collector_;
   Heap* const heap_;
   EmptyChunksList::Local local_empty_chunks_;
-  PromotionList::Local local_promotion_list_;
   CopiedList::Local local_copied_list_;
+  PinnedList::Local local_pinned_list_;
+  PromotedList::Local local_promoted_list_;
   EphemeronRememberedSet::TableList::Local local_ephemeron_table_list_;
   PretenuringHandler::PretenuringFeedbackMap local_pretenuring_feedback_;
   EphemeronRememberedSet::TableMap local_ephemeron_remembered_set_;
@@ -216,8 +204,6 @@ class Scavenger {
   EvacuationAllocator allocator_;
 
   const bool is_logging_;
-  const bool is_incremental_marking_;
-  const bool is_compacting_;
   const bool shared_string_table_;
   const bool mark_shared_heap_;
   const bool shortcut_strings_;
@@ -247,12 +233,21 @@ class RootScavengeVisitor final : public RootVisitor {
 
 class ScavengerCollector {
  public:
+  struct PinnedObjectEntry {
+    Address address;
+    MapWord map_word;
+    size_t size;
+  };
+  using PinnedObjects = std::vector<PinnedObjectEntry>;
+
   static const int kMaxScavengerTasks = 8;
   static const int kMainThreadId = 0;
 
   explicit ScavengerCollector(Heap* heap);
 
   void CollectGarbage();
+
+  void CompleteSweepingQuarantinedPagesIfNeeded();
 
  private:
   class JobTask : public v8::JobTask {
@@ -262,7 +257,8 @@ class ScavengerCollector {
             std::vector<std::pair<ParallelWorkItem, MutablePageMetadata*>>
                 old_to_new_chunks,
             const Scavenger::CopiedList& copied_list,
-            const Scavenger::PromotionList& promotion_list);
+            const Scavenger::PinnedList& pinned_list,
+            const Scavenger::PromotedList& promoted_list);
 
     void Run(JobDelegate* delegate) override;
     size_t GetMaxConcurrency(size_t worker_count) const override;
@@ -272,6 +268,7 @@ class ScavengerCollector {
    private:
     void ProcessItems(JobDelegate* delegate, Scavenger* scavenger);
     void ConcurrentScavengePages(Scavenger* scavenger);
+    void VisitPinnedObjects(Scavenger* scavenger);
 
     ScavengerCollector* collector_;
 
@@ -282,9 +279,78 @@ class ScavengerCollector {
     IndexGenerator generator_;
 
     const Scavenger::CopiedList& copied_list_;
-    const Scavenger::PromotionList& promotion_list_;
+    const Scavenger::PinnedList& pinned_list_;
+    const Scavenger::PromotedList& promoted_list_;
 
     const uint64_t trace_id_;
+  };
+
+  // Quarantined pages must be swept before the next GC. If the next GC uses
+  // conservative scanning and encounters a stale object left over from a
+  // previous GC, this can result in memory corruptions.
+  class QuarantinedPageSweeper {
+   public:
+    explicit QuarantinedPageSweeper(Heap* heap) : heap_(heap) {}
+    ~QuarantinedPageSweeper() {
+      if (IsSweeping()) {
+        FinishSweeping();
+      }
+    }
+
+    void StartSweeping(const PinnedObjects&& pinned_objects);
+    void FinishSweeping();
+    bool IsSweeping() const {
+      DCHECK_IMPLIES(job_handle_, job_handle_->IsValid());
+      return job_handle_.get();
+    }
+
+   private:
+    class JobTask : public v8::JobTask {
+     public:
+      JobTask(Heap* heap, const PinnedObjects&& pinned_objects);
+      ~JobTask() {
+        DCHECK(is_done_.load(std::memory_order_relaxed));
+        DCHECK(pinned_object_per_page_.empty());
+        DCHECK(pinned_objects_.empty());
+      }
+
+      void Run(JobDelegate* delegate) override;
+
+      size_t GetMaxConcurrency(size_t worker_count) const override {
+        return is_done_.load(std::memory_order_relaxed) ? 0 : 1;
+      }
+
+      uint64_t trace_id() const { return trace_id_; }
+
+     private:
+      using ObjectsAndSizes = std::vector<std::pair<Address, size_t>>;
+      using PinnedObjectPerPage =
+          std::unordered_map<MemoryChunk*, ObjectsAndSizes,
+                             base::hash<MemoryChunk*>>;
+      using FreeSpaceHandler =
+          std::function<void(Heap*, Address, size_t, bool)>;
+      static void CreateFillerFreeSpaceHandler(Heap* heap, Address address,
+                                               size_t size, bool should_zap);
+      static void AddToFreeListFreeSpaceHandler(Heap* heap, Address address,
+                                                size_t size, bool should_zap);
+
+      size_t SweepPage(FreeSpaceHandler free_space_handler, MemoryChunk* chunk,
+                       PageMetadata* page,
+                       ObjectsAndSizes& pinned_objects_on_page);
+      void CreateFillerFreeHandler(Address address, size_t size);
+
+      Heap* const heap_;
+      const uint64_t trace_id_;
+      const bool should_zap_;
+      PinnedObjects pinned_objects_;
+
+      std::atomic_bool is_done_{false};
+      PinnedObjectPerPage pinned_object_per_page_;
+      PinnedObjectPerPage::iterator next_page_iterator_;
+    };
+
+    Heap* const heap_;
+    std::unique_ptr<JobHandle> job_handle_;
   };
 
   void MergeSurvivingNewLargeObjects(
@@ -301,11 +367,6 @@ class ScavengerCollector {
 
   void SweepArrayBufferExtensions();
 
-  void IterateStackAndScavenge(
-      RootScavengeVisitor* root_scavenge_visitor,
-      std::vector<std::unique_ptr<Scavenger>>* scavengers,
-      Scavenger& main_thread_scavenger);
-
   size_t FetchAndResetConcurrencyEstimate() {
     const size_t estimate =
         estimate_concurrency_.exchange(0, std::memory_order_relaxed);
@@ -316,6 +377,7 @@ class ScavengerCollector {
   Heap* const heap_;
   SurvivingNewLargeObjectsMap surviving_new_large_objects_;
   std::atomic<size_t> estimate_concurrency_{0};
+  QuarantinedPageSweeper quarantined_page_sweeper_;
 
   friend class Scavenger;
 };

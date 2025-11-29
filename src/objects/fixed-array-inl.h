@@ -5,15 +5,19 @@
 #ifndef V8_OBJECTS_FIXED_ARRAY_INL_H_
 #define V8_OBJECTS_FIXED_ARRAY_INL_H_
 
+#include "src/objects/fixed-array.h"
+// Include the non-inl header before the rest of the headers.
+
 #include <optional>
 
 #include "src/common/globals.h"
+#include "src/common/ptr-compr-inl.h"
 #include "src/handles/handles-inl.h"
 #include "src/heap/heap-write-barrier-inl.h"
 #include "src/numbers/conversions.h"
 #include "src/objects/bigint.h"
 #include "src/objects/compressed-slots.h"
-#include "src/objects/fixed-array.h"
+#include "src/objects/hole.h"
 #include "src/objects/map.h"
 #include "src/objects/maybe-object-inl.h"
 #include "src/objects/objects-inl.h"
@@ -331,7 +335,8 @@ Handle<TrustedFixedArray> TrustedFixedArray::New(IsolateT* isolate,
 // static
 template <class IsolateT>
 Handle<ProtectedFixedArray> ProtectedFixedArray::New(IsolateT* isolate,
-                                                     int capacity) {
+                                                     int capacity,
+                                                     bool shared) {
   if (V8_UNLIKELY(static_cast<unsigned>(capacity) >
                   ProtectedFixedArray::kMaxLength)) {
     FATAL("Fatal JavaScript invalid size error %d (see crbug.com/1201626)",
@@ -339,8 +344,9 @@ Handle<ProtectedFixedArray> ProtectedFixedArray::New(IsolateT* isolate,
   }
 
   std::optional<DisallowGarbageCollection> no_gc;
-  Handle<ProtectedFixedArray> result = Cast<ProtectedFixedArray>(
-      Allocate(isolate, capacity, &no_gc, AllocationType::kTrusted));
+  Handle<ProtectedFixedArray> result = Cast<ProtectedFixedArray>(Allocate(
+      isolate, capacity, &no_gc,
+      shared ? AllocationType::kSharedTrusted : AllocationType::kTrusted));
   MemsetTagged((*result)->RawFieldOfFirstElement(), Smi::zero(), capacity);
   return result;
 }
@@ -387,7 +393,10 @@ constexpr int TaggedArrayBase<D, S, P>::NewCapacityForIndex(int index,
 
 TQ_OBJECT_CONSTRUCTORS_IMPL(WeakArrayList)
 
-NEVER_READ_ONLY_SPACE_IMPL(WeakArrayList)
+inline int WeakArrayList::capacity(RelaxedLoadTag) const {
+  int value = TaggedField<Smi>::Relaxed_Load(*this, kCapacityOffset).value();
+  return value;
+}
 
 bool FixedArray::is_the_hole(Isolate* isolate, int index) {
   return IsTheHole(get(index), isolate);
@@ -431,7 +440,9 @@ Handle<FixedArray> FixedArray::Resize(Isolate* isolate,
   return ys;
 }
 
-inline int WeakArrayList::AllocatedSize() const { return SizeFor(capacity()); }
+inline int WeakArrayList::AllocatedSize() const {
+  return SizeFor(capacity(kRelaxedLoad));
+}
 
 template <class D, class S, class P>
 bool PrimitiveArrayBase<D, S, P>::IsInBounds(int index) const {
@@ -548,7 +559,11 @@ uint64_t FixedDoubleArray::get_representation(int index) {
 Handle<Object> FixedDoubleArray::get(Tagged<FixedDoubleArray> array, int index,
                                      Isolate* isolate) {
   if (array->is_the_hole(index)) {
-    return ReadOnlyRoots(isolate).the_hole_value_handle();
+    return isolate->factory()->the_hole_value();
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+  } else if (array->is_undefined(index)) {
+    return isolate->factory()->undefined_value();
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
   } else {
     return isolate->factory()->NewNumber(array->get_scalar(index));
   }
@@ -561,6 +576,18 @@ void FixedDoubleArray::set(int index, double value) {
   values()[index].set_value(value);
   DCHECK(!is_the_hole(index));
 }
+
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+void FixedDoubleArray::set_undefined(int index) {
+  values()[index].set_value(UndefinedNan());
+  DCHECK(!is_the_hole(index));
+  DCHECK(is_undefined(index));
+}
+
+bool FixedDoubleArray::is_undefined(int index) {
+  return get_representation(index) == kUndefinedNanInt64;
+}
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
 
 void FixedDoubleArray::set_the_hole(Isolate* isolate, int index) {
   set_the_hole(index);
@@ -594,9 +621,9 @@ void FixedDoubleArray::FillWithHoles(int from, int to) {
 
 // static
 template <class IsolateT>
-Handle<WeakFixedArray> WeakFixedArray::New(IsolateT* isolate, int capacity,
-                                           AllocationType allocation,
-                                           MaybeHandle<Object> initial_value) {
+Handle<WeakFixedArray> WeakFixedArray::New(
+    IsolateT* isolate, int capacity, AllocationType allocation,
+    MaybeDirectHandle<Object> initial_value) {
   CHECK_LE(static_cast<unsigned>(capacity), kMaxCapacity);
 
   if (V8_UNLIKELY(capacity == 0)) {
@@ -625,6 +652,21 @@ Handle<TrustedWeakFixedArray> TrustedWeakFixedArray::New(IsolateT* isolate,
 
   std::optional<DisallowGarbageCollection> no_gc;
   Handle<TrustedWeakFixedArray> result = Cast<TrustedWeakFixedArray>(
+      Allocate(isolate, capacity, &no_gc, AllocationType::kTrusted));
+  MemsetTagged((*result)->RawFieldOfFirstElement(), Smi::zero(), capacity);
+  return result;
+}
+
+template <class IsolateT>
+Handle<ProtectedWeakFixedArray> ProtectedWeakFixedArray::New(IsolateT* isolate,
+                                                             int capacity) {
+  if (V8_UNLIKELY(static_cast<unsigned>(capacity) >
+                  TrustedFixedArray::kMaxLength)) {
+    FATAL("Fatal JavaScript invalid size error %d (see crbug.com/1201626)",
+          capacity);
+  }
+  std::optional<DisallowGarbageCollection> no_gc;
+  Handle<ProtectedWeakFixedArray> result = Cast<ProtectedWeakFixedArray>(
       Allocate(isolate, capacity, &no_gc, AllocationType::kTrusted));
   MemsetTagged((*result)->RawFieldOfFirstElement(), Smi::zero(), capacity);
   return result;
@@ -687,15 +729,15 @@ void ArrayList ::set_length(int value) {
 
 // static
 template <class IsolateT>
-Handle<ArrayList> ArrayList::New(IsolateT* isolate, int capacity,
-                                 AllocationType allocation) {
+DirectHandle<ArrayList> ArrayList::New(IsolateT* isolate, int capacity,
+                                       AllocationType allocation) {
   if (capacity == 0) return isolate->factory()->empty_array_list();
 
   DCHECK_GT(capacity, 0);
   DCHECK_LE(capacity, kMaxCapacity);
 
   std::optional<DisallowGarbageCollection> no_gc;
-  Handle<ArrayList> result =
+  DirectHandle<ArrayList> result =
       Cast<ArrayList>(Allocate(isolate, capacity, &no_gc, allocation));
   result->set_length(0);
   ReadOnlyRoots roots{isolate};
@@ -775,7 +817,7 @@ void TrustedByteArray::set_int(int offset, uint32_t value) {
 template <typename Base>
 template <typename... MoreArgs>
 // static
-Handle<FixedAddressArrayBase<Base>> FixedAddressArrayBase<Base>::New(
+DirectHandle<FixedAddressArrayBase<Base>> FixedAddressArrayBase<Base>::New(
     Isolate* isolate, int length, MoreArgs&&... more_args) {
   return Cast<FixedAddressArrayBase>(
       Underlying::New(isolate, length, std::forward<MoreArgs>(more_args)...));
@@ -801,13 +843,13 @@ Address FixedIntegerArrayBase<T, Base>::get_element_address(int index) const {
 
 template <typename T, typename Base>
 T FixedIntegerArrayBase<T, Base>::get(int index) const {
-  static_assert(std::is_integral<T>::value);
+  static_assert(std::is_integral_v<T>);
   return base::ReadUnalignedValue<T>(get_element_address(index));
 }
 
 template <typename T, typename Base>
 void FixedIntegerArrayBase<T, Base>::set(int index, T value) {
-  static_assert(std::is_integral<T>::value);
+  static_assert(std::is_integral_v<T>);
   return base::WriteUnalignedValue<T>(get_element_address(index), value);
 }
 
@@ -859,8 +901,8 @@ Handle<PodArray<T>> PodArray<T>::New(LocalIsolate* isolate, int length,
 
 // static
 template <class T>
-Handle<TrustedPodArray<T>> TrustedPodArray<T>::New(Isolate* isolate,
-                                                   int length) {
+DirectHandle<TrustedPodArray<T>> TrustedPodArray<T>::New(Isolate* isolate,
+                                                         int length) {
   int byte_length;
   CHECK(!base::bits::SignedMulOverflow32(length, sizeof(T), &byte_length));
   return Cast<TrustedPodArray<T>>(
@@ -869,8 +911,8 @@ Handle<TrustedPodArray<T>> TrustedPodArray<T>::New(Isolate* isolate,
 
 // static
 template <class T>
-Handle<TrustedPodArray<T>> TrustedPodArray<T>::New(LocalIsolate* isolate,
-                                                   int length) {
+DirectHandle<TrustedPodArray<T>> TrustedPodArray<T>::New(LocalIsolate* isolate,
+                                                         int length) {
   int byte_length;
   CHECK(!base::bits::SignedMulOverflow32(length, sizeof(T), &byte_length));
   return Cast<TrustedPodArray<T>>(

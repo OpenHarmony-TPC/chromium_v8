@@ -5,6 +5,9 @@
 #ifndef V8_OBJECTS_TRANSITIONS_INL_H_
 #define V8_OBJECTS_TRANSITIONS_INL_H_
 
+#include "src/objects/transitions.h"
+// Include the non-inl header before the rest of the headers.
+
 #include <ranges>
 #include <type_traits>
 
@@ -12,7 +15,6 @@
 #include "src/objects/maybe-object-inl.h"
 #include "src/objects/slots.h"
 #include "src/objects/smi.h"
-#include "src/objects/transitions.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -41,13 +43,13 @@ Tagged<TransitionArray> TransitionsAccessor::transitions() {
 }
 
 bool TransitionArray::HasPrototypeTransitions() {
-  return get(kPrototypeTransitionsIndex) != Smi::zero();
+  return get(kPrototypeTransitionsIndex, kAcquireLoad) != Smi::zero();
 }
 
 Tagged<WeakFixedArray> TransitionArray::GetPrototypeTransitions() {
   DCHECK(HasPrototypeTransitions());  // Callers must check first.
   Tagged<Object> prototype_transitions =
-      get(kPrototypeTransitionsIndex).GetHeapObjectAssumeStrong();
+      get(kPrototypeTransitionsIndex, kAcquireLoad).GetHeapObjectAssumeStrong();
   return Cast<WeakFixedArray>(prototype_transitions);
 }
 
@@ -113,7 +115,7 @@ HeapObjectSlot TransitionArray::GetKeySlot(int transition_number) {
 void TransitionArray::SetPrototypeTransitions(
     Tagged<WeakFixedArray> transitions) {
   DCHECK(IsWeakFixedArray(transitions));
-  WeakFixedArray::set(kPrototypeTransitionsIndex, transitions);
+  WeakFixedArray::set(kPrototypeTransitionsIndex, transitions, kReleaseStore);
 }
 
 int TransitionArray::NumberOfPrototypeTransitions(
@@ -160,7 +162,7 @@ HeapObjectSlot TransitionArray::GetTargetSlot(int transition_number) {
 // static
 PropertyDetails TransitionsAccessor::GetTargetDetails(Tagged<Name> name,
                                                       Tagged<Map> target) {
-  DCHECK(!IsSpecialTransition(name->GetReadOnlyRoots(), name));
+  DCHECK(!IsSpecialTransition(GetReadOnlyRoots(), name));
   InternalIndex descriptor = target->LastAdded();
   Tagged<DescriptorArray> descriptors =
       target->instance_descriptors(kRelaxedLoad);
@@ -542,8 +544,8 @@ void TransitionsAccessor::ForEachTransitionWithKey(
       return;
     }
     case kFullTransitionArray: {
-      base::SharedMutexGuardIf<base::kShared> scope(
-          isolate_->full_transition_array_access(), concurrent_access_);
+      base::MutexGuardIf scope(isolate_->full_transition_array_access(),
+                               concurrent_access_);
       Tagged<TransitionArray> transition_array = transitions();
       int num_transitions = transition_array->number_of_transitions();
       ReadOnlyRoots roots(isolate_);
@@ -555,7 +557,7 @@ void TransitionsAccessor::ForEachTransitionWithKey(
           callback(GetTarget(i));
         }
       }
-      if constexpr (!std::is_same<ProtoCallback, std::nullptr_t>::value) {
+      if constexpr (!std::is_same_v<ProtoCallback, std::nullptr_t>) {
         if (transitions()->HasPrototypeTransitions()) {
           Tagged<WeakFixedArray> cache =
               transitions()->GetPrototypeTransitions();
@@ -570,7 +572,7 @@ void TransitionsAccessor::ForEachTransitionWithKey(
           }
         }
       }
-      if constexpr (!std::is_same<SideStepCallback, std::nullptr_t>::value) {
+      if constexpr (!std::is_same_v<SideStepCallback, std::nullptr_t>) {
         if (transitions()->HasSideStepTransitions()) {
           Tagged<WeakFixedArray> cache =
               transitions()->GetSideStepTransitions();

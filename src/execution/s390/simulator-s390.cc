@@ -21,6 +21,7 @@
 #include "src/codegen/register-configuration.h"
 #include "src/codegen/s390/constants-s390.h"
 #include "src/diagnostics/disasm.h"
+#include "src/heap/base/stack.h"
 #include "src/heap/combined-heap.h"
 #include "src/heap/heap-inl.h"  // For CodeSpaceMemoryModificationScope.
 #include "src/objects/objects-inl.h"
@@ -564,9 +565,9 @@ void S390Debugger::Debug() {
       } else if (strcmp(cmd, "icount") == 0) {
         PrintF("%05" PRId64 "\n", sim_->icount_);
       } else if ((strcmp(cmd, "t") == 0) || strcmp(cmd, "trace") == 0) {
-        v8_flags.trace_sim = !v8_flags.trace_sim;
+        sim_->ToggleInstructionTracing();
         PrintF("Trace of executed instructions is %s\n",
-               v8_flags.trace_sim ? "on" : "off");
+               sim_->InstructionTracingEnabled() ? "on" : "off");
       } else if ((strcmp(cmd, "h") == 0) || (strcmp(cmd, "help") == 0)) {
         PrintF("cont\n");
         PrintF("  continue execution (alias 'c')\n");
@@ -646,6 +647,12 @@ void S390Debugger::Debug() {
 
 #undef STR
 #undef XSTR
+}
+
+bool Simulator::InstructionTracingEnabled() { return instruction_tracing_; }
+
+void Simulator::ToggleInstructionTracing() {
+  instruction_tracing_ = !instruction_tracing_;
 }
 
 bool Simulator::ICacheMatch(void* one, void* two) {
@@ -1294,6 +1301,8 @@ void Simulator::EvalTableInit() {
   EvalTable[OGR] = &Simulator::Evaluate_OGR;
   EvalTable[XGR] = &Simulator::Evaluate_XGR;
   EvalTable[FLOGR] = &Simulator::Evaluate_FLOGR;
+  EvalTable[CLZG] = &Simulator::Evaluate_CLZG;
+  EvalTable[CTZG] = &Simulator::Evaluate_CTZG;
   EvalTable[LLGCR] = &Simulator::Evaluate_LLGCR;
   EvalTable[LLGHR] = &Simulator::Evaluate_LLGHR;
   EvalTable[MLGR] = &Simulator::Evaluate_MLGR;
@@ -1605,9 +1614,12 @@ Simulator::Simulator(Isolate* isolate) : isolate_(isolate) {
   // The sp is initialized to point to the bottom (high address) of the
   // allocated stack area. To be safe in potential stack underflows we leave
   // some buffer below.
-  registers_[sp] = reinterpret_cast<intptr_t>(stack_) + UsableStackSize();
+  registers_[sp] = StackBase();
 
   last_debugger_input_ = nullptr;
+
+  // Enabling deadlock detection while simulating is too slow.
+  SetMutexDeadlockDetectionMode(absl::OnDeadlockCycle::kIgnore);
 }
 
 Simulator::~Simulator() { base::Free(stack_); }
@@ -1875,11 +1887,31 @@ uintptr_t Simulator::StackLimit(uintptr_t c_limit) const {
   return reinterpret_cast<uintptr_t>(stack_) + kStackProtectionSize;
 }
 
+uintptr_t Simulator::StackBase() const {
+  return reinterpret_cast<uintptr_t>(stack_) + UsableStackSize();
+}
+
 base::Vector<uint8_t> Simulator::GetCentralStackView() const {
   // We do not add an additional safety margin as above in
   // Simulator::StackLimit, as this is currently only used in wasm::StackMemory,
   // which adds its own margin.
   return base::VectorOf(stack_, UsableStackSize());
+}
+
+void Simulator::IterateRegistersAndStack(::heap::base::StackVisitor* visitor) {
+  for (int i = 0; i < kNumGPRs; ++i) {
+    visitor->VisitPointer(reinterpret_cast<const void*>(get_register(i)));
+  }
+
+  for (const void* const* current =
+           reinterpret_cast<const void* const*>(get_sp());
+       current < reinterpret_cast<const void* const*>(StackBase()); ++current) {
+    const void* address = *current;
+    if (address == nullptr) {
+      continue;
+    }
+    visitor->VisitPointer(address);
+  }
 }
 
 // Unsupported instructions use Format to print an error and stop execution.
@@ -1950,6 +1982,7 @@ using SimulatorRuntimeCompareCall = int (*)(double darg0, double darg1);
 using SimulatorRuntimeFPFPCall = double (*)(double darg0, double darg1);
 using SimulatorRuntimeFPCall = double (*)(double darg0);
 using SimulatorRuntimeFPIntCall = double (*)(double darg0, intptr_t arg0);
+using SimulatorRuntimeIntFPCall = int32_t (*)(double darg0);
 // Define four args for future flexibility; at the time of this writing only
 // one is ever used.
 using SimulatorRuntimeFPTaggedCall = double (*)(int32_t arg0, int32_t arg1,
@@ -2001,7 +2034,8 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
           (redirection->type() == ExternalReference::BUILTIN_FP_FP_CALL) ||
           (redirection->type() == ExternalReference::BUILTIN_COMPARE_CALL) ||
           (redirection->type() == ExternalReference::BUILTIN_FP_CALL) ||
-          (redirection->type() == ExternalReference::BUILTIN_FP_INT_CALL);
+          (redirection->type() == ExternalReference::BUILTIN_FP_INT_CALL) ||
+          (redirection->type() == ExternalReference::BUILTIN_INT_FP_CALL);
 
       // Place the return address on the stack, making the call GC safe.
       *reinterpret_cast<intptr_t*>(get_register(sp) +
@@ -2016,7 +2050,7 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
         int iresult = 0;      // integer return value
         double dresult = 0;   // double return value
         GetFpArgs(&dval0, &dval1, &ival);
-        if (v8_flags.trace_sim || !stack_aligned) {
+        if (InstructionTracingEnabled() || !stack_aligned) {
           SimulatorRuntimeCall generic_target =
               reinterpret_cast<SimulatorRuntimeCall>(external);
           switch (redirection->type()) {
@@ -2035,6 +2069,11 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
               PrintF("Call to host function at %p with args %f, %" V8PRIdPTR,
                      reinterpret_cast<void*>(FUNCTION_ADDR(generic_target)),
                      dval0, ival);
+              break;
+            case ExternalReference::BUILTIN_INT_FP_CALL:
+              PrintF("Call to host function at %p with args %f",
+                     reinterpret_cast<void*>(FUNCTION_ADDR(generic_target)),
+                     dval0);
               break;
             default:
               UNREACHABLE();
@@ -2075,12 +2114,23 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
             SetFpResult(dresult);
             break;
           }
+          case ExternalReference::BUILTIN_INT_FP_CALL: {
+            SimulatorRuntimeIntFPCall target =
+                reinterpret_cast<SimulatorRuntimeIntFPCall>(external);
+            iresult = target(dval0);
+#ifdef DEBUG
+            TrashCallerSaveRegisters();
+#endif
+            set_register(r0, static_cast<int32_t>(iresult));
+            break;
+          }
           default:
             UNREACHABLE();
         }
-        if (v8_flags.trace_sim) {
+        if (InstructionTracingEnabled()) {
           switch (redirection->type()) {
             case ExternalReference::BUILTIN_COMPARE_CALL:
+            case ExternalReference::BUILTIN_INT_FP_CALL:
               PrintF("Returned %08x\n", iresult);
               break;
             case ExternalReference::BUILTIN_FP_FP_CALL:
@@ -2094,7 +2144,7 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
         }
       } else if (redirection->type() ==
                  ExternalReference::BUILTIN_FP_POINTER_CALL) {
-        if (v8_flags.trace_sim || !stack_aligned) {
+        if (InstructionTracingEnabled() || !stack_aligned) {
           PrintF("Call to host function at %p args %08" V8PRIxPTR,
                  reinterpret_cast<void*>(external), arg[0]);
           if (!stack_aligned) {
@@ -2111,14 +2161,14 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
         TrashCallerSaveRegisters();
 #endif
         SetFpResult(dresult);
-        if (v8_flags.trace_sim) {
+        if (InstructionTracingEnabled()) {
           PrintF("Returned %f\n", dresult);
         }
       } else if (redirection->type() == ExternalReference::DIRECT_API_CALL) {
         // See callers of MacroAssembler::CallApiFunctionAndReturn for
         // explanation of register usage.
         // void f(v8::FunctionCallbackInfo&)
-        if (v8_flags.trace_sim || !stack_aligned) {
+        if (InstructionTracingEnabled() || !stack_aligned) {
           PrintF("Call to host function at %p args %08" V8PRIxPTR,
                  reinterpret_cast<void*>(external), arg[0]);
           if (!stack_aligned) {
@@ -2135,7 +2185,7 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
         // See callers of MacroAssembler::CallApiFunctionAndReturn for
         // explanation of register usage.
         // void f(v8::Local<String> property, v8::PropertyCallbackInfo& info)
-        if (v8_flags.trace_sim || !stack_aligned) {
+        if (InstructionTracingEnabled() || !stack_aligned) {
           PrintF("Call to host function at %p args %08" V8PRIxPTR
                  " %08" V8PRIxPTR,
                  reinterpret_cast<void*>(external), arg[0], arg[1]);
@@ -2154,7 +2204,7 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
         target(arg[0], arg[1]);
       } else {
         // builtin call.
-        if (v8_flags.trace_sim || !stack_aligned) {
+        if (InstructionTracingEnabled() || !stack_aligned) {
           SimulatorRuntimeCall target =
               reinterpret_cast<SimulatorRuntimeCall>(external);
           PrintF(
@@ -2187,7 +2237,7 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
           intptr_t x;
           intptr_t y;
           decodeObjectPair(&result, &x, &y);
-          if (v8_flags.trace_sim) {
+          if (InstructionTracingEnabled()) {
             PrintF("Returned {%08" V8PRIxPTR ", %08" V8PRIxPTR "}\n", x, y);
           }
           if (ABI_RETURNS_OBJECTPAIR_IN_REGS) {
@@ -2217,7 +2267,7 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
               target(arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6],
                      arg[7], arg[8], arg[9], arg[10], arg[11], arg[12], arg[13],
                      arg[14], arg[15], arg[16], arg[17], arg[18], arg[19]);
-          if (v8_flags.trace_sim) {
+          if (InstructionTracingEnabled()) {
             PrintF("Returned %08" V8PRIxPTR "\n", result);
           }
           set_register(r2, result);
@@ -2399,7 +2449,7 @@ void Simulator::ExecuteInstruction(Instruction* instr, bool auto_incr_pc) {
 
   pc_modified_ = false;
 
-  if (v8_flags.trace_sim) {
+  if (InstructionTracingEnabled()) {
     disasm::NameConverter converter;
     disasm::Disassembler dasm(converter);
     // use a reasonably large buffer
@@ -4532,14 +4582,14 @@ EVALUATE(VFI) {
       DCHECK(CpuFeatures::IsSupported(VECTOR_ENHANCE_FACILITY_1));
       for (int i = 0; i < 4; i++) {
         float value = get_simd_register_by_lane<float>(r2, i);
-        float n = ComputeRounding<float>(value, m5);
+        float n = std::isnan(value) ? NAN : ComputeRounding<float>(value, m5);
         set_simd_register_by_lane<float>(r1, i, n);
       }
       break;
     case 3:
       for (int i = 0; i < 2; i++) {
         double value = get_simd_register_by_lane<double>(r2, i);
-        double n = ComputeRounding<double>(value, m5);
+        double n = std::isnan(value) ? NAN : ComputeRounding<double>(value, m5);
         set_simd_register_by_lane<double>(r1, i, n);
       }
       break;
@@ -8620,6 +8670,20 @@ EVALUATE(FLOGR) {
   int64_t mask = ~(1 << (63 - i));
   set_register(r1, i);
   set_register(r1 + 1, r2_val & mask);
+  return length;
+}
+
+EVALUATE(CLZG) {
+  DCHECK_OPCODE(CLZG);
+  DECODE_RRE_INSTRUCTION(r1, r2);
+  set_register(r1, base::bits::CountLeadingZeros64(get_register(r2)));
+  return length;
+}
+
+EVALUATE(CTZG) {
+  DCHECK_OPCODE(CTZG);
+  DECODE_RRE_INSTRUCTION(r1, r2);
+  set_register(r1, base::bits::CountTrailingZeros64(get_register(r2)));
   return length;
 }
 

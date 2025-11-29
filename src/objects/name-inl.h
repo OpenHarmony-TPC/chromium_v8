@@ -5,11 +5,13 @@
 #ifndef V8_OBJECTS_NAME_INL_H_
 #define V8_OBJECTS_NAME_INL_H_
 
+#include "src/objects/name.h"
+// Include the non-inl header before the rest of the headers.
+
 #include "src/base/logging.h"
 #include "src/heap/heap-write-barrier-inl.h"
 #include "src/objects/instance-type-inl.h"
 #include "src/objects/map-inl.h"
-#include "src/objects/name.h"
 #include "src/objects/primitive-heap-object-inl.h"
 #include "src/objects/string-forwarding-table.h"
 #include "src/objects/string-inl.h"
@@ -80,7 +82,8 @@ bool Name::Equals(Tagged<Name> other) {
   return Cast<String>(this)->SlowEquals(Cast<String>(other));
 }
 
-bool Name::Equals(Isolate* isolate, Handle<Name> one, Handle<Name> two) {
+bool Name::Equals(Isolate* isolate, DirectHandle<Name> one,
+                  DirectHandle<Name> two) {
   if (one.is_identical_to(two)) return true;
   if ((IsInternalizedString(*one) && IsInternalizedString(*two)) ||
       IsSymbol(*one) || IsSymbol(*two)) {

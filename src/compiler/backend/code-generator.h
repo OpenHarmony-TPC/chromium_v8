@@ -36,6 +36,9 @@ struct BranchInfo {
   FlagsCondition condition;
   Label* true_label;
   Label* false_label;
+  // Whether there a hint that this branch is unlikely to change direction,
+  // such as a WebAssembly hinted branch or a trap.
+  bool hinted;
   bool fallthru;
 };
 
@@ -248,6 +251,8 @@ class V8_EXPORT_PRIVATE CodeGenerator final : public GapResolver::Assembler {
   // with its execution, we jump to a lazy compiled code. We need to do this
   // because this code has already been deoptimized and needs to be unlinked
   // from the JS functions referring it.
+  // TODO(olivf, 42204201) Rename this to AssertNotDeoptimized once
+  // non-leaptiering is removed from the codebase.
   void BailoutIfDeoptimized();
 
   // Assemble NOP instruction for lazy deoptimization. This place will be

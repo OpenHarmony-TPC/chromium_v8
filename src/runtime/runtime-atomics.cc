@@ -415,8 +415,9 @@ Tagged<Object> GetModifySetValueInBuffer(RuntimeArguments args,
   size_t index = NumberToSize(args[1]);
   Handle<Object> value_obj = args.at(2);
 
-  uint8_t* source = static_cast<uint8_t*>(sta->GetBuffer()->backing_store()) +
-                    sta->byte_offset();
+  uint8_t* source =
+      static_cast<uint8_t*>(sta->GetBuffer(isolate)->backing_store()) +
+      sta->byte_offset();
 
   if (sta->type() >= kExternalBigInt64Array) {
     Handle<BigInt> bigint;
@@ -464,8 +465,9 @@ RUNTIME_FUNCTION(Runtime_AtomicsLoad64) {
   Handle<JSTypedArray> sta = args.at<JSTypedArray>(0);
   size_t index = NumberToSize(args[1]);
 
-  uint8_t* source = static_cast<uint8_t*>(sta->GetBuffer()->backing_store()) +
-                    sta->byte_offset();
+  uint8_t* source =
+      static_cast<uint8_t*>(sta->GetBuffer(isolate)->backing_store()) +
+      sta->byte_offset();
 
   DCHECK(sta->type() == kExternalBigInt64Array ||
          sta->type() == kExternalBigUint64Array);
@@ -485,8 +487,9 @@ RUNTIME_FUNCTION(Runtime_AtomicsStore64) {
   size_t index = NumberToSize(args[1]);
   Handle<Object> value_obj = args.at(2);
 
-  uint8_t* source = static_cast<uint8_t*>(sta->GetBuffer()->backing_store()) +
-                    sta->byte_offset();
+  uint8_t* source =
+      static_cast<uint8_t*>(sta->GetBuffer(isolate)->backing_store()) +
+      sta->byte_offset();
 
   Handle<BigInt> bigint;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, bigint,
@@ -519,8 +522,9 @@ RUNTIME_FUNCTION(Runtime_AtomicsCompareExchange) {
   Handle<Object> old_value_obj = args.at(2);
   Handle<Object> new_value_obj = args.at(3);
 
-  uint8_t* source = static_cast<uint8_t*>(sta->GetBuffer()->backing_store()) +
-                    sta->byte_offset();
+  uint8_t* source =
+      static_cast<uint8_t*>(sta->GetBuffer(isolate)->backing_store()) +
+      sta->byte_offset();
 
   if (sta->type() >= kExternalBigInt64Array) {
     Handle<BigInt> old_bigint;
@@ -628,7 +632,7 @@ RUNTIME_FUNCTION(Runtime_AtomicsXor) { UNREACHABLE(); }
 RUNTIME_FUNCTION(Runtime_AtomicsLoadSharedStructOrArray) {
   HandleScope scope(isolate);
   DCHECK_EQ(2, args.length());
-  Handle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
+  DirectHandle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
   Handle<Name> field_name;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, field_name,
                                      Object::ToName(isolate, args.at(1)));
@@ -642,7 +646,7 @@ RUNTIME_FUNCTION(Runtime_AtomicsLoadSharedStructOrArray) {
 namespace {
 
 template <typename WriteOperation>
-Tagged<Object> AtomicFieldWrite(Isolate* isolate, Handle<JSObject> object,
+Tagged<Object> AtomicFieldWrite(Isolate* isolate, DirectHandle<JSObject> object,
                                 Handle<Name> field_name,
                                 DirectHandle<Object> value,
                                 WriteOperation write_operation) {
@@ -673,7 +677,7 @@ Tagged<Object> AtomicFieldWrite(Isolate* isolate, Handle<JSObject> object,
 RUNTIME_FUNCTION(Runtime_AtomicsStoreSharedStructOrArray) {
   HandleScope scope(isolate);
   DCHECK_EQ(3, args.length());
-  Handle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
+  DirectHandle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
   Handle<Name> field_name;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, field_name,
                                      Object::ToName(isolate, args.at(1)));
@@ -691,7 +695,7 @@ RUNTIME_FUNCTION(Runtime_AtomicsStoreSharedStructOrArray) {
 RUNTIME_FUNCTION(Runtime_AtomicsExchangeSharedStructOrArray) {
   HandleScope scope(isolate);
   DCHECK_EQ(3, args.length());
-  Handle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
+  DirectHandle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
   Handle<Name> field_name;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, field_name,
                                      Object::ToName(isolate, args.at(1)));
@@ -709,7 +713,7 @@ RUNTIME_FUNCTION(Runtime_AtomicsExchangeSharedStructOrArray) {
 RUNTIME_FUNCTION(Runtime_AtomicsCompareExchangeSharedStructOrArray) {
   HandleScope scope(isolate);
   DCHECK_EQ(4, args.length());
-  Handle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
+  DirectHandle<JSObject> shared_struct_or_shared_array = args.at<JSObject>(0);
   Handle<Name> field_name;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, field_name,
                                      Object::ToName(isolate, args.at(1)));

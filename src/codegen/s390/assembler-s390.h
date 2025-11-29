@@ -39,6 +39,7 @@
 
 #ifndef V8_CODEGEN_S390_ASSEMBLER_S390_H_
 #define V8_CODEGEN_S390_ASSEMBLER_S390_H_
+
 #include <stdio.h>
 #include <memory>
 #if V8_HOST_ARCH_S390X && !V8_OS_ZOS
@@ -286,7 +287,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
   // This sets the internal reference at the pc.
   inline static void deserialization_set_target_internal_reference_at(
-      Address pc, Address target,
+      Address pc, Address target, WritableJitAllocation& jit_allocation,
       RelocInfo::Mode mode = RelocInfo::INTERNAL_REFERENCE);
 
   // Read/modify the uint32 constant used at pc.

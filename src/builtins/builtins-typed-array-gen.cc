@@ -39,8 +39,8 @@ void TypedArrayBuiltinsAssembler::SetupTypedArrayEmbedderFields(
 TNode<JSArrayBuffer> TypedArrayBuiltinsAssembler::AllocateEmptyOnHeapBuffer(
     TNode<Context> context) {
   TNode<NativeContext> native_context = LoadNativeContext(context);
-  TNode<Map> map =
-      CAST(LoadContextElement(native_context, Context::ARRAY_BUFFER_MAP_INDEX));
+  TNode<Map> map = CAST(LoadContextElementNoCell(
+      native_context, Context::ARRAY_BUFFER_MAP_INDEX));
   TNode<FixedArray> empty_fixed_array = EmptyFixedArrayConstant();
 
   TNode<JSArrayBuffer> buffer = UncheckedCast<JSArrayBuffer>(
@@ -117,8 +117,9 @@ TF_BUILTIN(TypedArrayConstructor, TypedArrayBuiltinsAssembler) {
   Label throwtypeerror(this, Label::kDeferred);
   GotoIf(IsUndefined(new_target), &throwtypeerror);
 
-  TNode<Object> result = CallBuiltin(Builtin::kCreateTypedArray, context,
-                                     target, new_target, arg1, arg2, arg3);
+  TNode<JSAny> result =
+      CallBuiltin<JSAny>(Builtin::kCreateTypedArray, context, target,
+                         new_target, arg1, arg2, arg3);
   args.PopAndReturn(result);
 
   BIND(&throwtypeerror);
@@ -268,8 +269,8 @@ TNode<JSFunction> TypedArrayBuiltinsAssembler::GetDefaultConstructor(
         context_slot = IntPtrConstant(typed_array_function_index);
       });
 
-  return CAST(
-      LoadContextElement(LoadNativeContext(context), context_slot.value()));
+  return CAST(LoadContextElementNoCell(LoadNativeContext(context),
+                                       context_slot.value()));
 }
 
 TNode<JSTypedArray> TypedArrayBuiltinsAssembler::ValidateTypedArray(
@@ -523,11 +524,11 @@ void TypedArrayBuiltinsAssembler::StoreJSTypedArrayElementFromPreparedValue(
     TNode<Context> context, TNode<JSTypedArray> typed_array,
     TNode<UintPtrT> index, TNode<TValue> prepared_value,
     ElementsKind elements_kind, Label* if_detached_or_out_of_bounds) {
-  static_assert(std::is_same<TValue, Word32T>::value ||
-                    std::is_same<TValue, Float16RawBitsT>::value ||
-                    std::is_same<TValue, Float32T>::value ||
-                    std::is_same<TValue, Float64T>::value ||
-                    std::is_same<TValue, BigInt>::value,
+  static_assert(std::is_same_v<TValue, Word32T> ||
+                    std::is_same_v<TValue, Float16RawBitsT> ||
+                    std::is_same_v<TValue, Float32T> ||
+                    std::is_same_v<TValue, Float64T> ||
+                    std::is_same_v<TValue, BigInt>,
                 "Only Word32T, Float16T, Float32T, Float64T or BigInt values "
                 "are allowed");
   // ToNumber/ToBigInt (or other functions called by the upper level) may

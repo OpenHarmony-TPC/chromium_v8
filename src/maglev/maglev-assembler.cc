@@ -60,10 +60,7 @@ void MaglevAssembler::LoadSingleCharacterString(Register result,
                                                 int char_code) {
   DCHECK_GE(char_code, 0);
   DCHECK_LT(char_code, String::kMaxOneByteCharCode);
-  Register table = result;
-  LoadRoot(table, RootIndex::kSingleCharacterStringTable);
-  LoadTaggedField(result, table,
-                  OFFSET_OF_DATA_START(FixedArray) + char_code * kTaggedSize);
+  LoadRoot(result, RootsTable::SingleCharacterStringIndex(char_code));
 }
 
 void MaglevAssembler::LoadDataField(const PolymorphicAccessInfo& access_info,
@@ -281,6 +278,16 @@ void MaglevAssembler::MaterialiseValueNode(Register dst, ValueNode* value) {
       }
       return;
     }
+    case Opcode::kIntPtrConstant: {
+      intptr_t intptr_value = value->Cast<IntPtrConstant>()->value();
+      if (intptr_value <= std::numeric_limits<int>::max() &&
+          Smi::IsValid(static_cast<int>(intptr_value))) {
+        Move(dst, Smi::FromInt(static_cast<int>(intptr_value)));
+      } else {
+        MoveHeapNumber(dst, intptr_value);
+      }
+      return;
+    }
     case Opcode::kUint32Constant: {
       uint32_t uint_value = value->Cast<Uint32Constant>()->value();
       if (Smi::IsValid(uint_value)) {
@@ -355,7 +362,20 @@ void MaglevAssembler::MaterialiseValueNode(Register dst, ValueNode* value) {
       bind(&done);
       break;
     }
-    case ValueRepresentation::kIntPtr:
+    case ValueRepresentation::kIntPtr: {
+      Label done;
+      TemporaryRegisterScope temps(this);
+      Register scratch = temps.AcquireScratch();
+      Move(scratch, src);
+      SmiTagIntPtrAndJumpIfSuccess(dst, scratch, &done, Label::kNear);
+      // If smi tagging fails, instead of bailing out (deopting), we change
+      // representation to a HeapNumber.
+      IntPtrToDouble(builtin_input_value, scratch);
+      CallBuiltin<Builtin::kNewHeapNumber>(builtin_input_value);
+      Move(dst, kReturnRegister0);
+      bind(&done);
+      break;
+    }
     case ValueRepresentation::kTagged:
       UNREACHABLE();
   }
@@ -413,7 +433,7 @@ void MaglevAssembler::TestTypeOf(
     case LiteralFlag::kUndefined: {
       MaglevAssembler::TemporaryRegisterScope temps(this);
       Register map = temps.AcquireScratch();
-      // Make sure `object` isn't a valid temp here, since we re-use it.
+      // Make sure `object` isn't a valid temp here, since we reuse it.
       DCHECK(!temps.Available().has(object));
       JumpIfSmi(object, is_false, false_distance);
       // Check it has the undetectable bit set and it is not null.
@@ -547,6 +567,7 @@ void MaglevAssembler::CheckAndEmitDeferredWriteBarrier(
     JumpIfSmi(value, *done);
   }
 
+  static_assert(WriteBarrier::kUninterestingPagesCanBeSkipped);
   MaglevAssembler::TemporaryRegisterScope temp(this);
   Register scratch = temp.AcquireScratch();
   CheckPageFlag(object, scratch,
@@ -653,38 +674,6 @@ void MaglevAssembler::StoreFixedArrayElementWithWriteBarrier(
       kValueCanBeSmi);
 }
 
-void MaglevAssembler::GenerateCheckConstTrackingLetCellFooter(Register context,
-                                                              Register data,
-                                                              int index,
-                                                              Label* done) {
-  Label smi_data, deopt;
-
-  // Load the const tracking let side data.
-  LoadTaggedField(
-      data, context,
-      Context::OffsetOfElementAt(Context::CONTEXT_SIDE_TABLE_PROPERTY_INDEX));
-
-  LoadTaggedField(data, data,
-                  FixedArray::OffsetOfElementAt(
-                      index - Context::MIN_CONTEXT_EXTENDED_SLOTS));
-
-  // Load property.
-  JumpIfSmi(data, &smi_data, Label::kNear);
-  JumpIfRoot(data, RootIndex::kUndefinedValue, &deopt);
-  if (v8_flags.debug_code) {
-    AssertObjectType(data, CONTEXT_SIDE_PROPERTY_CELL_TYPE,
-                     AbortReason::kUnexpectedValue);
-  }
-  LoadTaggedField(data, data,
-                  ContextSidePropertyCell::kPropertyDetailsRawOffset);
-
-  // It must be different than kConst.
-  bind(&smi_data);
-  CompareTaggedAndJumpIf(data, ContextSidePropertyCell::Const(), kNotEqual,
-                         done, Label::kNear);
-  bind(&deopt);
-}
-
 void MaglevAssembler::TryMigrateInstance(Register object,
                                          RegisterSnapshot& register_snapshot,
                                          Label* fail) {
@@ -711,6 +700,15 @@ void MaglevAssembler::TryMigrateInstance(Register object,
 
   // On failure, the returned value is Smi zero.
   CompareTaggedAndJumpIf(return_val, Smi::zero(), kEqual, fail);
+}
+
+void MaglevAssembler::TryMigrateInstanceAndMarkMapAsMigrationTarget(
+    Register object, RegisterSnapshot& register_snapshot) {
+  SaveRegisterStateForCall save_register_state(this, register_snapshot);
+  Push(object);
+  Move(kContextRegister, native_context().object());
+  CallRuntime(Runtime::kTryMigrateInstanceAndMarkMapAsMigrationTarget);
+  save_register_state.DefineSafepoint();
 }
 
 }  // namespace maglev

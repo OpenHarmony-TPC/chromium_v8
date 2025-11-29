@@ -80,8 +80,9 @@ TARGETS = [
 DEFAULT_TARGETS = ["d8"]
 # Tests that run-tests.py would run by default that can be run with
 # BUILD_TARGETS_TESTS.
-DEFAULT_TESTS = ["cctest", "debugger", "intl", "message", "mjsunit",
-                 "unittests"]
+DEFAULT_TESTS = [
+    "cctest", "debugger", "filecheck", "intl", "message", "mjsunit", "unittests"
+]
 # These can be suffixed to any <arch>.<mode> combo, or used standalone,
 # or used as global modifiers (affecting all <arch>.<mode> combos).
 ACTIONS = {
@@ -131,6 +132,7 @@ TESTSUITES_TARGETS = {
     "bigint": "bigint_shell",
     "cctest": "cctest",
     "debugger": "d8",
+    "filecheck": "d8",
     "fuzzer": "v8_fuzzers",
     "inspector": "inspector-test",
     "intl": "d8",
@@ -334,7 +336,9 @@ def _call_with_output(cmd):
         output.append(data)
   finally:
     os.close(parent)
-    p.wait()
+    while p.poll() is None:
+      print(".", end="")
+      time.sleep(0.1)
   return p.returncode, "".join(output)
 
 
@@ -586,8 +590,8 @@ class ManagedConfig(RawConfig):
         return 1
     # Special handling for "mkgrokdump": if it was built, run it.
     if ("mkgrokdump" in self.targets and self.mode == "release" and
-        (host_arch == "x86_64" and self.arch == "x64") or
-        (host_arch == "arm64" and self.arch == "arm64")):
+        ((host_arch == "x86_64" and self.arch == "x64") or
+         (host_arch == "arm64" and self.arch == "arm64"))):
       mkgrokdump_bin = self.path / "mkgrokdump"
       _call(f"{mkgrokdump_bin} > tools/v8heapconst.py")
     return super().run_tests()

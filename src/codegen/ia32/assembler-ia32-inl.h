@@ -37,10 +37,12 @@
 #ifndef V8_CODEGEN_IA32_ASSEMBLER_IA32_INL_H_
 #define V8_CODEGEN_IA32_ASSEMBLER_IA32_INL_H_
 
+#include "src/codegen/ia32/assembler-ia32.h"
+// Include the non-inl header before the rest of the headers.
+
 #include "src/base/memory.h"
 #include "src/codegen/assembler.h"
 #include "src/codegen/flush-instruction-cache.h"
-#include "src/codegen/ia32/assembler-ia32.h"
 #include "src/debug/debug.h"
 #include "src/objects/objects-inl.h"
 
@@ -85,9 +87,14 @@ Tagged<HeapObject> RelocInfo::target_object(PtrComprCageBase cage_base) {
   return Cast<HeapObject>(Tagged<Object>(ReadUnalignedValue<Address>(pc_)));
 }
 
-Handle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
+DirectHandle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
   DCHECK(IsCodeTarget(rmode_) || IsFullEmbeddedObject(rmode_));
-  return Cast<HeapObject>(ReadUnalignedValue<Handle<Object>>(pc_));
+  return Cast<HeapObject>(ReadUnalignedValue<IndirectHandle<Object>>(pc_));
+}
+
+JSDispatchHandle RelocInfo::js_dispatch_handle() {
+  DCHECK(rmode_ == JS_DISPATCH_HANDLE);
+  return JSDispatchHandle(ReadUnalignedValue<JSDispatchHandle>(pc_));
 }
 
 void WritableRelocInfo::set_target_object(Tagged<HeapObject> target,
@@ -113,15 +120,15 @@ void WritableRelocInfo::set_target_external_reference(
   }
 }
 
-WasmCodePointer RelocInfo::wasm_indirect_call_target() const {
-  DCHECK(rmode_ == RelocInfo::WASM_INDIRECT_CALL_TARGET);
-  return ReadUnalignedValue<WasmCodePointer>(pc_);
+WasmCodePointer RelocInfo::wasm_code_pointer_table_entry() const {
+  DCHECK(rmode_ == RelocInfo::WASM_CODE_POINTER_TABLE_ENTRY);
+  return WasmCodePointer{ReadUnalignedValue<uint32_t>(pc_)};
 }
 
-void WritableRelocInfo::set_wasm_indirect_call_target(
+void WritableRelocInfo::set_wasm_code_pointer_table_entry(
     WasmCodePointer target, ICacheFlushMode icache_flush_mode) {
-  DCHECK(rmode_ == RelocInfo::WASM_INDIRECT_CALL_TARGET);
-  WriteUnalignedValue(pc_, target);
+  DCHECK(rmode_ == RelocInfo::WASM_CODE_POINTER_TABLE_ENTRY);
+  WriteUnalignedValue(pc_, target.value());
   if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
     FlushInstructionCache(pc_, sizeof(Address));
   }
@@ -274,8 +281,9 @@ void Assembler::emit_near_disp(Label* L) {
 }
 
 void Assembler::deserialization_set_target_internal_reference_at(
-    Address pc, Address target, RelocInfo::Mode mode) {
-  WriteUnalignedValue(pc, target);
+    Address pc, Address target, WritableJitAllocation& jit_allocation,
+    RelocInfo::Mode mode) {
+  jit_allocation.WriteUnalignedValue(pc, target);
 }
 
 void Operand::set_sib(ScaleFactor scale, Register index, Register base) {

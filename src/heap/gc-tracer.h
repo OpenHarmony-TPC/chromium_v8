@@ -15,6 +15,7 @@
 #include "src/heap/base/bytes.h"
 #include "src/init/heap-symbols.h"
 #include "src/logging/counters.h"
+#include "src/tracing/trace-event.h"
 #include "testing/gtest/include/gtest/gtest_prod.h"  // nogncheck
 
 namespace v8 {
@@ -131,7 +132,8 @@ class V8_EXPORT_PRIVATE GCTracer {
       FIRST_TOP_MC_SCOPE = MC_CLEAR,
       LAST_TOP_MC_SCOPE = MC_SWEEP,
       FIRST_BACKGROUND_SCOPE = BACKGROUND_YOUNG_ARRAY_BUFFER_SWEEP,
-      LAST_BACKGROUND_SCOPE = SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL
+      LAST_BACKGROUND_SCOPE =
+          SCAVENGER_BACKGROUND_TRACED_HANDLES_COMPUTE_WEAKNESS_PARALLEL
     };
 
     V8_INLINE Scope(GCTracer* tracer, ScopeId scope, ThreadKind thread_kind);
@@ -301,8 +303,8 @@ class V8_EXPORT_PRIVATE GCTracer {
   // Start and stop a GC cycle (collecting data and reporting results).
   void StartCycle(GarbageCollector collector, GarbageCollectionReason gc_reason,
                   const char* collector_reason, MarkingType marking);
-  void StopYoungCycleIfNeeded();
-  void StopFullCycleIfNeeded();
+  void StopYoungCycleIfFinished();
+  void StopFullCycleIfFinished();
 
   void UpdateMemoryBalancerGCSpeed();
 
@@ -313,7 +315,15 @@ class V8_EXPORT_PRIVATE GCTracer {
   void StartInSafepoint(base::TimeTicks time);
   void StopInSafepoint(base::TimeTicks time);
 
-  void NotifyFullSweepingCompleted();
+  // Notify the GC tracer that full/young sweeping is completed. A cycle cannot
+  // be stopped until sweeping is completed and `StopCycle` would bail out if
+  // `Notify*SweepingCompleted` is not called before. These methods also call
+  // `StopCycle` if all other conditions are also met (e.g. Oilpan sweeping is
+  // also completed).
+  void NotifyFullSweepingCompletedAndStopCycleIfFinished();
+  void NotifyYoungSweepingCompletedAndStopCycleIfFinished();
+  // Marks young sweeping as complete but doesn't try to call `StopCycle` even
+  // if possible.
   void NotifyYoungSweepingCompleted();
 
   void NotifyFullCppGCCompleted();
@@ -354,34 +364,35 @@ class V8_EXPORT_PRIVATE GCTracer {
   double IncrementalMarkingSpeedInBytesPerMillisecond() const;
 
   // Compute the average embedder speed in bytes/millisecond.
-  // Returns a conservative value if no events have been recorded.
-  double EmbedderSpeedInBytesPerMillisecond() const;
+  // Returns nullopt if no events have been recorded.
+  std::optional<double> EmbedderSpeedInBytesPerMillisecond() const;
 
   // Average estimaged young generation speed in bytes/millisecond. This factors
   // in concurrency and assumes that the level of concurrency provided by the
   // embedder is stable. E.g., receiving lower concurrency than previously
   // recorded events will yield in lower current speed.
   //
-  // Returns 0 if no events have been recorded.
-  double YoungGenerationSpeedInBytesPerMillisecond(
+  // Returns nullopt if no events have been recorded.
+  std::optional<double> YoungGenerationSpeedInBytesPerMillisecond(
       YoungGenerationSpeedMode mode) const;
 
   // Compute the average compaction speed in bytes/millisecond.
-  // Returns 0 if not enough events have been recorded.
-  double CompactionSpeedInBytesPerMillisecond() const;
+  // Returns nullopt if not enough events have been recorded.
+  std::optional<double> CompactionSpeedInBytesPerMillisecond() const;
 
   // Compute the average mark-sweep speed in bytes/millisecond.
-  // Returns 0 if no events have been recorded.
-  double MarkCompactSpeedInBytesPerMillisecond() const;
+  // Returns nullopt if no events have been recorded.
+  std::optional<double> MarkCompactSpeedInBytesPerMillisecond() const;
 
   // Compute the average incremental mark-sweep finalize speed in
   // bytes/millisecond.
-  // Returns 0 if no events have been recorded.
-  double FinalIncrementalMarkCompactSpeedInBytesPerMillisecond() const;
+  // Returns nullopt if no events have been recorded.
+  std::optional<double> FinalIncrementalMarkCompactSpeedInBytesPerMillisecond()
+      const;
 
   // Compute the overall old generation mark compact speed including incremental
   // steps and the final mark-compact step.
-  double OldGenerationSpeedInBytesPerMillisecond();
+  std::optional<double> OldGenerationSpeedInBytesPerMillisecond();
 
   // Allocation throughput in the new space in bytes/millisecond.
   // Returns 0 if no allocation events have been recorded.
@@ -430,6 +441,8 @@ class V8_EXPORT_PRIVATE GCTracer {
   V8_INLINE void AddScopeSample(Scope::ScopeId id, base::TimeDelta duration);
 
   void RecordGCPhasesHistograms(RecordGCPhasesInfo::Mode mode);
+
+  void RecordGCSizeCounters() const;
 
   void RecordEmbedderMarkingSpeed(size_t bytes, base::TimeDelta duration);
 
@@ -507,8 +520,7 @@ class V8_EXPORT_PRIVATE GCTracer {
   // The starting time of the observable pause if set.
   std::optional<base::TimeTicks> start_of_observable_pause_;
 
-  // We need two epochs, since there can be scavenges during incremental
-  // marking.
+  // We need two epochs, since there can be scavenges during sweeping.
   CollectionEpoch epoch_young_ = 0;
   CollectionEpoch epoch_full_ = 0;
 
@@ -532,7 +544,7 @@ class V8_EXPORT_PRIVATE GCTracer {
   size_t old_generation_allocation_counter_bytes_ = 0;
   size_t embedder_allocation_counter_bytes_ = 0;
 
-  double combined_mark_compact_speed_cache_ = 0.0;
+  std::optional<double> combined_mark_compact_speed_cache_;
 
   // Used for computing average mutator utilization.
   double average_mutator_duration_ = 0.0;
@@ -583,7 +595,7 @@ class V8_EXPORT_PRIVATE GCTracer {
   // When a full GC cycle is interrupted by a young generation GC cycle, the
   // |previous_| event is used as temporary storage for the |current_| event
   // that corresponded to the full GC cycle, and this field is set to true.
-  bool young_gc_while_full_gc_ = false;
+  bool young_gc_during_full_gc_sweeping_ = false;
 
   v8::metrics::GarbageCollectionFullMainThreadBatchedIncrementalMark
       incremental_mark_batched_events_;
@@ -592,6 +604,10 @@ class V8_EXPORT_PRIVATE GCTracer {
 
   mutable base::Mutex background_scopes_mutex_;
   base::TimeDelta background_scopes_[Scope::NUMBER_OF_SCOPES];
+
+#if defined(V8_USE_PERFETTO)
+  perfetto::ThreadTrack parent_track_;
+#endif
 
   FRIEND_TEST(GCTracerTest, AllocationThroughput);
   FRIEND_TEST(GCTracerTest, BackgroundScavengerScope);

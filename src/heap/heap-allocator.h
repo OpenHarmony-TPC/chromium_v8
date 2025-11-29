@@ -48,7 +48,8 @@ class V8_EXPORT_PRIVATE HeapAllocator final {
   V8_WARN_UNUSED_RESULT V8_INLINE AllocationResult
   AllocateRaw(int size_in_bytes, AllocationType allocation,
               AllocationOrigin origin = AllocationOrigin::kRuntime,
-              AllocationAlignment alignment = kTaggedAligned);
+              AllocationAlignment alignment = kTaggedAligned,
+              AllocationHint hint = AllocationHint());
 
   // Supports all `AllocationType` types. Use when type is statically known.
   //
@@ -56,15 +57,8 @@ class V8_EXPORT_PRIVATE HeapAllocator final {
   template <AllocationType type>
   V8_WARN_UNUSED_RESULT V8_INLINE AllocationResult AllocateRaw(
       int size_in_bytes, AllocationOrigin origin = AllocationOrigin::kRuntime,
-      AllocationAlignment alignment = kTaggedAligned);
-
-  // Supports only `AllocationType::kYoung` and `AllocationType::kOld`.
-  //
-  // Returns a failed result on an unsuccessful allocation attempt.
-  V8_WARN_UNUSED_RESULT V8_INLINE AllocationResult
-  AllocateRawData(int size_in_bytes, AllocationType allocation,
-                  AllocationOrigin origin = AllocationOrigin::kRuntime,
-                  AllocationAlignment alignment = kTaggedAligned);
+      AllocationAlignment alignment = kTaggedAligned,
+      AllocationHint hint = AllocationHint());
 
   enum AllocationRetryMode { kLightRetry, kRetryOrFail };
 
@@ -73,7 +67,13 @@ class V8_EXPORT_PRIVATE HeapAllocator final {
   V8_WARN_UNUSED_RESULT V8_INLINE Tagged<HeapObject> AllocateRawWith(
       int size, AllocationType allocation,
       AllocationOrigin origin = AllocationOrigin::kRuntime,
-      AllocationAlignment alignment = kTaggedAligned);
+      AllocationAlignment alignment = kTaggedAligned,
+      AllocationHint hint = AllocationHint());
+
+  // Returns true if a large object can be resized in-place to
+  // |new_object_size|. On failure the return value is false.
+  bool TryResizeLargeObject(Tagged<HeapObject> object, size_t old_object_size,
+                            size_t new_object_size);
 
   V8_INLINE bool CanAllocateInReadOnlySpace() const;
 
@@ -139,6 +139,10 @@ class V8_EXPORT_PRIVATE HeapAllocator final {
     return &shared_space_allocator_.value();
   }
 
+  template <typename Function>
+  V8_WARN_UNUSED_RESULT V8_INLINE auto CustomAllocateWithRetryOrFail(
+      Function&& Allocate, AllocationType allocation);
+
  private:
   V8_INLINE PagedSpace* code_space() const;
   V8_INLINE CodeLargeObjectSpace* code_lo_space() const;
@@ -154,22 +158,32 @@ class V8_EXPORT_PRIVATE HeapAllocator final {
 
   V8_WARN_UNUSED_RESULT AllocationResult AllocateRawLargeInternal(
       int size_in_bytes, AllocationType allocation, AllocationOrigin origin,
-      AllocationAlignment alignment);
+      AllocationAlignment alignment, AllocationHint hint);
+
+  template <typename AllocateFunction, typename RetryFunction>
+  V8_WARN_UNUSED_RESULT inline auto AllocateRawWithRetryOrFailSlowPath(
+      AllocateFunction&& Allocate, RetryFunction&& RetryAllocate,
+      AllocationType allocation);
 
   V8_WARN_UNUSED_RESULT AllocationResult AllocateRawWithRetryOrFailSlowPath(
       int size, AllocationType allocation, AllocationOrigin origin,
-      AllocationAlignment alignment);
+      AllocationAlignment alignment, AllocationHint hint);
+
+  template <typename AllocateFunction, typename RetryFunction>
+  V8_WARN_UNUSED_RESULT inline auto AllocateRawWithLightRetrySlowPath(
+      AllocateFunction&& Allocate, RetryFunction&& RetryAllocate,
+      AllocationType allocation);
 
   V8_WARN_UNUSED_RESULT AllocationResult AllocateRawWithLightRetrySlowPath(
       int size, AllocationType allocation, AllocationOrigin origin,
-      AllocationAlignment alignment);
+      AllocationAlignment alignment, AllocationHint hint);
 
   void CollectGarbage(AllocationType allocation);
   void CollectAllAvailableGarbage(AllocationType allocation);
 
-  V8_WARN_UNUSED_RESULT AllocationResult
-  RetryAllocateRaw(int size_in_bytes, AllocationType allocation,
-                   AllocationOrigin origin, AllocationAlignment alignment);
+  V8_WARN_UNUSED_RESULT AllocationResult RetryAllocateRaw(
+      int size_in_bytes, AllocationType allocation, AllocationOrigin origin,
+      AllocationAlignment alignment, AllocationHint hint);
 
   bool ReachedAllocationTimeout();
 

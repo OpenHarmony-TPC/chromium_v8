@@ -254,7 +254,9 @@ class ExtendedFunctionDis : public FunctionBodyDisassembler {
       auto [count, count_length] = read_u32v<ValidationTag>(pc_);
       auto [type, type_length] =
           value_type_reader::read_value_type<ValidationTag>(
-              this, pc_ + count_length, WasmEnabledFeatures::All());
+              this, pc_ + count_length, WasmEnabledFeatures::All(),
+              this->detected_);
+      value_type_reader::Populate(&type, module_);
       PrintHexBytes(out, count_length + type_length, pc_, 4);
       out << " // " << count << (count != 1 ? " locals" : " local")
           << " of type ";
@@ -268,8 +270,8 @@ class ExtendedFunctionDis : public FunctionBodyDisassembler {
       WasmOpcode opcode = GetOpcode();
       current_opcode_ = opcode;  // Some immediates need to know this.
       StringBuilder immediates;
-      uint32_t length = PrintImmediatesAndGetLength(immediates);
-      PrintHexBytes(out, length, pc_, 4);
+      uint32_t opcode_length = PrintImmediatesAndGetLength(immediates);
+      PrintHexBytes(out, opcode_length, pc_, 4);
       if (opcode == kExprEnd) {
         out << " // end";
         if (label_stack_.size() > 0) {
@@ -289,7 +291,7 @@ class ExtendedFunctionDis : public FunctionBodyDisassembler {
         label_stack_.emplace_back(out.line_number(), out.length(),
                                   label_occurrence_index_++);
       }
-      pc_ += length;
+      pc_ += opcode_length;
       out.NextLine(pc_offset());
     }
 
@@ -436,6 +438,10 @@ class HexDumpModuleDis : public ITracer {
     description_.write(desc, length);
   }
   void Description(uint32_t number) override {
+    if (description_.length() != 0) description_ << " ";
+    description_ << number;
+  }
+  void Description(uint64_t number) override {
     if (description_.length() != 0) description_ << " ";
     description_ << number;
   }
@@ -794,7 +800,7 @@ class FormatConverter {
     ModuleResult result =
         DecodeWasmModuleForDisassembler(raw_bytes(), offsets_provider_.get());
     if (result.failed()) {
-      WasmError error = result.error();
+      const WasmError& error = result.error();
       std::cerr << "Decoding error: " << error.message() << " at offset "
                 << error.offset() << "\n";
       return;
@@ -843,11 +849,12 @@ class FormatConverter {
          << kind << std::endl;
     for (auto sig_use : sig_uses_vector) {
       uint32_t sig_index = sig_use.first;
-      uint32_t uses = sig_use.second;
+      uint32_t use_count = sig_use.second;
 
       const FunctionSig* sig = module->signature(ModuleTypeIndex{sig_index});
 
-      out_ << uses << " " << kind << " use the signature " << *sig << std::endl;
+      out_ << use_count << " " << kind << " use the signature " << *sig
+           << std::endl;
     }
   }
 
@@ -1022,6 +1029,7 @@ class FormatConverter {
 
  private:
   static constexpr int kModuleHeaderSize = 8;
+  enum class ParseLiteralResult { kSuccess, kTryNext, kEOF };
 
   class Output {
    public:
@@ -1079,7 +1087,13 @@ class FormatConverter {
           std::vector<uint8_t>(std::istreambuf_iterator<char>(input), {});
       return true;
     }
-    if (TryParseLiteral(input, raw_bytes_)) return true;
+    do {
+      ParseLiteralResult result = TryParseLiteral(input, raw_bytes_);
+      if (result == ParseLiteralResult::kSuccess) return true;
+      if (result == ParseLiteralResult::kEOF) break;
+      DCHECK_EQ(result, ParseLiteralResult::kTryNext);
+      raw_bytes_.clear();
+    } while (true);
     std::cerr << "That's not a Wasm module!\n";
     return false;
   }
@@ -1094,8 +1108,8 @@ class FormatConverter {
   //   braces is ignored.
   // - Whitespace, line comments, and block comments are ignored.
   // So in particular, this can consume what --full-hexdump produces.
-  bool TryParseLiteral(std::istream& input,
-                       std::vector<uint8_t>& output_bytes) {
+  ParseLiteralResult TryParseLiteral(std::istream& input,
+                                     std::vector<uint8_t>& output_bytes) {
     int c = input.get();
     // Skip anything before the first opening '['.
     while (c != '[' && c != EOF) c = input.get();
@@ -1109,7 +1123,7 @@ class FormatConverter {
         while (IsWhitespace(c)) c = input.get();
       }
       // End of file before ']' is unexpected = invalid.
-      if (c == EOF) return false;
+      if (c == EOF) return ParseLiteralResult::kEOF;
       // Skip comments.
       if (c == '/' && input.peek() == '/') {
         // Line comment. Skip until '\n'.
@@ -1140,9 +1154,11 @@ class FormatConverter {
           state = kDecimal;
           // Fall through to handling kDecimal below.
         } else if (c == ']') {
-          return true;
+          return output_bytes.size() > 8 ? ParseLiteralResult::kSuccess
+                                         : ParseLiteralResult::kTryNext;
         } else {
-          return false;
+          return c == EOF ? ParseLiteralResult::kEOF
+                          : ParseLiteralResult::kTryNext;
         }
       }
       DCHECK(state == kDecimal || state == kHex || state == kAfterValue);
@@ -1156,12 +1172,14 @@ class FormatConverter {
       if (c == ']') {
         DCHECK_LT(value, 256);
         output_bytes.push_back(static_cast<uint8_t>(value));
-        return true;
+        return output_bytes.size() > 8 ? ParseLiteralResult::kSuccess
+                                       : ParseLiteralResult::kTryNext;
       }
       if (state == kAfterValue) {
         // Didn't take the ',' or ']' paths above, anything else is invalid.
         DCHECK(c != ',' && c != ']');
-        return false;
+        return c == EOF ? ParseLiteralResult::kEOF
+                        : ParseLiteralResult::kTryNext;
       }
       DCHECK(state == kDecimal || state == kHex);
       if (IsWhitespace(c)) {
@@ -1175,10 +1193,11 @@ class FormatConverter {
         // Setting the "0x20" bit maps uppercase onto lowercase letters.
         v = (c | 0x20) - 'a' + 10;
       } else {
-        return false;
+        return c == EOF ? ParseLiteralResult::kEOF
+                        : ParseLiteralResult::kTryNext;
       }
       value = value * state + v;
-      if (value > 0xFF) return false;
+      if (value > 0xFF) return ParseLiteralResult::kTryNext;
     }
   }
 
