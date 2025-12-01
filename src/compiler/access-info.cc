@@ -52,6 +52,15 @@ bool CanInlinePropertyAccess(MapRef map, AccessMode access_mode) {
            // TODO(verwaest): Allowlist contexts to which we have access.
            !map.is_access_check_needed();
   }
+#if V8_ENABLE_WEBASSEMBLY
+  if (IsWasmObjectMap(*map.object())) {
+    DCHECK(!map.object()->has_named_interceptor());
+    DCHECK(!map.is_access_check_needed());
+    // Accesses to Wasm objects all go through the prototype chain, but
+    // we can't express that in this helper function.
+    return true;
+  }
+#endif  // V8_ENABLE_WEBASSEMBLY
   return false;
 }
 
@@ -169,6 +178,15 @@ PropertyAccessInfo PropertyAccessInfo::StringWrapperLength(
     Zone* zone, MapRef receiver_map) {
   return PropertyAccessInfo(zone, kStringWrapperLength, {},
                             {{receiver_map}, zone});
+}
+
+// static
+PropertyAccessInfo PropertyAccessInfo::TypedArrayLength(Zone* zone,
+                                                        MapRef receiver_map) {
+  PropertyAccessInfo result(zone, kTypedArrayLength, {},
+                            {{receiver_map}, zone});
+  result.set_elements_kind(receiver_map.elements_kind());
+  return result;
 }
 
 // static
@@ -358,6 +376,10 @@ bool PropertyAccessInfo::Merge(PropertyAccessInfo const* that,
       AppendVector(&lookup_start_object_maps_, that->lookup_start_object_maps_);
       return true;
     }
+    case kTypedArrayLength:
+      DCHECK_EQ(lookup_start_object_maps_.size(), 1);
+      DCHECK_EQ(that->lookup_start_object_maps_.size(), 1);
+      return lookup_start_object_maps_[0] == that->lookup_start_object_maps_[0];
     case kModuleExport:
       return false;
   }
@@ -499,16 +521,17 @@ PropertyAccessInfo AccessInfoFactory::ComputeDataFieldAccessInfo(
           descriptors_field_type_ref.value()));
 
   PropertyConstness constness =
-      dependencies()->DependOnFieldConstness(map, field_owner_map, descriptor);
-
+      map.GetPropertyDetails(broker_, descriptor).constness();
   switch (constness) {
     case PropertyConstness::kMutable:
       return PropertyAccessInfo::DataField(
           broker(), zone(), receiver_map, std::move(unrecorded_dependencies),
           field_index, details_representation, field_type, field_owner_map,
           field_map, holder, {});
-
     case PropertyConstness::kConst:
+      auto constness_dep = dependencies()->FieldConstnessDependencyOffTheRecord(
+          map, field_owner_map, descriptor);
+      unrecorded_dependencies.push_back(constness_dep);
       return PropertyAccessInfo::FastDataConstant(
           zone(), receiver_map, std::move(unrecorded_dependencies), field_index,
           details_representation, field_type, field_owner_map, field_map,
@@ -564,7 +587,7 @@ PropertyAccessInfo AccessorAccessInfoHelper(
     return PropertyAccessInfo::FastAccessorConstant(zone, receiver_map, holder,
                                                     {}, {});
   }
-  Handle<Object> maybe_accessors = get_accessors();
+  DirectHandle<Object> maybe_accessors = get_accessors();
   if (!IsAccessorPair(*maybe_accessors)) {
     return PropertyAccessInfo::Invalid(zone);
   }
@@ -714,6 +737,11 @@ bool AccessInfoFactory::TryLoadPropertyDetails(
         *details_out = dict->DetailsAt(*index_out);
       }
     }
+#if V8_ENABLE_WEBASSEMBLY
+  } else if (InstanceTypeChecker::IsWasmObject(map.instance_type())) {
+    DCHECK(index_out->is_not_found());
+    return true;  // Skip to prototypes.
+#endif            // V8_ENABLE_WEBASSEMBLY
   } else {
     Tagged<DescriptorArray> descriptors =
         *map.instance_descriptors(broker()).object();
@@ -838,6 +866,13 @@ PropertyAccessInfo AccessInfoFactory::ComputePropertyAccessInfo(
         // occuring before a fast mode holder on the chain.
         return Invalid();
       }
+
+      if (access_mode == AccessMode::kLoad && holder.has_value()) {
+        PropertyAccessInfo access_info = LookupSpecialFieldAccessorInHolder(
+            receiver_map, name, *holder, details, index);
+        if (!access_info.IsInvalid()) return access_info;
+      }
+
       if (details.location() == PropertyLocation::kField) {
         if (details.kind() == PropertyKind::kData) {
           return ComputeDataFieldAccessInfo(receiver_map, map, name, holder,
@@ -1114,6 +1149,46 @@ PropertyAccessInfo AccessInfoFactory::LookupSpecialFieldAccessor(
   return Invalid();
 }
 
+PropertyAccessInfo AccessInfoFactory::LookupSpecialFieldAccessorInHolder(
+    MapRef receiver_map, NameRef name, JSObjectRef holder,
+    PropertyDetails details, InternalIndex index) const {
+  // Check whether we're accessing the `length` property in a TypedArray
+  // prototype.
+  if (v8_flags.typed_array_length_loading &&
+      IsJSTypedArrayMap(*receiver_map.object()) &&
+      !IsRabGsabTypedArrayElementsKind(receiver_map.elements_kind()) &&
+      Name::Equals(isolate(), name.object(),
+                   isolate()->factory()->length_string()) &&
+      details.location() == PropertyLocation::kDescriptor) {
+    Tagged<DescriptorArray> descriptors =
+        holder.map(broker_).object()->instance_descriptors(kRelaxedLoad);
+    SLOW_DCHECK(index == descriptors->Search(*name.object(),
+                                             *holder.map(broker_).object(),
+                                             true));
+    Tagged<Object> maybe_accessors = descriptors->GetStrongValue(index);
+    if (IsAccessorPair(maybe_accessors)) {
+      Tagged<AccessorPair> accessors = Cast<AccessorPair>(maybe_accessors);
+      Tagged<Object> maybe_getter = accessors->getter(kAcquireLoad);
+      if (Tagged<JSFunction> getter;
+          TryCast<JSFunction>(maybe_getter, &getter)) {
+        if (getter->shared()->HasBuiltinId() &&
+            getter->shared()->builtin_id() ==
+                Builtin::kTypedArrayPrototypeLength &&
+            broker_->dependencies()->DependOnArrayBufferDetachingProtector()) {
+          dependencies()->DependOnStablePrototypeChain(
+              receiver_map, kStartAtPrototype, holder);
+          // TODO(388844115): If we cannot depend on the detaching protector,
+          // add a different kind of TypedArrayLength operator which checks for
+          // detached before reading the byte_length.
+          return PropertyAccessInfo::TypedArrayLength(zone(), receiver_map);
+        }
+      }
+    }
+  }
+
+  return Invalid();
+}
+
 PropertyAccessInfo AccessInfoFactory::LookupTransition(
     MapRef map, NameRef name, OptionalJSObjectRef holder,
     PropertyAttributes attrs) const {
@@ -1198,14 +1273,19 @@ PropertyAccessInfo AccessInfoFactory::LookupTransition(
   // Transitioning stores *may* store to const fields. The resulting
   // DataConstant access infos can be distinguished from later, i.e. redundant,
   // stores to the same constant field by the presence of a transition map.
-  switch (dependencies()->DependOnFieldConstness(transition_map, transition_map,
-                                                 number)) {
+
+  PropertyConstness constness =
+      transition_map.GetPropertyDetails(broker_, number).constness();
+  switch (constness) {
     case PropertyConstness::kMutable:
       return PropertyAccessInfo::DataField(
           broker(), zone(), map, std::move(unrecorded_dependencies),
           field_index, details_representation, field_type, transition_map,
           field_map, holder, transition_map);
     case PropertyConstness::kConst:
+      auto constness_dep = dependencies()->FieldConstnessDependencyOffTheRecord(
+          transition_map, transition_map, number);
+      unrecorded_dependencies.push_back(constness_dep);
       return PropertyAccessInfo::FastDataConstant(
           zone(), map, std::move(unrecorded_dependencies), field_index,
           details_representation, field_type, transition_map, field_map, holder,

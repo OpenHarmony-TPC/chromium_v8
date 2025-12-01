@@ -30,9 +30,9 @@ class V8_EXPORT_PRIVATE RegExpMacroAssemblerRISCV
                               Label* on_equal) override;
   void CheckCharacterGT(base::uc16 limit, Label* on_greater) override;
   void CheckCharacterLT(base::uc16 limit, Label* on_less) override;
-  // A "greedy loop" is a loop that is both greedy and with a simple
+  // A "fixed length loop" is a loop that is both greedy and with a simple
   // body. It has a particularly simple implementation.
-  void CheckGreedyLoop(Label* on_tos_equals_current_position) override;
+  void CheckFixedLengthLoop(Label* on_tos_equals_current_position) override;
   void CheckNotAtStart(int cp_offset, Label* on_not_at_start) override;
   void CheckNotBackReference(int start_reg, bool read_backward,
                              Label* on_no_match) override;
@@ -64,7 +64,8 @@ class V8_EXPORT_PRIVATE RegExpMacroAssemblerRISCV
   bool CheckSpecialClassRanges(StandardCharacterSet type,
                                Label* on_no_match) override;
   void Fail() override;
-  Handle<HeapObject> GetCode(Handle<String> source, RegExpFlags flags) override;
+  DirectHandle<HeapObject> GetCode(DirectHandle<String> source,
+                                   RegExpFlags flags) override;
   void GoTo(Label* label) override;
   void IfRegisterGE(int reg, int comparand, Label* if_ge) override;
   void IfRegisterLT(int reg, int comparand, Label* if_lt) override;
@@ -167,6 +168,7 @@ class V8_EXPORT_PRIVATE RegExpMacroAssemblerRISCV
 
   // Check whether we are exceeding the stack limit on the backtrack stack.
   void CheckStackLimit();
+  void AssertAboveStackLimitMinusSlack();
 
   void CallCheckStackGuardState(Register scratch,
                                 Operand extra_space_for_variables = Operand(0));

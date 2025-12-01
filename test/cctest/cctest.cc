@@ -250,17 +250,14 @@ LocalContext::~LocalContext() {
   context_.Reset();
 }
 
-void LocalContext::Initialize(v8::Isolate* isolate,
-                              v8::ExtensionConfiguration* extensions,
+void LocalContext::Initialize(v8::ExtensionConfiguration* extensions,
                               v8::Local<v8::ObjectTemplate> global_template,
                               v8::Local<v8::Value> global_object) {
-  v8::HandleScope scope(isolate);
+  v8::HandleScope scope(isolate_);
   v8::Local<v8::Context> context =
-      v8::Context::New(isolate, extensions, global_template, global_object);
-  context_.Reset(isolate, context);
+      v8::Context::New(isolate_, extensions, global_template, global_object);
+  context_.Reset(isolate_, context);
   context->Enter();
-  // We can't do this later perhaps because of a fatal error.
-  isolate_ = isolate;
 }
 
 // This indirection is needed because HandleScopes cannot be heap-allocated, and
@@ -313,7 +310,7 @@ i::Handle<i::JSFunction> Optimize(i::Handle<i::JSFunction> function,
   i::DirectHandle<i::Code> code =
       i::compiler::Pipeline::GenerateCodeForTesting(&info, isolate)
           .ToHandleChecked();
-  function->UpdateCode(*code);
+  function->UpdateOptimizedCode(isolate, *code);
   return function;
 }
 #endif  // V8_ENABLE_TURBOFAN
@@ -430,14 +427,14 @@ std::shared_ptr<v8::TaskRunner> TestPlatform::GetForegroundTaskRunner(
 void TestPlatform::PostTaskOnWorkerThreadImpl(
     v8::TaskPriority priority, std::unique_ptr<v8::Task> task,
     const v8::SourceLocation& location) {
-  CcTest::default_platform()->CallOnWorkerThread(std::move(task));
+  CcTest::default_platform()->PostTaskOnWorkerThread(priority, std::move(task));
 }
 
 void TestPlatform::PostDelayedTaskOnWorkerThreadImpl(
     v8::TaskPriority priority, std::unique_ptr<v8::Task> task,
     double delay_in_seconds, const v8::SourceLocation& location) {
-  CcTest::default_platform()->CallDelayedOnWorkerThread(std::move(task),
-                                                        delay_in_seconds);
+  CcTest::default_platform()->PostDelayedTaskOnWorkerThread(
+      priority, std::move(task), delay_in_seconds);
 }
 
 std::unique_ptr<v8::JobHandle> TestPlatform::CreateJobImpl(

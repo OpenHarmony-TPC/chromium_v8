@@ -5,12 +5,16 @@
 #ifndef V8_SANDBOX_JS_DISPATCH_TABLE_INL_H_
 #define V8_SANDBOX_JS_DISPATCH_TABLE_INL_H_
 
+#include "src/sandbox/js-dispatch-table.h"
+// Include the non-inl header before the rest of the headers.
+
+#include "src/builtins/builtins-inl.h"
 #include "src/common/code-memory-access-inl.h"
 #include "src/objects/objects-inl.h"
 #include "src/sandbox/external-entity-table-inl.h"
-#include "src/sandbox/js-dispatch-table.h"
+#include "src/snapshot/embedded/embedded-data.h"
 
-#ifdef V8_ENABLE_SANDBOX
+#ifdef V8_ENABLE_LEAPTIERING
 
 namespace v8 {
 namespace internal {
@@ -19,12 +23,25 @@ void JSDispatchEntry::MakeJSDispatchEntry(Address object, Address entrypoint,
                                           uint16_t parameter_count,
                                           bool mark_as_alive) {
   DCHECK_EQ(object & kHeapObjectTag, 0);
-  DCHECK_EQ((object << kObjectPointerShift) >> kObjectPointerShift, object);
+  DCHECK_EQ((((object - kObjectPointerOffset) << kObjectPointerShift) >>
+             kObjectPointerShift) +
+                kObjectPointerOffset,
+            object);
+  DCHECK_EQ((object - kObjectPointerOffset) + kObjectPointerOffset, object);
+  DCHECK_LT((object - kObjectPointerOffset),
+            1ULL << ((sizeof(encoded_word_) * 8) - kObjectPointerShift));
 
-  Address payload = (object << kObjectPointerShift) | parameter_count;
+  Address payload = ((object - kObjectPointerOffset) << kObjectPointerShift) |
+                    (parameter_count & kParameterCountMask);
+  DCHECK(!(payload & kMarkingBit));
   if (mark_as_alive) payload |= kMarkingBit;
+#ifdef V8_TARGET_ARCH_32_BIT
+  parameter_count_.store(parameter_count, std::memory_order_relaxed);
+  next_free_entry_.store(0, std::memory_order_relaxed);
+#endif
   encoded_word_.store(payload, std::memory_order_relaxed);
   entrypoint_.store(entrypoint, std::memory_order_relaxed);
+  DCHECK(!IsFreelistEntry());
 }
 
 Address JSDispatchEntry::GetEntrypoint() const {
@@ -38,7 +55,8 @@ Address JSDispatchEntry::GetCodePointer() const {
   // and so may be 0 or 1 here. As the return value is a tagged pointer, the
   // bit must be 1 when returned, so we need to set it here.
   Address payload = encoded_word_.load(std::memory_order_relaxed);
-  return (payload >> kObjectPointerShift) | kHeapObjectTag;
+  return ((payload >> kObjectPointerShift) + kObjectPointerOffset) |
+         kHeapObjectTag;
 }
 
 Tagged<Code> JSDispatchEntry::GetCode() const {
@@ -51,8 +69,13 @@ uint16_t JSDispatchEntry::GetParameterCount() const {
   // an integer (the parameter count), so we probably want to make sure that
   // we're not getting that from a freed entry.
   CHECK(!IsFreelistEntry());
+#ifdef V8_TARGET_ARCH_32_BIT
+  return parameter_count_.load(std::memory_order_relaxed);
+#else
+  static_assert(kParameterCountMask != 0);
   Address payload = encoded_word_.load(std::memory_order_relaxed);
   return payload & kParameterCountMask;
+#endif
 }
 
 Tagged<Code> JSDispatchTable::GetCode(JSDispatchHandle handle) {
@@ -62,34 +85,92 @@ Tagged<Code> JSDispatchTable::GetCode(JSDispatchHandle handle) {
 
 void JSDispatchTable::SetCodeNoWriteBarrier(JSDispatchHandle handle,
                                             Tagged<Code> new_code) {
+  SetCodeAndEntrypointNoWriteBarrier(handle, new_code,
+                                     new_code->instruction_start());
+}
+
+void JSDispatchTable::SetCodeKeepTieringRequestNoWriteBarrier(
+    JSDispatchHandle handle, Tagged<Code> new_code) {
+  if (IsTieringRequested(handle)) {
+    SetCodeAndEntrypointNoWriteBarrier(handle, new_code, GetEntrypoint(handle));
+  } else {
+    SetCodeAndEntrypointNoWriteBarrier(handle, new_code,
+                                       new_code->instruction_start());
+  }
+}
+
+void JSDispatchTable::SetCodeAndEntrypointNoWriteBarrier(
+    JSDispatchHandle handle, Tagged<Code> new_code, Address new_entrypoint) {
   SBXCHECK(IsCompatibleCode(new_code, GetParameterCount(handle)));
 
   // The object should be in old space to avoid creating old-to-new references.
   DCHECK(!HeapLayout::InYoungGeneration(new_code));
 
   uint32_t index = HandleToIndex(handle);
-  DCHECK_GE(index, kEndOfInternalReadOnlySegment);
-  Address new_entrypoint = new_code->instruction_start();
+  DCHECK_GE(index, kEndOfReadOnlyIndex);
   CFIMetadataWriteScope write_scope("JSDispatchTable update");
   at(index).SetCodeAndEntrypointPointer(new_code.ptr(), new_entrypoint);
 }
 
-JSDispatchHandle JSDispatchTable::AllocateAndInitializeEntry(
-    Space* space, uint16_t parameter_count) {
-  DCHECK(space->BelongsTo(this));
-  uint32_t index = AllocateEntry(space);
-  CFIMetadataWriteScope write_scope("JSDispatchTable initialize");
-  at(index).MakeJSDispatchEntry(kNullAddress, kNullAddress, parameter_count,
-                                space->allocate_black());
-  return IndexToHandle(index);
+void JSDispatchTable::SetTieringRequest(JSDispatchHandle handle,
+                                        TieringBuiltin builtin,
+                                        Isolate* isolate) {
+  DCHECK(IsValidTieringBuiltin(builtin));
+  uint32_t index = HandleToIndex(handle);
+  DCHECK_GE(index, kEndOfReadOnlyIndex);
+  CFIMetadataWriteScope write_scope("JSDispatchTable update");
+  at(index).SetEntrypointPointer(
+      isolate->builtin_entry_table()[static_cast<uint32_t>(builtin)]);
+}
+
+bool JSDispatchTable::IsTieringRequested(JSDispatchHandle handle) {
+  uint32_t index = HandleToIndex(handle);
+  DCHECK_GE(index, kEndOfReadOnlyIndex);
+  Address entrypoint = at(index).GetEntrypoint();
+  Address code_entrypoint = at(index).GetCode()->instruction_start();
+  return code_entrypoint != entrypoint;
+}
+
+bool JSDispatchTable::IsTieringRequested(JSDispatchHandle handle,
+                                         TieringBuiltin builtin,
+                                         Isolate* isolate) {
+  uint32_t index = HandleToIndex(handle);
+  DCHECK_GE(index, kEndOfReadOnlyIndex);
+  Address entrypoint = at(index).GetEntrypoint();
+  Address code_entrypoint = at(index).GetCode()->instruction_start();
+  if (entrypoint == code_entrypoint) return false;
+  return entrypoint == EmbeddedData::FromBlob(isolate).InstructionStartOf(
+                           static_cast<Builtin>(builtin));
+}
+
+void JSDispatchTable::ResetTieringRequest(JSDispatchHandle handle) {
+  uint32_t index = HandleToIndex(handle);
+  DCHECK_GE(index, kEndOfReadOnlyIndex);
+  CFIMetadataWriteScope write_scope("JSDispatchTable update");
+  at(index).SetEntrypointPointer(at(index).GetCode()->instruction_start());
 }
 
 JSDispatchHandle JSDispatchTable::AllocateAndInitializeEntry(
     Space* space, uint16_t parameter_count, Tagged<Code> new_code) {
+  if (auto res =
+          TryAllocateAndInitializeEntry(space, parameter_count, new_code)) {
+    return *res;
+  }
+  V8::FatalProcessOutOfMemory(nullptr,
+                              "JSDispatchTable::AllocateAndInitializeEntry");
+}
+
+std::optional<JSDispatchHandle> JSDispatchTable::TryAllocateAndInitializeEntry(
+    Space* space, uint16_t parameter_count, Tagged<Code> new_code) {
   DCHECK(space->BelongsTo(this));
   SBXCHECK(IsCompatibleCode(new_code, parameter_count));
 
-  uint32_t index = AllocateEntry(space);
+  uint32_t index;
+  if (auto maybe_index = TryAllocateEntry(space)) {
+    index = *maybe_index;
+  } else {
+    return {};
+  }
   JSDispatchEntry& entry = at(index);
   CFIMetadataWriteScope write_scope("JSDispatchTable initialize");
   entry.MakeJSDispatchEntry(new_code.address(), new_code->instruction_start(),
@@ -104,25 +185,48 @@ void JSDispatchEntry::SetCodeAndEntrypointPointer(Address new_object,
   Address parameter_count = old_payload & kParameterCountMask;
   // We want to preserve the marking bit of the entry. Since that happens to
   // be the tag bit of the pointer, we need to explicitly clear it here.
-  Address object = (new_object << kObjectPointerShift) & ~kMarkingBit;
+  Address object =
+      ((new_object - kObjectPointerOffset) << kObjectPointerShift) &
+      ~kMarkingBit;
   Address new_payload = object | marking_bit | parameter_count;
   encoded_word_.store(new_payload, std::memory_order_relaxed);
+  entrypoint_.store(new_entrypoint, std::memory_order_relaxed);
+  DCHECK(!IsFreelistEntry());
+}
+
+void JSDispatchEntry::SetEntrypointPointer(Address new_entrypoint) {
   entrypoint_.store(new_entrypoint, std::memory_order_relaxed);
 }
 
 void JSDispatchEntry::MakeFreelistEntry(uint32_t next_entry_index) {
+#ifdef V8_TARGET_ARCH_64_BIT
   Address payload = kFreeEntryTag | next_entry_index;
   entrypoint_.store(payload, std::memory_order_relaxed);
+#else
+  // Store index + 1 such that we can use 0 for non-free entries.
+  next_free_entry_.store(next_entry_index + 1, std::memory_order_relaxed);
+  entrypoint_.store(kNullAddress, std::memory_order_relaxed);
+#endif
   encoded_word_.store(kNullAddress, std::memory_order_relaxed);
+  DCHECK(IsFreelistEntry());
 }
 
 bool JSDispatchEntry::IsFreelistEntry() const {
+#ifdef V8_TARGET_ARCH_64_BIT
   auto entrypoint = entrypoint_.load(std::memory_order_relaxed);
   return (entrypoint & kFreeEntryTag) == kFreeEntryTag;
+#else
+  return next_free_entry_.load(std::memory_order_relaxed) != 0;
+#endif
 }
 
 uint32_t JSDispatchEntry::GetNextFreelistEntryIndex() const {
+  DCHECK(IsFreelistEntry());
+#ifdef V8_TARGET_ARCH_64_BIT
   return static_cast<uint32_t>(entrypoint_.load(std::memory_order_relaxed));
+#else
+  return next_free_entry_.load(std::memory_order_relaxed) - 1;
+#endif
 }
 
 void JSDispatchEntry::Mark() {
@@ -168,13 +272,13 @@ void JSDispatchTable::Mark(JSDispatchHandle handle) {
   uint32_t index = HandleToIndex(handle);
 
   // The read-only space is immortal and cannot be written to.
-  if (index < kEndOfInternalReadOnlySegment) return;
+  if (index < kEndOfReadOnlyIndex) return;
 
   CFIMetadataWriteScope write_scope("JSDispatchTable write");
   at(index).Mark();
 }
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(VERIFY_HEAP)
 void JSDispatchTable::VerifyEntry(JSDispatchHandle handle, Space* space,
                                   Space* ro_space) {
   DCHECK(space->BelongsTo(this));
@@ -184,12 +288,12 @@ void JSDispatchTable::VerifyEntry(JSDispatchHandle handle, Space* space,
   }
   uint32_t index = HandleToIndex(handle);
   if (ro_space->Contains(index)) {
-    DCHECK(at(index).IsMarked());
+    CHECK(at(index).IsMarked());
   } else {
-    DCHECK(space->Contains(index));
+    CHECK(space->Contains(index));
   }
 }
-#endif  // DEBUG
+#endif  // defined(DEBUG) || defined(VERIFY_HEAP)
 
 template <typename Callback>
 void JSDispatchTable::IterateActiveEntriesIn(Space* space, Callback callback) {
@@ -225,6 +329,9 @@ bool JSDispatchTable::IsCompatibleCode(Tagged<Code> code,
     return false;
   }
   if (code->parameter_count() == parameter_count) {
+    DCHECK_IMPLIES(code->is_builtin(),
+                   parameter_count ==
+                       Builtins::GetFormalParameterCount(code->builtin_id()));
     // Dispatch entry and code have the same signature. This is correct.
     return true;
   }
@@ -244,6 +351,7 @@ bool JSDispatchTable::IsCompatibleCode(Tagged<Code> code,
   DCHECK(code->is_builtin());
   DCHECK_EQ(code->parameter_count(), kDontAdaptArgumentsSentinel);
   switch (code->builtin_id()) {
+    case Builtin::kIllegal:
     case Builtin::kCompileLazy:
     case Builtin::kInterpreterEntryTrampoline:
     case Builtin::kInstantiateAsmJs:
@@ -253,6 +361,9 @@ bool JSDispatchTable::IsCompatibleCode(Tagged<Code> code,
     case Builtin::kJSToJSWrapper:
     case Builtin::kJSToJSWrapperInvalidSig:
     case Builtin::kWasmPromising:
+#if V8_ENABLE_DRUMBRAKE
+    case Builtin::kGenericJSToWasmInterpreterWrapper:
+#endif
     case Builtin::kWasmStressSwitch:
 #endif
       return true;
@@ -264,6 +375,6 @@ bool JSDispatchTable::IsCompatibleCode(Tagged<Code> code,
 }  // namespace internal
 }  // namespace v8
 
-#endif  // V8_ENABLE_SANDBOX
+#endif  // V8_ENABLE_LEAPTIERING
 
 #endif  // V8_SANDBOX_JS_DISPATCH_TABLE_INL_H_

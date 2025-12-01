@@ -5,6 +5,7 @@
 #ifndef V8_WASM_BASELINE_RISCV_LIFTOFF_ASSEMBLER_RISCV64_INL_H_
 #define V8_WASM_BASELINE_RISCV_LIFTOFF_ASSEMBLER_RISCV64_INL_H_
 
+#include "src/codegen/interface-descriptors-inl.h"
 #include "src/heap/mutable-page-metadata.h"
 #include "src/wasm/baseline/liftoff-assembler.h"
 #include "src/wasm/baseline/riscv/liftoff-assembler-riscv-inl.h"
@@ -76,7 +77,6 @@ inline void Load(LiftoffAssembler* assm, LiftoffRegister dst, MemOperand src,
     case kI64:
     case kRef:
     case kRefNull:
-    case kRtt:
       assm->Ld(dst.gp(), src);
       break;
     case kF32:
@@ -109,7 +109,6 @@ inline void Store(LiftoffAssembler* assm, Register base, int32_t offset,
     case kI64:
     case kRefNull:
     case kRef:
-    case kRtt:
       assm->Sd(src.gp(), dst);
       break;
     case kF32:
@@ -141,7 +140,6 @@ inline void push(LiftoffAssembler* assm, LiftoffRegister reg, ValueKind kind) {
     case kI64:
     case kRefNull:
     case kRef:
-    case kRtt:
       assm->push(reg.gp());
       break;
     case kF32:
@@ -182,7 +180,6 @@ inline void StoreToMemory(LiftoffAssembler* assm, MemOperand dst,
       case kI64:
       case kRef:
       case kRefNull:
-      case kRtt:
         return assm->Sd(src.reg().gp(), dst);
       case kF32:
         return assm->StoreFloat(src.reg().fp(), dst);
@@ -634,8 +631,40 @@ void LiftoffAssembler::AtomicLoad(LiftoffRegister dst, Register src_addr,
       ld(dst.gp(), src_reg, 0);
       sync();
       return;
+    case LoadType::kI32Load8S:
+      lb(dst.gp(), src_reg, 0);
+      sync();
+      return;
+    case LoadType::kI32Load16S:
+      lh(dst.gp(), src_reg, 0);
+      sync();
+      return;
     default:
       UNREACHABLE();
+  }
+}
+
+void LiftoffAssembler::AtomicLoadTaggedPointer(Register dst, Register src_addr,
+                                               Register offset_reg,
+                                               int32_t offset_imm,
+                                               AtomicMemoryOrder memory_order,
+                                               uint32_t* protected_load_pc,
+                                               bool needs_shift) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  MemOperand src_op = liftoff::GetMemOp(this, src_addr, offset_reg, offset_imm);
+  uint32_t pc_offset_of_load = 0;
+#if V8_COMPRESS_POINTERS
+  Lw(dst, src_op);
+  pc_offset_of_load = pc_offset() - kInstrSize;
+  sync();
+  DecompressTagged(dst, dst);
+#else
+  LoadWord(dst, src_op);
+  pc_offset_of_load = pc_offset() - kInstrSize;
+  sync();
+#endif
+  if (protected_load_pc != nullptr) {
+    *protected_load_pc = pc_offset_of_load;
   }
 }
 
@@ -669,6 +698,42 @@ void LiftoffAssembler::AtomicStore(Register dst_addr, Register offset_reg,
     default:
       UNREACHABLE();
   }
+}
+
+void LiftoffAssembler::AtomicStoreTaggedPointer(
+    Register dst_addr, Register offset_reg, int32_t offset_imm, Register src,
+    LiftoffRegList pinned, AtomicMemoryOrder memory_order,
+    uint32_t* protected_store_pc) {
+  UseScratchRegisterScope temps(this);
+  Register dst_reg = liftoff::CalculateActualAddress(this, temps, dst_addr,
+                                                     offset_reg, offset_imm);
+  auto trapper = [protected_store_pc](int offset) {
+    if (protected_store_pc) *protected_store_pc = static_cast<uint32_t>(offset);
+  };
+
+  if (COMPRESS_POINTERS_BOOL) {
+    Sw(src, MemOperand(dst_reg, 0), trapper);
+  } else {
+    Sd(src, MemOperand(dst_reg, 0), trapper);
+  }
+  sync();
+  if (v8_flags.disable_write_barriers) return;
+  // The write barrier.
+  Label exit;
+  CheckPageFlag(dst_addr, MemoryChunk::kPointersFromHereAreInterestingMask,
+                kZero, &exit);
+  JumpIfSmi(src, &exit);
+  CheckPageFlag(src, MemoryChunk::kPointersToHereAreInterestingMask, eq, &exit);
+  Operand offset_op =
+      offset_reg.is_valid() ? Operand(offset_reg) : Operand(offset_imm);
+  if (offset_reg.is_valid() && offset_imm) {
+    Register effective_offset = kScratchReg;
+    AddWord(effective_offset, offset_reg, offset_imm);
+    offset_op = Operand(effective_offset);
+  }
+  CallRecordWriteStubSaveRegisters(dst_addr, offset_op, SaveFPRegsMode::kSave,
+                                   StubCallMode::kCallWasmRuntimeStub);
+  bind(&exit);
 }
 
 void LiftoffAssembler::AtomicAdd(Register dst_addr, Register offset_reg,
@@ -834,7 +899,6 @@ void LiftoffAssembler::MoveStackValue(uint32_t dst_offset, uint32_t src_offset,
     case kI64:
     case kRef:
     case kRefNull:
-    case kRtt:
       Ld(kScratchReg, src);
       Sd(kScratchReg, dst);
       break;
@@ -897,7 +961,6 @@ void LiftoffAssembler::Spill(int offset, LiftoffRegister reg, ValueKind kind) {
     case kI64:
     case kRef:
     case kRefNull:
-    case kRtt:
       Sd(reg.gp(), dst);
       break;
     case kF32:
@@ -1491,8 +1554,7 @@ void LiftoffAssembler::emit_cond_jump(Condition cond, Label* label,
     if (kind == kI64) {
       MacroAssembler::Branch(label, cond, lhs, Operand(rhs));
     } else {
-      DCHECK((kind == kI32) || (kind == kRtt) || (kind == kRef) ||
-             (kind == kRefNull));
+      DCHECK((kind == kI32) || (kind == kRef) || (kind == kRefNull));
       MacroAssembler::CompareTaggedAndBranch(label, cond, lhs, Operand(rhs));
     }
   }
@@ -1556,10 +1618,12 @@ void LiftoffAssembler::LoadTransform(LiftoffRegister dst, Register src_addr,
                                      Register offset_reg, uintptr_t offset_imm,
                                      LoadType type,
                                      LoadTransformationKind transform,
-                                     uint32_t* protected_load_pc) {
+                                     uint32_t* protected_load_pc,
+                                     bool i64_offset) {
   UseScratchRegisterScope temps(this);
   Register scratch = temps.Acquire();
-  MemOperand src_op = liftoff::GetMemOp(this, src_addr, offset_reg, offset_imm);
+  MemOperand src_op =
+      liftoff::GetMemOp(this, src_addr, offset_reg, offset_imm, i64_offset);
   VRegister dst_v = dst.fp().toV();
   auto trapper = [protected_load_pc](int offset) {
     if (protected_load_pc) *protected_load_pc = static_cast<uint32_t>(offset);

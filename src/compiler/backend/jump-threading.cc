@@ -272,19 +272,20 @@ void JumpThreading::ApplyForwarding(Zone* local_zone,
       if (code->InstructionBlockAt(block_rpo)->IsHandler()) {
         code->InstructionBlockAt(result_rpo)->MarkHandler();
       }
-      if (code->InstructionBlockAt(block_rpo)->IsSwitchTarget()) {
-        code->InstructionBlockAt(result_rpo)->set_switch_target(true);
+      if (code->InstructionBlockAt(block_rpo)->IsTableSwitchTarget()) {
+        code->InstructionBlockAt(result_rpo)->set_table_switch_target(true);
       }
     }
 
     if (skip) {
-      for (int i = block->code_start(); i < block->code_end(); ++i) {
-        Instruction* instr = code->InstructionAt(i);
+      for (int instr_idx = block->code_start(); instr_idx < block->code_end();
+           ++instr_idx) {
+        Instruction* instr = code->InstructionAt(instr_idx);
         DCHECK_NE(FlagsModeField::decode(instr->opcode()), kFlags_branch);
         if (instr->arch_opcode() == kArchJmp ||
             instr->arch_opcode() == kArchRet) {
           // Overwrite a redundant jump with a nop.
-          TRACE("jt-fw nop @%d\n", i);
+          TRACE("jt-fw nop @%d\n", instr_idx);
           instr->OverwriteWithNop();
           // Eliminate all the ParallelMoves.
           for (int i = Instruction::FIRST_GAP_POSITION;
@@ -296,8 +297,10 @@ void JumpThreading::ApplyForwarding(Zone* local_zone,
               instr_move->Eliminate();
             }
           }
-          // If this block was marked as a handler, it can be unmarked now.
+          // If this block was marked as a handler or a switch target, it can be
+          // unmarked now.
           code->InstructionBlockAt(block_rpo)->UnmarkHandler();
+          code->InstructionBlockAt(block_rpo)->set_table_switch_target(false);
           code->InstructionBlockAt(block_rpo)->set_omitted_by_jump_threading();
         }
       }

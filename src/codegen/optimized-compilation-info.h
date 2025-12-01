@@ -147,11 +147,6 @@ class V8_EXPORT_PRIVATE OptimizedCompilationInfo final {
 
   void SetCode(IndirectHandle<Code> code);
 
-#if V8_ENABLE_WEBASSEMBLY
-  void SetWasmCompilationResult(std::unique_ptr<wasm::WasmCompilationResult>);
-  std::unique_ptr<wasm::WasmCompilationResult> ReleaseWasmCompilationResult();
-#endif  // V8_ENABLE_WEBASSEMBLY
-
   bool has_context() const;
   Tagged<Context> context() const;
 
@@ -260,6 +255,12 @@ class V8_EXPORT_PRIVATE OptimizedCompilationInfo final {
 
   TickCounter& tick_counter() { return tick_counter_; }
 
+  bool was_cancelled() const {
+    return was_cancelled_.load(std::memory_order_relaxed);
+  }
+
+  void mark_cancelled();
+
   BasicBlockProfilerData* profiler_data() const { return profiler_data_; }
   void set_profiler_data(BasicBlockProfilerData* profiler_data) {
     profiler_data_ = profiler_data;
@@ -312,11 +313,6 @@ class V8_EXPORT_PRIVATE OptimizedCompilationInfo final {
   // Basic block profiling support.
   BasicBlockProfilerData* profiler_data_ = nullptr;
 
-#if V8_ENABLE_WEBASSEMBLY
-  // The WebAssembly compilation result, not published in the NativeModule yet.
-  std::unique_ptr<wasm::WasmCompilationResult> wasm_compilation_result_;
-#endif  // V8_ENABLE_WEBASSEMBLY
-
   // Entry point when compiling for OSR, {BytecodeOffset::None} otherwise.
   const BytecodeOffset osr_offset_ = BytecodeOffset::None();
 
@@ -338,6 +334,8 @@ class V8_EXPORT_PRIVATE OptimizedCompilationInfo final {
   std::unique_ptr<char[]> trace_turbo_filename_;
 
   TickCounter tick_counter_;
+
+  std::atomic<bool> was_cancelled_ = false;
 
   // 1) PersistentHandles created via PersistentHandlesScope inside of
   //    CompilationHandleScope

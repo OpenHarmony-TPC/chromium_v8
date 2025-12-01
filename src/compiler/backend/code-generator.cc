@@ -127,7 +127,7 @@ bool CodeGenerator::ShouldApplyOffsetToStackCheck(Instruction* instr,
   DCHECK_EQ(instr->arch_opcode(), kArchStackPointerGreaterThan);
 
   StackCheckKind kind =
-      static_cast<StackCheckKind>(MiscField::decode(instr->opcode()));
+      static_cast<StackCheckKind>(StackCheckField::decode(instr->opcode()));
   if (kind != StackCheckKind::kJSFunctionEntry) return false;
 
   uint32_t stack_check_offset = *offset = GetStackCheckOffset();
@@ -177,7 +177,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleDeoptimizerCall(
                               exit->pos(), deoptimization_id);
   }
 
-  if (deopt_kind == DeoptimizeKind::kLazy) {
+  if (deopt_kind == DeoptimizeKind::kLazy ||
+      deopt_kind == DeoptimizeKind::kLazyAfterFastCall) {
     ++lazy_deopt_count_;
     masm()->BindExceptionHandler(exit->label());
   } else {
@@ -206,14 +207,12 @@ void CodeGenerator::AssembleCode() {
   // ultimately set the parameter count on the resulting Code object.
   if (call_descriptor->IsJSFunctionCall()) {
     parameter_count_ = call_descriptor->ParameterSlotCount();
-#ifdef DEBUG
     if (Builtins::IsBuiltinId(info->builtin())) {
-      DCHECK_EQ(parameter_count_,
-                Builtins::GetStackParameterCount(info->builtin()));
+      CHECK_EQ(parameter_count_,
+               Builtins::GetStackParameterCount(info->builtin()));
     } else if (info->has_bytecode_array()) {
-      DCHECK_EQ(parameter_count_, info->bytecode_array()->parameter_count());
+      CHECK_EQ(parameter_count_, info->bytecode_array()->parameter_count());
     }
-#endif  // DEBUG
   }
 
   // Open a frame scope to indicate that there is a frame on the stack.  The
@@ -239,20 +238,6 @@ void CodeGenerator::AssembleCode() {
   if (v8_flags.debug_code && call_descriptor->IsJSFunctionCall()) {
     masm()->RecordComment("-- Prologue: check dispatch handle register --");
     AssembleDispatchHandleRegisterCheck();
-  }
-#endif
-
-#if V8_ENABLE_WEBASSEMBLY
-  if (info->code_kind() == CodeKind::WASM_TO_JS_FUNCTION ||
-      info->builtin() == Builtin::kWasmToJsWrapperCSA ||
-      wasm::BuiltinLookup::IsWasmBuiltinId(info->builtin())) {
-    // By default the code generator can convert slot IDs to SP-relative memory
-    // operands depending on the offset if the encoding is more efficient.
-    // However the SP may switch to the central stack for wasm-to-js wrappers
-    // and wasm builtins, so disable this optimization there.
-    // TODO(thibaudm): Disable this more selectively, only wasm builtins that
-    // call JS builtins can switch, and only around the call site.
-    frame_access_state()->SetFPRelativeOnly(true);
   }
 #endif
 
@@ -323,7 +308,7 @@ void CodeGenerator::AssembleCode() {
     masm()->bind(GetLabel(current_block_));
 
 #ifdef V8_ENABLE_CONTROL_FLOW_INTEGRITY
-    if (block->IsSwitchTarget()) {
+    if (block->IsTableSwitchTarget()) {
       masm()->JumpTarget();
     }
 #endif
@@ -386,11 +371,18 @@ void CodeGenerator::AssembleCode() {
   auto cmp = [](const DeoptimizationExit* a, const DeoptimizationExit* b) {
     // The deoptimization exits are sorted so that lazy deopt exits appear after
     // eager deopts.
-    static_assert(static_cast<int>(DeoptimizeKind::kLazy) ==
-                      static_cast<int>(kLastDeoptimizeKind),
-                  "lazy deopts are expected to be emitted last");
-    if (a->kind() != b->kind()) {
-      return a->kind() < b->kind();
+    int a_kind_val = a->kind() == DeoptimizeKind::kEager ? 0 : 1;
+    int b_kind_val = b->kind() == DeoptimizeKind::kEager ? 0 : 1;
+
+    DCHECK_IMPLIES(a_kind_val == 1,
+                   a->kind() == DeoptimizeKind::kLazy ||
+                       a->kind() == DeoptimizeKind::kLazyAfterFastCall);
+    DCHECK_IMPLIES(b_kind_val == 1,
+                   b->kind() == DeoptimizeKind::kLazy ||
+                       b->kind() == DeoptimizeKind::kLazyAfterFastCall);
+
+    if (a_kind_val != b_kind_val) {
+      return a_kind_val < b_kind_val;
     }
     return a->pc_offset() < b->pc_offset();
   };
@@ -411,7 +403,8 @@ void CodeGenerator::AssembleCode() {
       // order, which is always the case since they are added to
       // deoptimization_exits_ in that order, and the optional sort operation
       // above preserves that order.
-      if (exit->kind() == DeoptimizeKind::kLazy) {
+      if (exit->kind() == DeoptimizeKind::kLazy ||
+          exit->kind() == DeoptimizeKind::kLazyAfterFastCall) {
         int trampoline_pc = exit->label()->pos();
         last_updated = safepoints()->UpdateDeoptimizationInfo(
             exit->pc_offset(), trampoline_pc, last_updated,
@@ -437,7 +430,7 @@ void CodeGenerator::AssembleCode() {
     }
   }
 
-  // The LinuxPerfJitLogger logs code up until here, excluding the safepoint
+  // The PerfJitLogger logs code up until here, excluding the safepoint
   // table. Resolve the unwinding info now so it is aware of the same code
   // size as reported by perf.
   unwinding_info_writer_.Finish(masm()->pc_offset());
@@ -495,7 +488,7 @@ base::OwnedVector<uint8_t> CodeGenerator::GetSourcePositionTable() {
 
 base::OwnedVector<uint8_t> CodeGenerator::GetProtectedInstructionsData() {
 #if V8_ENABLE_WEBASSEMBLY
-  return base::OwnedVector<uint8_t>::Of(
+  return base::OwnedCopyOf(
       base::Vector<uint8_t>::cast(base::VectorOf(protected_instructions_)));
 #else
   return {};
@@ -763,6 +756,7 @@ RpoNumber CodeGenerator::ComputeBranchInfo(BranchInfo* branch,
   branch->condition = condition;
   branch->true_label = GetLabel(true_rpo);
   branch->false_label = GetLabel(false_rpo);
+  branch->hinted = static_cast<bool>(BranchHintField::decode(instr->opcode()));
   branch->fallthru = IsNextInAssemblyOrder(false_rpo);
   return RpoNumber::Invalid();
 }
@@ -850,6 +844,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleInstruction(
       branch.condition = condition;
       branch.true_label = exit->label();
       branch.false_label = exit->continue_label();
+      branch.hinted = true;
       branch.fallthru = true;
       AssembleArchDeoptBranch(instr, &branch);
       masm()->bind(exit->continue_label());
@@ -962,11 +957,11 @@ void CodeGenerator::AssembleGaps(Instruction* instr) {
 
 namespace {
 
-Handle<TrustedPodArray<InliningPosition>> CreateInliningPositions(
+DirectHandle<TrustedPodArray<InliningPosition>> CreateInliningPositions(
     OptimizedCompilationInfo* info, Isolate* isolate) {
   const OptimizedCompilationInfo::InlinedFunctionList& inlined_functions =
       info->inlined_functions();
-  Handle<TrustedPodArray<InliningPosition>> inl_positions =
+  DirectHandle<TrustedPodArray<InliningPosition>> inl_positions =
       TrustedPodArray<InliningPosition>::New(
           isolate, static_cast<int>(inlined_functions.size()));
   for (size_t i = 0; i < inlined_functions.size(); ++i) {
@@ -1022,7 +1017,7 @@ Handle<DeoptimizationData> CodeGenerator::GenerateDeoptimizationData() {
       isolate()->factory()->NewDeoptimizationLiteralArray(
           static_cast<int>(deoptimization_literals_.size()));
   for (unsigned i = 0; i < deoptimization_literals_.size(); i++) {
-    Handle<Object> object = deoptimization_literals_[i].Reify(isolate());
+    DirectHandle<Object> object = deoptimization_literals_[i].Reify(isolate());
     CHECK(!object.is_null());
     literals->set(i, *object);
   }
@@ -1071,7 +1066,6 @@ base::OwnedVector<uint8_t> CodeGenerator::GenerateWasmDeoptimizationData() {
   // Lazy deopts are not supported in wasm.
   DCHECK_EQ(lazy_deopt_count_, 0);
   // Wasm doesn't use the JS inlining handling via deopt info.
-  // TODO(mliedtke): Re-evaluate if this would offer benefits.
   DCHECK_EQ(inlined_function_count_, 0);
 
   auto deopt_entries =
@@ -1202,7 +1196,7 @@ DeoptimizationEntry const& CodeGenerator::GetDeoptimizationEntry(
 void CodeGenerator::TranslateStateValueDescriptor(
     StateValueDescriptor* desc, StateValueList* nested,
     InstructionOperandIterator* iter) {
-  if (desc->IsNested()) {
+  if (desc->IsNestedObject()) {
     translations_.BeginCapturedObject(static_cast<int>(nested->size()));
     for (auto field : *nested) {
       TranslateStateValueDescriptor(field.desc, field.nested, iter);
@@ -1218,6 +1212,11 @@ void CodeGenerator::TranslateStateValueDescriptor(
   } else if (desc->IsPlain()) {
     InstructionOperand* op = iter->Advance();
     AddTranslationForOperand(iter->instruction(), op, desc->type());
+  } else if (desc->IsStringConcat()) {
+    translations_.StringConcat();
+    for (auto field : *nested) {
+      TranslateStateValueDescriptor(field.desc, field.nested, iter);
+    }
   } else {
     DCHECK(desc->IsOptimizedOut());
     translations_.StoreOptimizedOut();
@@ -1287,7 +1286,9 @@ void CodeGenerator::BuildTranslationForFrameStateDescriptor(
       break;
     }
     case FrameStateType::kInlinedExtraArguments:
-      translations_.BeginInlinedExtraArguments(shared_info_id, height);
+      translations_.BeginInlinedExtraArguments(
+          shared_info_id, height,
+          descriptor->bytecode_array().ToHandleChecked()->parameter_count());
       break;
     case FrameStateType::kConstructCreateStub:
       translations_.BeginConstructCreateStubFrame(shared_info_id, height);

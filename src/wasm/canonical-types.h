@@ -2,42 +2,38 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_WASM_CANONICAL_TYPES_H_
+#define V8_WASM_CANONICAL_TYPES_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
 
-#ifndef V8_WASM_CANONICAL_TYPES_H_
-#define V8_WASM_CANONICAL_TYPES_H_
-
-#include <unordered_map>
+#include <unordered_set>
 
 #include "src/base/bounds.h"
-#include "src/base/functional.h"
+#include "src/base/hashing.h"
+#include "src/base/platform/mutex.h"
+#include "src/wasm/struct-types.h"
 #include "src/wasm/value-type.h"
-#include "src/wasm/wasm-module.h"
 
 namespace v8::internal::wasm {
 
+class CanonicalTypeNamesProvider;
+struct WasmModule;
+
 // We use ValueType instances constructed from canonical type indices, so we
 // can't let them get bigger than what we have storage space for.
-// TODO(jkummerow): Raise this limit. Possible options:
-// - increase the size of ValueType::HeapTypeField, using currently-unused bits.
-// - change the encoding of ValueType: one bit says whether it's a ref type,
-//   the other bits then encode the index or the kind of non-ref type.
-// - refactor the TypeCanonicalizer's internals to no longer use ValueTypes
-//   and related infrastructure, and use a wider encoding of canonicalized
-//   type indices only here.
-// - wait for 32-bit platforms to no longer be relevant, and increase the
-//   size of ValueType to 64 bits.
-// None of this seems urgent, as we have no evidence of the current limit
-// being an actual limitation in practice.
+// We could raise this limit using unused bits in the ValueType, but that
+// doesn't seem urgent, as we have no evidence of the current limit being
+// an actual limitation in practice.
 static constexpr size_t kMaxCanonicalTypes = kV8MaxWasmTypes;
 // We don't want any valid modules to fail canonicalization.
 static_assert(kMaxCanonicalTypes >= kV8MaxWasmTypes);
 // We want the invalid index to fail any range checks.
 static_assert(kInvalidCanonicalIndex > kMaxCanonicalTypes);
 // Ensure that ValueType can hold all canonical type indexes.
-static_assert(kMaxCanonicalTypes <= (1 << ValueType::kHeapTypeBits));
+static_assert(kMaxCanonicalTypes <= (1 << CanonicalValueType::kNumIndexBits));
 
 // A singleton class, responsible for isorecursive canonicalization of wasm
 // types.
@@ -64,22 +60,14 @@ class TypeCanonicalizer {
   TypeCanonicalizer(TypeCanonicalizer&& other) = delete;
   TypeCanonicalizer& operator=(TypeCanonicalizer&& other) = delete;
 
-  // Registers {size} types of {module} as a recursive group, starting at
-  // {start_index}, and possibly canonicalizes it if an identical one has been
-  // found. Modifies {module->isorecursive_canonical_type_ids}.
-  V8_EXPORT_PRIVATE void AddRecursiveGroup(WasmModule* module, uint32_t size,
-                                           uint32_t start_index);
-
-  // Same as above, except it registers the last {size} types in the module.
+  // Register the last {size} types of {module} as a recursive group and
+  // possibly canonicalize it if an identical one has been found.
+  // Modifies {module->isorecursive_canonical_type_ids}.
   V8_EXPORT_PRIVATE void AddRecursiveGroup(WasmModule* module, uint32_t size);
 
   // Same as above, but for a group of size 1 (using the last type in the
   // module).
   V8_EXPORT_PRIVATE void AddRecursiveSingletonGroup(WasmModule* module);
-
-  // Same as above, but receives an explicit start index.
-  V8_EXPORT_PRIVATE void AddRecursiveSingletonGroup(WasmModule* module,
-                                                    uint32_t start_index);
 
   // Adds a module-independent signature as a recursive group, and canonicalizes
   // it if an identical is found. Returns the canonical index of the added
@@ -87,8 +75,12 @@ class TypeCanonicalizer {
   V8_EXPORT_PRIVATE CanonicalTypeIndex
   AddRecursiveGroup(const FunctionSig* sig);
 
-  // Retrieve back a function signature from a canonical index later.
+  // Retrieve back a type from a canonical index later.
   V8_EXPORT_PRIVATE const CanonicalSig* LookupFunctionSignature(
+      CanonicalTypeIndex index) const;
+  V8_EXPORT_PRIVATE const CanonicalStructType* LookupStruct(
+      CanonicalTypeIndex index) const;
+  V8_EXPORT_PRIVATE const CanonicalArrayType* LookupArray(
       CanonicalTypeIndex index) const;
 
   // Returns if {canonical_sub_index} is a canonical subtype of
@@ -109,7 +101,7 @@ class TypeCanonicalizer {
 
   size_t EstimateCurrentMemoryConsumption() const;
 
-  size_t GetCurrentNumberOfTypes() const;
+  V8_EXPORT_PRIVATE size_t GetCurrentNumberOfTypes() const;
 
   // Prepares wasm for the provided canonical type index. This reserves enough
   // space in the canonical rtts and the JSToWasm wrappers on the isolate roots.
@@ -120,7 +112,14 @@ class TypeCanonicalizer {
   V8_EXPORT_PRIVATE static void ClearWasmCanonicalTypesForTesting(
       Isolate* isolate);
 
-  bool IsFunctionSignature(CanonicalTypeIndex index) const;
+  V8_EXPORT_PRIVATE bool IsFunctionSignature(CanonicalTypeIndex index) const;
+  V8_EXPORT_PRIVATE bool IsStruct(CanonicalTypeIndex index) const;
+  V8_EXPORT_PRIVATE bool IsArray(CanonicalTypeIndex index) const;
+  V8_EXPORT_PRIVATE bool IsShared(CanonicalTypeIndex index) const;
+
+  bool IsHeapSubtype(CanonicalTypeIndex sub, CanonicalTypeIndex super) const;
+  bool IsCanonicalSubtype_Locked(CanonicalTypeIndex sub_index,
+                                 CanonicalTypeIndex super_index) const;
 
   CanonicalTypeIndex FindIndex_Slow(const CanonicalSig* sig) const;
 
@@ -133,14 +132,17 @@ class TypeCanonicalizer {
 
  private:
   struct CanonicalType {
-    enum Kind : int8_t { kFunction, kStruct, kArray };
+    enum Kind : int8_t { kFunction, kStruct, kArray, kCont };
 
     union {
       const CanonicalSig* function_sig = nullptr;
       const CanonicalStructType* struct_type;
       const CanonicalArrayType* array_type;
+      const CanonicalContType* cont_type;
     };
     CanonicalTypeIndex supertype{kNoSuperType};
+    CanonicalTypeIndex descriptor{kNoType};
+    CanonicalTypeIndex describes{kNoType};
     Kind kind = kFunction;
     bool is_final = false;
     bool is_shared = false;
@@ -156,10 +158,14 @@ class TypeCanonicalizer {
           is_shared(is_shared) {}
 
     constexpr CanonicalType(const CanonicalStructType* type,
-                            CanonicalTypeIndex supertype, bool is_final,
+                            CanonicalTypeIndex supertype,
+                            CanonicalTypeIndex descriptor,
+                            CanonicalTypeIndex describes, bool is_final,
                             bool is_shared)
         : struct_type(type),
           supertype(supertype),
+          descriptor(descriptor),
+          describes(describes),
           kind(kStruct),
           is_final(is_final),
           is_shared(is_shared) {}
@@ -173,17 +179,26 @@ class TypeCanonicalizer {
           is_final(is_final),
           is_shared(is_shared) {}
 
+    constexpr CanonicalType(const CanonicalContType* type,
+                            CanonicalTypeIndex supertype, bool is_final,
+                            bool is_shared)
+        : cont_type(type),
+          supertype(supertype),
+          kind(kCont),
+          is_final(is_final),
+          is_shared(is_shared) {}
+
     constexpr CanonicalType() = default;
   };
 
   // Define the range of a recursion group; for use in {CanonicalHashing} and
   // {CanonicalEquality}.
   struct RecursionGroupRange {
-    const CanonicalTypeIndex start;
-    const CanonicalTypeIndex end;
+    const CanonicalTypeIndex first;
+    const CanonicalTypeIndex last;
 
     bool Contains(CanonicalTypeIndex index) const {
-      return base::IsInRange(index.index, start.index, end.index);
+      return base::IsInRange(index.index, first.index, last.index);
     }
   };
 
@@ -196,41 +211,56 @@ class TypeCanonicalizer {
     explicit CanonicalHashing(RecursionGroupRange recgroup)
         : recgroup{recgroup} {}
 
+    uint32_t MakeGroupRelative(CanonicalTypeIndex index) {
+      uint32_t is_relative = recgroup.Contains(index) ? 1 : 0;
+      uint32_t relative = index.index - is_relative * recgroup.first.index;
+      return (relative << 1) | is_relative;
+    }
+
     void Add(CanonicalType type) {
-      // Add three pieces of information in a single number, for faster hashing:
-      // Whether the type is final, whether the supertype index is relative
-      // within the recgroup, and the supertype index itself.
-      // For relative supertypes add {kMaxCanonicalTypes} to map those to a
-      // separate index space (note that collisions in hashing are OK though).
-      uint32_t is_relative = recgroup.Contains(type.supertype) ? 1 : 0;
-      uint32_t supertype_index =
-          type.supertype.index - is_relative * recgroup.start.index;
-      static_assert(kMaxCanonicalTypes <= kMaxUInt32 >> 2);
+      // Add several pieces of information in a single number, for faster
+      // hashing.
+      uint32_t supertype_index = MakeGroupRelative(type.supertype);
+      static_assert(kMaxCanonicalTypes <= kMaxUInt32 >> 3);
       uint32_t metadata =
-          (supertype_index << 2) | (is_relative << 1) | (type.is_final ? 1 : 0);
+          (supertype_index << 2) | (type.is_shared << 1) | (type.is_final << 0);
       hasher.Add(metadata);
       switch (type.kind) {
         case CanonicalType::kFunction:
           Add(*type.function_sig);
           break;
-        case CanonicalType::kStruct:
+        case CanonicalType::kStruct: {
+          uint32_t descriptor_index = MakeGroupRelative(type.descriptor);
+          uint32_t describes_index = MakeGroupRelative(type.describes);
+          // {MakeGroupRelative} returns a value at most 1 bit bigger than
+          // the max canonical index, which currently fits into 20 bits. So
+          // by shifting left by 11, we're not truncating anything. (And even
+          // if we did, it's just a hash, collisions are OK.)
+          uint32_t desc = (descriptor_index << 11) ^ (describes_index);
+          hasher.Add(desc);
           Add(*type.struct_type);
           break;
+        }
         case CanonicalType::kArray:
           Add(*type.array_type);
+          break;
+        case CanonicalType::kCont:
+          Add(*type.cont_type);
           break;
       }
     }
 
     void Add(CanonicalValueType value_type) {
       if (value_type.has_index() && recgroup.Contains(value_type.ref_index())) {
-        // For relative indexed types add the kind and the relative index to the
-        // hash. Shift the relative index by {kMaxCanonicalTypes} to map it to a
+        // For relative indexed types, add their nullability, exactness, and
+        // the relative index to the hash.
+        // Shift the relative index by {kMaxCanonicalTypes} to map it to a
         // different index space (note that collisions in hashing are OK
         // though).
         static_assert(kMaxCanonicalTypes <= kMaxUInt32 / 2);
-        hasher.Add(value_type.kind());
-        hasher.Add((value_type.ref_index().index - recgroup.start.index) +
+        // TODO(403372470): Add the 'exact' bit.
+        hasher.Add((value_type.is_exact() << 1) | value_type.is_nullable());
+        hasher.Add((value_type.ref_index().index - recgroup.first.index) +
                    kMaxCanonicalTypes);
       } else {
         hasher.Add(value_type);
@@ -254,6 +284,17 @@ class TypeCanonicalizer {
       Add(array_type.element_type());
     }
 
+    void Add(const CanonicalContType& cont_type) {
+      CanonicalTypeIndex cont_index = cont_type.contfun_typeindex();
+
+      if (recgroup.Contains(cont_index)) {
+        hasher.Add(cont_index.index - recgroup.first.index +
+                   kMaxCanonicalTypes);
+      } else {
+        hasher.Add(cont_index.index);  // Not relative to this rec group
+      }
+    }
+
     size_t hash() const { return hasher.hash(); }
   };
 
@@ -274,8 +315,8 @@ class TypeCanonicalizer {
       if (relative_index != recgroup2.Contains(index2)) return false;
       if (relative_index) {
         // Compare relative type indexes within the respective recgroups.
-        uint32_t rel_type1 = index1.index - recgroup1.start.index;
-        uint32_t rel_type2 = index2.index - recgroup2.start.index;
+        uint32_t rel_type1 = index1.index - recgroup1.first.index;
+        uint32_t rel_type2 = index2.index - recgroup2.first.index;
         if (rel_type1 != rel_type2) return false;
       } else if (index1 != index2) {
         return false;
@@ -294,10 +335,15 @@ class TypeCanonicalizer {
                  EqualSig(*type1.function_sig, *type2.function_sig);
         case CanonicalType::kStruct:
           return type2.kind == CanonicalType::kStruct &&
+                 EqualTypeIndex(type1.descriptor, type2.descriptor) &&
+                 EqualTypeIndex(type1.describes, type2.describes) &&
                  EqualStructType(*type1.struct_type, *type2.struct_type);
         case CanonicalType::kArray:
           return type2.kind == CanonicalType::kArray &&
                  EqualArrayType(*type1.array_type, *type2.array_type);
+        case CanonicalType::kCont:
+          return type2.kind == CanonicalType::kCont &&
+                 EqualContType(*type1.cont_type, *type2.cont_type);
       }
     }
 
@@ -310,17 +356,13 @@ class TypeCanonicalizer {
 
     bool EqualValueType(CanonicalValueType type1,
                         CanonicalValueType type2) const {
-      if (type1.kind() != type2.kind()) return false;
       const bool indexed = type1.has_index();
       if (indexed != type2.has_index()) return false;
-      if (indexed) return EqualTypeIndex(type1.ref_index(), type2.ref_index());
-      const bool is_ref = type1.is_object_reference();
-      DCHECK_EQ(is_ref, type2.is_object_reference());
-      if (is_ref &&
-          type1.heap_representation() != type2.heap_representation()) {
-        return false;
+      if (indexed) {
+        return type1.is_equal_except_index(type2) &&
+               EqualTypeIndex(type1.ref_index(), type2.ref_index());
       }
-      return true;
+      return type1 == type2;
     }
 
     bool EqualSig(const CanonicalSig& sig1, const CanonicalSig& sig2) const {
@@ -349,28 +391,34 @@ class TypeCanonicalizer {
       return type1.mutability() == type2.mutability() &&
              EqualValueType(type1.element_type(), type2.element_type());
     }
+
+    bool EqualContType(const CanonicalContType& type1,
+                       const CanonicalContType& type2) const {
+      return EqualTypeIndex(type1.contfun_typeindex(),
+                            type2.contfun_typeindex());
+    }
   };
 
   struct CanonicalGroup {
-    CanonicalGroup(Zone* zone, size_t size, CanonicalTypeIndex start)
-        : types(zone->AllocateVector<CanonicalType>(size)), start(start) {
+    CanonicalGroup(Zone* zone, size_t size, CanonicalTypeIndex first)
+        : types(zone->AllocateVector<CanonicalType>(size)), first(first) {
       // size >= 2; otherwise a `CanonicalSingletonGroup` should have been used.
       DCHECK_LE(2, size);
     }
 
     bool operator==(const CanonicalGroup& other) const {
-      CanonicalTypeIndex end{start.index +
-                             static_cast<uint32_t>(types.size() - 1)};
-      CanonicalTypeIndex other_end{
-          other.start.index + static_cast<uint32_t>(other.types.size() - 1)};
-      CanonicalEquality equality{{start, end}, {other.start, other_end}};
+      CanonicalTypeIndex last{first.index +
+                              static_cast<uint32_t>(types.size() - 1)};
+      CanonicalTypeIndex other_last{
+          other.first.index + static_cast<uint32_t>(other.types.size() - 1)};
+      CanonicalEquality equality{{first, last}, {other.first, other_last}};
       return equality.EqualTypes(types, other.types);
     }
 
     size_t hash_value() const {
-      CanonicalTypeIndex end{start.index + static_cast<uint32_t>(types.size()) -
-                             1};
-      CanonicalHashing hasher{{start, end}};
+      CanonicalTypeIndex last{first.index +
+                              static_cast<uint32_t>(types.size()) - 1};
+      CanonicalHashing hasher{{first, last}};
       for (CanonicalType t : types) {
         hasher.Add(t);
       }
@@ -379,7 +427,7 @@ class TypeCanonicalizer {
 
     // The storage of this vector is the TypeCanonicalizer's zone_.
     const base::Vector<CanonicalType> types;
-    const CanonicalTypeIndex start;
+    const CanonicalTypeIndex first;
   };
 
   struct CanonicalSingletonGroup {
@@ -398,6 +446,102 @@ class TypeCanonicalizer {
     CanonicalTypeIndex index;
   };
 
+  // Conceptually a vector of CanonicalType. Modification generally requires
+  // synchronization, read-only access can be done without locking.
+  class CanonicalTypeVector {
+    static constexpr uint32_t kSegmentSize = 1024;
+    static constexpr uint32_t kNumSegments =
+        (kMaxCanonicalTypes + kSegmentSize - 1) / kSegmentSize;
+    static_assert(kSegmentSize * kNumSegments >= kMaxCanonicalTypes);
+    static_assert(
+        kNumSegments <= 1024,
+        "Reconsider this data structures when increasing kMaxCanonicalTypes");
+
+   public:
+    const CanonicalType* operator[](CanonicalTypeIndex index) const {
+      uint32_t segment_idx = index.index / kSegmentSize;
+      // Only check against the static constant here; uninitialized segments are
+      // {nullptr}, so accessing them crashes.
+      SBXCHECK_GT(kNumSegments, segment_idx);
+      Segment* segment = segments_[segment_idx].load(std::memory_order_relaxed);
+      const CanonicalType* type = (*segment)[index.index % kSegmentSize];
+      // DCHECK is sufficient as returning {nullptr} is safe.
+      DCHECK_NOT_NULL(type);
+      return type;
+    }
+
+    const CanonicalType* operator[](CanonicalValueType type) const {
+      DCHECK(type.has_index());
+      return (*this)[type.ref_index()];
+    }
+
+    void reserve(uint32_t size, Zone* zone) {
+      DCHECK_GE(kMaxCanonicalTypes, size);
+      uint32_t segment_idx = size / kSegmentSize;
+      // Stop on the first segment (iterating backwards) which already exists.
+      while (!segments_[segment_idx].load(std::memory_order_relaxed)) {
+        segments_[segment_idx].store(zone->New<Segment>(),
+                                     std::memory_order_relaxed);
+        if (segment_idx-- == 0) break;
+      }
+    }
+
+    void set(CanonicalTypeIndex index, const CanonicalType* type) {
+      // No checking needed, this is only executed after CheckMaxCanonicalIndex.
+      uint32_t segment_idx = index.index / kSegmentSize;
+      Segment* segment = segments_[segment_idx].load(std::memory_order_relaxed);
+      segment->set(index.index % kSegmentSize, type);
+    }
+
+    void ClearForTesting() {
+      for (uint32_t i = 0; i < kNumSegments; ++i) {
+        if (segments_[i].load(std::memory_order_relaxed) == nullptr) break;
+        segments_[i].store(nullptr, std::memory_order_relaxed);
+      }
+    }
+
+    const CanonicalTypeIndex FindIndex_Slow(const CanonicalSig* sig) const {
+      for (uint32_t i = 0; i < kNumSegments; ++i) {
+        Segment* segment = segments_[i].load(std::memory_order_relaxed);
+        // If callers have a CanonicalSig* to pass into this function, the
+        // type canonicalizer must know about this sig, hence we must find it
+        // before hitting a `nullptr` segment.
+        DCHECK_NOT_NULL(segment);
+        for (uint32_t k = 0; k < kSegmentSize; ++k) {
+          const CanonicalType* type = (*segment)[k];
+          // Again: We expect to find the signature before hitting uninitialized
+          // slots.
+          DCHECK_NOT_NULL(type);
+          if (type->kind == CanonicalType::kFunction &&
+              type->function_sig == sig) {
+            return CanonicalTypeIndex{i * kSegmentSize + k};
+          }
+        }
+      }
+      UNREACHABLE();
+    }
+
+   private:
+    class Segment {
+     public:
+      const CanonicalType* operator[](uint32_t index) const {
+        DCHECK_GT(kSegmentSize, index);
+        return content_[index].load(std::memory_order_relaxed);
+      }
+
+      void set(uint32_t index, const CanonicalType* type) {
+        DCHECK_GT(kSegmentSize, index);
+        DCHECK_NULL(content_[index].load(std::memory_order_relaxed));
+        content_[index].store(type, std::memory_order_relaxed);
+      }
+
+     private:
+      std::atomic<const CanonicalType*> content_[kSegmentSize]{};
+    };
+
+    std::atomic<Segment*> segments_[kNumSegments]{};
+  };
+
   void AddPredefinedArrayTypes();
 
   CanonicalTypeIndex FindCanonicalGroup(const CanonicalGroup&) const;
@@ -412,22 +556,15 @@ class TypeCanonicalizer {
       ModuleTypeIndex recgroup_start,
       CanonicalTypeIndex canonical_recgroup_start);
 
-  CanonicalTypeIndex AddRecursiveGroup(CanonicalType type);
-
   void CheckMaxCanonicalIndex() const;
 
   std::vector<CanonicalTypeIndex> canonical_supertypes_;
   // Set of all known canonical recgroups of size >=2.
-  std::unordered_set<CanonicalGroup, base::hash<CanonicalGroup>>
-      canonical_groups_;
+  std::unordered_set<CanonicalGroup> canonical_groups_;
   // Set of all known canonical recgroups of size 1.
-  std::unordered_set<CanonicalSingletonGroup,
-                     base::hash<CanonicalSingletonGroup>>
-      canonical_singleton_groups_;
-  // Maps canonical indices back to the function signature.
-  std::unordered_map<CanonicalTypeIndex, const CanonicalSig*,
-                     base::hash<CanonicalTypeIndex>>
-      canonical_function_sigs_;
+  std::unordered_set<CanonicalSingletonGroup> canonical_singleton_groups_;
+  // Maps canonical indices back to the types.
+  CanonicalTypeVector canonical_types_;
   AccountingAllocator allocator_;
   Zone zone_{&allocator_, "canonical type zone"};
   mutable base::Mutex mutex_;

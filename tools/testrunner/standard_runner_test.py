@@ -192,17 +192,17 @@ class StandardRunnerTest(TestRunnerTest):
           infra_staging=False,
       )
 
-      self.assertEquals(len(records), 3)
-      self.assertEquals(records[0]['testId'], 'sweet/bananaflakes//stress')
-      self.assertEquals(tag_dict(records[0]['tags'])['run'], '1')
+      self.assertEqual(len(records), 3)
+      self.assertEqual(records[0]['testId'], 'sweet/bananaflakes//stress')
+      self.assertEqual(tag_dict(records[0]['tags'])['run'], '1')
       self.assertFalse(records[0]['expected'])
 
-      self.assertEquals(records[1]['testId'], 'sweet/bananaflakes//stress')
-      self.assertEquals(tag_dict(records[1]['tags'])['run'], '2')
+      self.assertEqual(records[1]['testId'], 'sweet/bananaflakes//stress')
+      self.assertEqual(tag_dict(records[1]['tags'])['run'], '2')
       self.assertTrue(records[1]['expected'])
 
-      self.assertEquals(records[2]['testId'], 'sweet/bananaflakes//default')
-      self.assertEquals(tag_dict(records[2]['tags'])['run'], '1')
+      self.assertEqual(records[2]['testId'], 'sweet/bananaflakes//default')
+      self.assertEqual(tag_dict(records[2]['tags'])['run'], '1')
       self.assertTrue(records[2]['expected'])
 
   def testFlakeWithRerunAndJSON(self):
@@ -426,6 +426,32 @@ class StandardRunnerTest(TestRunnerTest):
     result.stdout_includes('--random-seed=123')
     result.has_returncode(1)
 
+  def testRandomSeedStressWithNumfuzz(self):
+    """Test using random-seed-stress feature with numfuzz flavor as used by
+    flake bisect for flakes on numfuzz.
+    """
+    result = self.run_tests(
+        '--progress=verbose',
+        '--framework=num_fuzzer',
+        '--variants=default',
+        '--random-seed-stress-count=2',
+        'sweet/bananas',
+        'sweet/apples',
+        infra_staging=False,
+        baseroot='testroot7'
+    )
+
+    # The bananas test is expected to pass when --fuzzing, one of the numfuzz
+    # default flags is present. The apples test is expected to fail with this
+    # flag.
+    result.stdout_includes('sweet/bananas default: PASS')
+    result.stdout_includes('sweet/apples default: FAIL')
+
+    # We get everything twice due to the stress count above set to 2.
+    result.stdout_includes('2 tests failed')
+    result.stdout_includes('4 tests ran')
+    result.has_returncode(1)
+
   def testSpecificVariants(self):
     """Test using NO_VARIANTS modifiers in status files skips the desire tests.
 
@@ -597,7 +623,7 @@ class NumFuzzerTest(TestRunnerTest):
   def testNumFuzzer(self):
     fuzz_flags = [
       f'{flag}=1' for flag in self.get_runner_options()
-      if flag.startswith('--stress-')
+      if flag.startswith('--stress-') or flag.startswith('--allocation')
     ]
     self.assertEqual(len(fuzz_flags), len(fuzzer.FUZZERS))
     for fuzz_flag in fuzz_flags:
@@ -623,6 +649,45 @@ class NumFuzzerTest(TestRunnerTest):
             result.stdout_includes('>>> Statusfile variables:')
             result.stdout_includes('11 tests ran')
 
+  def _run_test_with_random_skip(self, prob):
+    """Run a test root that marks sweet/apples as RARE and pass a probability
+    for random skipping rare tests.
+    """
+    with patch('testrunner.testproc.timeout.TimeoutProc.create',
+               lambda x: FakeTimeoutProc(10)):
+      return self.run_tests(
+          '--command-prefix',
+          sys.executable,
+          '--outdir',
+          'out/build',
+          '--variants=default',
+          '--fuzzer-random-seed=12345',
+          '--total-timeout-sec=60',
+          '--allocation-offset=1',
+          '--progress=verbose',
+          f'--skip-rare-tests-prob={prob}',
+          'sweet',
+          baseroot="testroot8")
+
+  def testRandomSkip_Includes(self):
+    """Ensure that a test case marked as FUZZ_RARE (here apples) is still
+    included if the probability for skipping is 0.
+    """
+    result = self._run_test_with_random_skip(0.0)
+    result.has_returncode(1)
+    result.stdout_includes('sweet/apples default: FAIL')
+    result.stdout_includes('sweet/bananas default: PASS')
+    result.stdout_includes('7 tests ran')
+
+  def testRandomSkip_Excludes(self):
+    """Ensure that a test case marked as FUZZ_RARE (here apples) is always
+    excluded if the probability for skipping is 1.
+    """
+    result = self._run_test_with_random_skip(1.0)
+    result.has_returncode(0)
+    result.stdout_excludes('sweet/apples')
+    result.stdout_includes('sweet/bananas default: PASS')
+    result.stdout_includes('6 tests ran')
 
 class OtherTest(TestRunnerTest):
   def testStatusFilePresubmit(self):

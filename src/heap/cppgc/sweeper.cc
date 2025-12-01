@@ -181,13 +181,13 @@ class ThreadSafeStack {
   ThreadSafeStack() = default;
 
   void Push(T t) {
-    v8::base::LockGuard<v8::base::Mutex> lock(&mutex_);
+    v8::base::MutexGuard lock(&mutex_);
     vector_.push_back(std::move(t));
     is_empty_.store(false, std::memory_order_relaxed);
   }
 
   std::optional<T> Pop() {
-    v8::base::LockGuard<v8::base::Mutex> lock(&mutex_);
+    v8::base::MutexGuard lock(&mutex_);
     if (vector_.empty()) {
       is_empty_.store(true, std::memory_order_relaxed);
       return std::nullopt;
@@ -200,7 +200,7 @@ class ThreadSafeStack {
 
   template <typename It>
   void Insert(It begin, It end) {
-    v8::base::LockGuard<v8::base::Mutex> lock(&mutex_);
+    v8::base::MutexGuard lock(&mutex_);
     vector_.insert(vector_.end(), begin, end);
     is_empty_.store(false, std::memory_order_relaxed);
   }
@@ -538,7 +538,7 @@ class SweepFinalizer final {
           largest_consecutive_block_ = std::max(
               LargePage::From(page)->PayloadSize(), largest_consecutive_block_);
         }
-        BasePage::Destroy(page, free_memory_handling_);
+        BasePage::Destroy(page);
         return;
       }
 
@@ -572,7 +572,7 @@ class SweepFinalizer final {
     // Merge freelist with finalizers.
     if (!page_state->unfinalized_free_list.empty()) {
       std::unique_ptr<FreeHandlerBase> handler =
-          (free_memory_handling_ == FreeMemoryHandling::kDiscardWherePossible)
+          free_memory_handling_ == FreeMemoryHandling::kDiscardWherePossible
               ? std::unique_ptr<FreeHandlerBase>(new DiscardingFreeHandler(
                     *platform_->GetPageAllocator(), space_freelist, *page))
               : std::unique_ptr<FreeHandlerBase>(new RegularFreeHandler(
@@ -707,7 +707,7 @@ class MutatorThreadSweeper final : private HeapVisitor<MutatorThreadSweeper> {
       page.ResetDiscardedMemory();
     }
     const auto result =
-        (free_memory_handling_ == FreeMemoryHandling::kDiscardWherePossible)
+        free_memory_handling_ == FreeMemoryHandling::kDiscardWherePossible
             ? SweepNormalPage<
                   InlinedFinalizationBuilder<DiscardingFreeHandler>>(
                   &page, *platform_->GetPageAllocator(), sticky_bits_)
@@ -715,7 +715,7 @@ class MutatorThreadSweeper final : private HeapVisitor<MutatorThreadSweeper> {
                   &page, *platform_->GetPageAllocator(), sticky_bits_);
     if (result.is_empty &&
         empty_page_handling_ == EmptyPageHandling::kDestroy) {
-      NormalPage::Destroy(&page, free_memory_handling_);
+      NormalPage::Destroy(&page);
       (*unused_destroyed_normal_pages_)++;
     } else {
       if (space_) {
@@ -989,6 +989,16 @@ class Sweeper::SweeperImpl final {
       // Having a low priority runner implies having a regular runner as well.
       CHECK_IMPLIES(low_priority_foreground_task_runner_.get(),
                     foreground_task_runner_.get());
+      const auto supports_non_nestable_tasks =
+          [](const std::shared_ptr<TaskRunner>& runner) {
+            return runner && runner->NonNestableTasksEnabled() &&
+                   runner->NonNestableDelayedTasksEnabled();
+          };
+      if (!supports_non_nestable_tasks(foreground_task_runner_) ||
+          !supports_non_nestable_tasks(low_priority_foreground_task_runner_)) {
+        foreground_task_runner_.reset();
+        low_priority_foreground_task_runner_.reset();
+      }
     }
 
     // Verify bitmap for all spaces regardless of |compactable_space_handling|.
@@ -1322,8 +1332,9 @@ class Sweeper::SweeperImpl final {
     notify_done_pending_ = false;
     stats_collector_->NotifySweepingCompleted(config_.sweeping_type);
     if (config_.free_memory_handling ==
-        FreeMemoryHandling::kDiscardWherePossible)
-      heap_.heap()->page_backend()->DiscardPooledPages();
+        FreeMemoryHandling::kDiscardWherePossible) {
+      heap_.heap()->page_backend()->ReleasePooledPages();
+    }
   }
 
   void WaitForConcurrentSweepingForTesting() {
@@ -1446,9 +1457,10 @@ class Sweeper::SweeperImpl final {
       auto task = std::make_unique<IncrementalSweepTask>(sweeper, priority);
       auto handle = task->handle_;
       if (delay.has_value()) {
-        runner->PostDelayedTask(std::move(task), delay->InSecondsF());
+        runner->PostNonNestableDelayedTask(std::move(task),
+                                           delay->InSecondsF());
       } else {
-        runner->PostTask(std::move(task));
+        runner->PostNonNestableTask(std::move(task));
       }
       return handle;
     }

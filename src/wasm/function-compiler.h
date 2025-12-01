@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_WASM_FUNCTION_COMPILER_H_
+#define V8_WASM_FUNCTION_COMPILER_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
-
-#ifndef V8_WASM_FUNCTION_COMPILER_H_
-#define V8_WASM_FUNCTION_COMPILER_H_
 
 #include <memory>
 
@@ -114,10 +114,6 @@ class V8_EXPORT_PRIVATE WasmCompilationUnit final {
                                   const WasmFunction*, ExecutionTier);
 
  private:
-  WasmCompilationResult ExecuteFunctionCompilation(
-      CompilationEnv*, const WireBytesStorage*, Counters*,
-      WasmDetectedFeatures* detected);
-
   int func_index_;
   ExecutionTier tier_;
   ForDebugging for_debugging_;
@@ -131,7 +127,8 @@ static_assert(sizeof(WasmCompilationUnit) <= 2 * kSystemPointerSize);
 class V8_EXPORT_PRIVATE JSToWasmWrapperCompilationUnit final {
  public:
   JSToWasmWrapperCompilationUnit(Isolate* isolate, const CanonicalSig* sig,
-                                 CanonicalTypeIndex sig_index);
+                                 CanonicalTypeIndex sig_index,
+                                 bool receiver_is_first_param);
   ~JSToWasmWrapperCompilationUnit();
 
   // Allow move construction and assignment, for putting units in a std::vector.
@@ -143,15 +140,15 @@ class V8_EXPORT_PRIVATE JSToWasmWrapperCompilationUnit final {
   Isolate* isolate() const { return isolate_; }
 
   void Execute();
-  Handle<Code> Finalize();
+  DirectHandle<Code> Finalize();
 
   const CanonicalSig* sig() const { return sig_; }
   CanonicalTypeIndex sig_index() const { return sig_index_; }
 
   // Run a compilation unit synchronously.
-  static Handle<Code> CompileJSToWasmWrapper(Isolate* isolate,
-                                             const CanonicalSig* sig,
-                                             CanonicalTypeIndex sig_index);
+  static DirectHandle<Code> CompileJSToWasmWrapper(
+      Isolate* isolate, const CanonicalSig* sig, CanonicalTypeIndex sig_index,
+      bool receiver_is_first_param);
 
  private:
   // Wrapper compilation is bound to an isolate. Concurrent accesses to the
@@ -161,6 +158,7 @@ class V8_EXPORT_PRIVATE JSToWasmWrapperCompilationUnit final {
   Isolate* isolate_;
   const CanonicalSig* sig_;
   CanonicalTypeIndex sig_index_;
+  bool receiver_is_first_param_;
   std::unique_ptr<OptimizedCompilationJob> job_;
 };
 

@@ -120,7 +120,7 @@ using F5 = void*(void* p0, void* p1, int p2, int p3, int p4);
 // to move from GPR to FPR and back in all floating point tests
 #define UTEST_LOAD_STORE_F(ldname, stname, value_type, store_value) \
   TEST(RISCV_UTEST_##stname##ldname) {                              \
-    DCHECK(std::is_floating_point<value_type>::value);              \
+    DCHECK(std::is_floating_point_v<value_type>);                   \
                                                                     \
     CcTest::InitializeVM();                                         \
     auto fn = [](MacroAssembler& assm) {                            \
@@ -142,7 +142,7 @@ using F5 = void*(void* p0, void* p1, int p2, int p3, int p4);
 
 #define UTEST_R1_FORM_WITH_RES_F(instr_name, type, rs1_fval, expected_fres) \
   TEST(RISCV_UTEST_##instr_name) {                                          \
-    DCHECK(std::is_floating_point<type>::value);                            \
+    DCHECK(std::is_floating_point_v<type>);                                 \
     CcTest::InitializeVM();                                                 \
     auto fn = [](MacroAssembler& assm) { __ instr_name(fa0, fa0); };        \
     auto res = GenAndRunTest<type, type>(rs1_fval, fn);                     \
@@ -152,7 +152,7 @@ using F5 = void*(void* p0, void* p1, int p2, int p3, int p4);
 #define UTEST_R2_FORM_WITH_RES_F(instr_name, type, rs1_fval, rs2_fval,    \
                                  expected_fres)                           \
   TEST(RISCV_UTEST_##instr_name) {                                        \
-    DCHECK(std::is_floating_point<type>::value);                          \
+    DCHECK(std::is_floating_point_v<type>);                               \
     CcTest::InitializeVM();                                               \
     auto fn = [](MacroAssembler& assm) { __ instr_name(fa0, fa0, fa1); }; \
     auto res = GenAndRunTest<type, type>(rs1_fval, rs2_fval, fn);         \
@@ -162,7 +162,7 @@ using F5 = void*(void* p0, void* p1, int p2, int p3, int p4);
 #define UTEST_R3_FORM_WITH_RES_F(instr_name, type, rs1_fval, rs2_fval,         \
                                  rs3_fval, expected_fres)                      \
   TEST(RISCV_UTEST_##instr_name) {                                             \
-    DCHECK(std::is_floating_point<type>::value);                               \
+    DCHECK(std::is_floating_point_v<type>);                                    \
     CcTest::InitializeVM();                                                    \
     auto fn = [](MacroAssembler& assm) { __ instr_name(fa0, fa0, fa1, fa2); }; \
     auto res = GenAndRunTest<type, type>(rs1_fval, rs2_fval, rs3_fval, fn);    \
@@ -181,8 +181,8 @@ using F5 = void*(void* p0, void* p1, int p2, int p3, int p4);
 #define UTEST_CONV_F_FROM_I(instr_name, input_type, output_type, rs1_val, \
                             expected_fres)                                \
   TEST(RISCV_UTEST_##instr_name) {                                        \
-    DCHECK(std::is_integral<input_type>::value&&                          \
-               std::is_floating_point<output_type>::value);               \
+    DCHECK(std::is_integral_v<input_type> &&                              \
+           std::is_floating_point_v<output_type>);                        \
                                                                           \
     CcTest::InitializeVM();                                               \
     auto fn = [](MacroAssembler& assm) { __ instr_name(fa0, a0); };       \
@@ -193,8 +193,8 @@ using F5 = void*(void* p0, void* p1, int p2, int p3, int p4);
 #define UTEST_CONV_I_FROM_F(instr_name, input_type, output_type,     \
                             rounding_mode, rs1_fval, expected_res)   \
   TEST(RISCV_UTEST_##instr_name) {                                   \
-    DCHECK(std::is_floating_point<input_type>::value&&               \
-               std::is_integral<output_type>::value);                \
+    DCHECK(std::is_floating_point_v<input_type> &&                   \
+           std::is_integral_v<output_type>);                         \
                                                                      \
     CcTest::InitializeVM();                                          \
     auto fn = [](MacroAssembler& assm) {                             \
@@ -205,8 +205,8 @@ using F5 = void*(void* p0, void* p1, int p2, int p3, int p4);
   }                                                                  \
                                                                      \
   TEST(RISCV_UTEST_dyn_##instr_name) {                               \
-    DCHECK(std::is_floating_point<input_type>::value&&               \
-               std::is_integral<output_type>::value);                \
+    DCHECK(std::is_floating_point_v<input_type> &&                   \
+           std::is_integral_v<output_type>);                         \
                                                                      \
     CcTest::InitializeVM();                                          \
     auto fn = [](MacroAssembler& assm) {                             \
@@ -1791,7 +1791,7 @@ TEST(TARGET_ADDR) {
   MacroAssembler assm(isolate, v8::internal::CodeObjectRequired::kYes);
 
   uintptr_t addr = reinterpret_cast<uintptr_t>(&buffer[0]);
-  Address res = __ target_address_at(static_cast<Address>(addr));
+  Address res = __ target_constant_address_at(static_cast<Address>(addr));
   CHECK_EQ(0x00304abfe961L, res);
 #else
   // This is the series of instructions to load 48 bit address 0x0123456789ab
@@ -1800,7 +1800,7 @@ TEST(TARGET_ADDR) {
   MacroAssembler assm(isolate, v8::internal::CodeObjectRequired::kYes);
 
   uintptr_t addr = reinterpret_cast<uintptr_t>(&buffer[0]);
-  Address res = __ target_address_at(static_cast<Address>(addr));
+  Address res = __ target_constant_address_at(static_cast<Address>(addr));
   CHECK_EQ(0x0123456789abL, res);
 #endif
 }
@@ -1817,7 +1817,7 @@ TEST(SET_TARGET_ADDR) {
   MacroAssembler assm(isolate, v8::internal::CodeObjectRequired::kYes);
 
   uintptr_t addr = reinterpret_cast<uintptr_t>(&buffer[0]);
-  __ set_target_value_at(static_cast<Address>(addr), 0x00304abfe961L,
+  __ set_target_value_at(static_cast<Address>(addr), 0x00304abfe961L, nullptr,
                          FLUSH_ICACHE_IF_NEEDED);
   Address res = __ target_address_at(static_cast<Address>(addr));
   CHECK_EQ(0x00304abfe961L, res);
@@ -1831,7 +1831,7 @@ TEST(SET_TARGET_ADDR) {
   uintptr_t addr = reinterpret_cast<uintptr_t>(&buffer[0]);
   __ set_target_value_at(static_cast<Address>(addr), 0xba9876543210L, nullptr,
                          FLUSH_ICACHE_IF_NEEDED);
-  Address res = __ target_address_at(static_cast<Address>(addr));
+  Address res = __ target_constant_address_at(static_cast<Address>(addr));
   CHECK_EQ(0xba9876543210L, res);
 #endif
 }

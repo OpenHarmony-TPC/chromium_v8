@@ -37,6 +37,8 @@ V8_OBJECT class HeapObjectLayout {
   inline Tagged<Map> map() const;
   inline Tagged<Map> map(AcquireLoadTag) const;
 
+  inline MapWord map_word(RelaxedLoadTag) const;
+
   inline void set_map(Isolate* isolate, Tagged<Map> value);
   template <typename IsolateT>
   inline void set_map(IsolateT* isolate, Tagged<Map> value, ReleaseStoreTag);
@@ -68,6 +70,10 @@ V8_OBJECT class HeapObjectLayout {
   inline void set_map_word_forwarded(Tagged<HeapObject> target_object,
                                      ReleaseStoreTag);
 
+  // Set the map word using relaxed store.
+  inline void set_map_word_forwarded(Tagged<HeapObject> target_object,
+                                     RelaxedStoreTag);
+
   // Returns the tagged pointer to this HeapObject.
   // TODO(leszeks): Consider bottlenecking this through Tagged<>.
   inline Address ptr() const { return address() + kHeapObjectTag; }
@@ -75,11 +81,8 @@ V8_OBJECT class HeapObjectLayout {
   // Returns the address of this HeapObject.
   inline Address address() const { return reinterpret_cast<Address>(this); }
 
-  // This method exists to help remove GetIsolate/GetHeap from HeapObject, in a
-  // way that doesn't require passing Isolate/Heap down huge call chains or to
-  // places where it might not be safe to access it.
-  inline ReadOnlyRoots GetReadOnlyRoots() const;
-  // This is slower, but safe to call during bootstrapping.
+  // This is slower that GetReadOnlyRoots, but safe to call during
+  // bootstrapping.
   inline ReadOnlyRoots EarlyGetReadOnlyRoots() const;
 
   // Returns the heap object's size in bytes
@@ -138,6 +141,8 @@ struct ObjectTraits {
   using BodyDescriptor = typename T::BodyDescriptor;
 };
 
+enum InSharedSpace : bool { kInSharedSpace = true, kNotInSharedSpace = false };
+
 // HeapObject is the superclass for all classes describing heap allocated
 // objects.
 class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
@@ -183,6 +188,11 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   inline bool release_compare_and_swap_map_word_forwarded(
       MapWord old_map_word, Tagged<HeapObject> new_target_object);
 
+  // Compare-and-swaps map word using relaxed store, returns true if the map
+  // word was actually swapped.
+  inline bool relaxed_compare_and_swap_map_word_forwarded(
+      MapWord old_map_word, Tagged<HeapObject> new_target_object);
+
   // Initialize the map immediately after the object is allocated.
   // Do not use this outside Heap.
   template <typename IsolateT>
@@ -206,14 +216,8 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   inline void set_map_word_forwarded(Tagged<HeapObject> target_object,
                                      ReleaseStoreTag);
 
-  // This method exists to help remove GetIsolate/GetHeap from HeapObject, in a
-  // way that doesn't require passing Isolate/Heap down huge call chains or to
-  // places where it might not be safe to access it.
-  inline ReadOnlyRoots GetReadOnlyRoots() const;
-  // This version is intended to be used for the isolate values produced by
-  // i::GetPtrComprCageBase(HeapObject) function which may return nullptr.
-  inline ReadOnlyRoots GetReadOnlyRoots(PtrComprCageBase cage_base) const;
-  // This is slower, but safe to call during bootstrapping.
+  // This is slower than GetReadOnlyRoots, but safe to call during
+  // bootstrapping.
   inline ReadOnlyRoots EarlyGetReadOnlyRoots() const;
 
   // Converts an address to a HeapObject pointer.
@@ -233,45 +237,42 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   // GC internal.
   V8_EXPORT_PRIVATE int SizeFromMap(Tagged<Map> map) const;
 
-  template <class T, typename std::enable_if_t<std::is_arithmetic_v<T> ||
-                                                   std::is_enum_v<T> ||
-                                                   std::is_pointer_v<T>,
-                                               int> = 0>
-  inline T ReadField(size_t offset) const {
+  template <class T>
+  inline T ReadField(size_t offset) const
+    requires(std::is_arithmetic_v<T> || std::is_enum_v<T> ||
+             std::is_pointer_v<T>)
+  {
     return ReadMaybeUnalignedValue<T>(field_address(offset));
   }
 
-  template <class T, typename std::enable_if_t<std::is_arithmetic_v<T> ||
-                                                   std::is_enum_v<T> ||
-                                                   std::is_pointer_v<T>,
-                                               int> = 0>
-  inline void WriteField(size_t offset, T value) const {
+  template <class T>
+  inline void WriteField(size_t offset, T value) const
+    requires(std::is_arithmetic_v<T> || std::is_enum_v<T> ||
+             std::is_pointer_v<T>)
+  {
     return WriteMaybeUnalignedValue<T>(field_address(offset), value);
   }
 
   // Atomically reads a field using relaxed memory ordering. Can only be used
   // with integral types whose size is <= kTaggedSize (to guarantee alignment).
-  template <class T, typename std::enable_if_t<
-                         (std::is_arithmetic_v<T> ||
-                          std::is_enum_v<T>)&&!std::is_floating_point_v<T>,
-                         int> = 0>
-  inline T Relaxed_ReadField(size_t offset) const;
+  template <class T>
+  inline T Relaxed_ReadField(size_t offset) const
+    requires((std::is_arithmetic_v<T> || std::is_enum_v<T>) &&
+             !std::is_floating_point_v<T>);
 
   // Atomically writes a field using relaxed memory ordering. Can only be used
   // with integral types whose size is <= kTaggedSize (to guarantee alignment).
-  template <class T, typename std::enable_if_t<
-                         (std::is_arithmetic_v<T> ||
-                          std::is_enum_v<T>)&&!std::is_floating_point_v<T>,
-                         int> = 0>
-  inline void Relaxed_WriteField(size_t offset, T value);
+  template <class T>
+  inline void Relaxed_WriteField(size_t offset, T value)
+    requires((std::is_arithmetic_v<T> || std::is_enum_v<T>) &&
+             !std::is_floating_point_v<T>);
 
   // Atomically reads a field using acquire memory ordering. Can only be used
   // with integral types whose size is <= kTaggedSize (to guarantee alignment).
-  template <class T, typename std::enable_if_t<
-                         (std::is_arithmetic_v<T> ||
-                          std::is_enum_v<T>)&&!std::is_floating_point_v<T>,
-                         int> = 0>
-  inline T Acquire_ReadField(size_t offset) const;
+  template <class T>
+  inline T Acquire_ReadField(size_t offset) const
+    requires((std::is_arithmetic_v<T> || std::is_enum_v<T>) &&
+             !std::is_floating_point_v<T>);
 
   // Atomically compares and swaps a field using seq cst memory ordering.
   // Contains the required logic to properly handle number comparison.
@@ -304,7 +305,7 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   inline void InitExternalPointerField(
       size_t offset, IsolateForSandbox isolate, Address value,
       WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
-  template <ExternalPointerTag tag>
+  template <ExternalPointerTagRange tag_range>
   inline Address ReadExternalPointerField(size_t offset,
                                           IsolateForSandbox isolate) const;
   // Similar to `ReadExternalPointerField()` but uses the CppHeapPointerTable.
@@ -327,6 +328,14 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   // with a nullptr value.
   inline void SetupLazilyInitializedExternalPointerField(size_t offset);
 
+  // Returns true if the lazily-initializer external pointer field still
+  // contains the initial value. If the sandbox is enabled, returns true if
+  // the field is not equal to kNullExternalPointerHandle (this check will
+  // *not* try to read the actual value from the table). If the sandbox
+  // is disabled, returns true if the field is not equal to kNullAddress.
+  inline bool IsLazilyInitializedExternalPointerFieldInitialized(
+      size_t offset) const;
+
   // Writes and possibly initializes a lazily-initialized external pointer
   // field. When the sandbox is enabled, a lazily initialized external pointer
   // field initially contains the kNullExternalPointerHandle and will only be
@@ -345,13 +354,16 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
       size_t offset, IsolateForPointerCompression isolate, Address value,
       CppHeapPointerTag tag);
 
+#if V8_ENABLE_SANDBOX
   //
   // Indirect pointers.
   //
   // These are only available when the sandbox is enabled, in which case they
   // are the under-the-hood implementation of trusted pointers.
-  inline void InitSelfIndirectPointerField(size_t offset,
-                                           IsolateForSandbox isolate);
+  inline void InitSelfIndirectPointerField(
+      size_t offset, IsolateForSandbox isolate,
+      TrustedPointerPublishingScope* opt_publishing_scope);
+#endif  // V8_ENABLE_SANDBOX
 
   // Trusted pointers.
   //
@@ -382,6 +394,9 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   // in the TrustedPointerTable which just contains nullptr). When the sandbox
   // is disabled, this will set the field to Smi::zero().
   inline bool IsTrustedPointerFieldEmpty(size_t offset) const;
+  inline bool IsTrustedPointerFieldUnpublished(size_t offset,
+                                               IndirectPointerTag tag,
+                                               IsolateForSandbox isolate) const;
   inline void ClearTrustedPointerField(size_t offest);
   inline void ClearTrustedPointerField(size_t offest, ReleaseStoreTag);
 
@@ -408,9 +423,10 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   //
   // These are references to entries in the JSDispatchTable, which contain the
   // current code for a function.
-  inline void AllocateAndInstallJSDispatchHandle(
-      size_t offset, IsolateForSandbox isolate, uint16_t parameter_count,
-      Tagged<Code> code,
+  template <typename ObjectType>
+  static inline JSDispatchHandle AllocateAndInstallJSDispatchHandle(
+      ObjectType host, size_t offset, Isolate* isolate,
+      uint16_t parameter_count, DirectHandle<Code> code,
       WriteBarrierMode mode = WriteBarrierMode::UPDATE_WRITE_BARRIER);
 
   // Returns the field at offset in obj, as a read/write Object reference.
@@ -421,7 +437,7 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   inline MaybeObjectSlot RawMaybeWeakField(int byte_offset) const;
   inline InstructionStreamSlot RawInstructionStreamField(int byte_offset) const;
   inline ExternalPointerSlot RawExternalPointerField(
-      int byte_offset, ExternalPointerTag tag) const;
+      int byte_offset, ExternalPointerTagRange tag_range) const;
   inline CppHeapPointerSlot RawCppHeapPointerField(int byte_offset) const;
   inline IndirectPointerSlot RawIndirectPointerField(
       int byte_offset, IndirectPointerTag tag) const;
@@ -455,7 +471,10 @@ class HeapObject : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   static void VerifyCodePointer(Isolate* isolate, Tagged<Object> p);
 #endif
 
-  static inline AllocationAlignment RequiredAlignment(Tagged<Map> map);
+  static inline AllocationAlignment RequiredAlignment(
+      InSharedSpace in_shared_space, Tagged<Map> map);
+  static inline AllocationAlignment RequiredAlignment(
+      AllocationSpace allocation_space, Tagged<Map> map);
   bool inline CheckRequiredAlignment(PtrComprCageBase cage_base) const;
 
   // Whether the object needs rehashing. That is the case if the object's

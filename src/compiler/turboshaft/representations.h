@@ -8,7 +8,7 @@
 #include <cstdint>
 
 #include "include/v8-internal.h"
-#include "src/base/functional.h"
+#include "src/base/hashing.h"
 #include "src/base/logging.h"
 #include "src/codegen/machine-type.h"
 #include "src/compiler/turboshaft/utils.h"
@@ -306,6 +306,7 @@ class RegisterRepresentation : public MaybeRegisterRepresentation {
         // indirection, we have a Tagged pointer.
         return WordPtr();
       case MachineRepresentation::kNone:
+      case MachineRepresentation::kFloat16RawBits:
         UNREACHABLE();
     }
   }
@@ -342,12 +343,6 @@ class RegisterRepresentation : public MaybeRegisterRepresentation {
                                     : RegisterRepresentation::WordPtr();
     }
     return *this;
-  }
-
-  static constexpr RegisterRepresentation WasmCodePointer() {
-    return V8_ENABLE_WASM_CODE_POINTER_TABLE_BOOL
-               ? RegisterRepresentation::Word32()
-               : RegisterRepresentation::WordPtr();
   }
 };
 
@@ -617,13 +612,6 @@ class MemoryRepresentation {
   static constexpr MemoryRepresentation IndirectPointer() {
     return MemoryRepresentation(Enum::kIndirectPointer);
   }
-  static constexpr MemoryRepresentation WasmCodePointer() {
-    if constexpr (V8_ENABLE_WASM_CODE_POINTER_TABLE_BOOL) {
-      return Uint32();
-    } else {
-      return UintPtr();
-    }
-  }
   static constexpr MemoryRepresentation SandboxedPointer() {
     return MemoryRepresentation(Enum::kSandboxedPointer);
   }
@@ -856,6 +844,7 @@ class MemoryRepresentation {
       case MachineRepresentation::kBit:
       case MachineRepresentation::kCompressedPointer:
       case MachineRepresentation::kCompressed:
+      case MachineRepresentation::kFloat16RawBits:
         UNREACHABLE();
     }
   }
@@ -896,6 +885,7 @@ class MemoryRepresentation {
       case MachineRepresentation::kCompressed:
       case MachineRepresentation::kProtectedPointer:
       case MachineRepresentation::kIndirectPointer:
+      case MachineRepresentation::kFloat16RawBits:
         UNREACHABLE();
     }
   }

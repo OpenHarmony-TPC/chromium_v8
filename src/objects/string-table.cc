@@ -224,9 +224,9 @@ class InternalizedStringKey final : public StringTableKey {
     // the same content before this thread completes MakeThin (which sets the
     // resource), resulting in a string table hit returning the string we just
     // created that is not correctly initialized.
-    const bool can_avoid_copy =
+    const bool can_move_resource =
         !v8_flags.shared_string_table && !shape.IsUncachedExternal();
-    if (can_avoid_copy && shape.IsExternalOneByte()) {
+    if (can_move_resource && shape.IsExternalOneByte()) {
       // Shared external strings are always in-place internalizable.
       // If this assumption is invalidated in the future, make sure that we
       // fully initialize (copy contents) for shared external strings, as the
@@ -236,7 +236,7 @@ class InternalizedStringKey final : public StringTableKey {
       internalized_string_ =
           isolate->factory()->InternalizeExternalString<ExternalOneByteString>(
               string_);
-    } else if (can_avoid_copy && shape.IsExternalTwoByte()) {
+    } else if (can_move_resource && shape.IsExternalTwoByte()) {
       // Shared external strings are always in-place internalizable.
       // If this assumption is invalidated in the future, make sure that we
       // fully initialize (copy contents) for shared external strings, as the
@@ -705,8 +705,7 @@ void StringTable::InsertEmptyStringForBootstrapping(Isolate* isolate) {
 
     Data* const data = EnsureCapacity(isolate, 1);
 
-    DirectHandle<String> empty_string =
-        ReadOnlyRoots(isolate).empty_string_handle();
+    DirectHandle<String> empty_string = isolate->factory()->empty_string();
     uint32_t hash = empty_string->EnsureHash();
 
     InternalIndex entry = data->table().FindInsertionEntry(isolate, hash);

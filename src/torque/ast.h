@@ -1087,12 +1087,15 @@ struct TorqueBuiltinDeclaration : BuiltinDeclaration {
                            ParameterList parameters,
                            TypeExpression* return_type,
                            bool has_custom_interface_descriptor,
+                           std::optional<std::string> use_counter_name,
                            std::optional<Statement*> body)
       : BuiltinDeclaration(kKind, pos, javascript_linkage, transitioning, name,
                            std::move(parameters), return_type),
         has_custom_interface_descriptor(has_custom_interface_descriptor),
+        use_counter_name(use_counter_name),
         body(body) {}
   bool has_custom_interface_descriptor;
+  std::optional<std::string> use_counter_name;
   std::optional<Statement*> body;
 };
 
@@ -1253,9 +1256,9 @@ struct CppIncludeDeclaration : Declaration {
   std::string include_path;
 };
 
-#define ENUM_ITEM(name)                     \
-  case AstNode::Kind::k##name:              \
-    return std::is_base_of<T, name>::value; \
+#define ENUM_ITEM(name)                \
+  case AstNode::Kind::k##name:         \
+    return std::is_base_of_v<T, name>; \
     break;
 
 template <class T>

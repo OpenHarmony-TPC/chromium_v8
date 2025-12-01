@@ -353,5 +353,27 @@ void TestGuardedDeadVarAnalysisMultipleSafepoints(Isolate* isolate) {
   Print(raw_obj);
 }
 
+void TestVariableScopeInsideIf(Isolate* isolate) {
+  Safepoint();
+  Tagged<SomeObject> raw_obj;
+  if (Tagged<Map> raw_map = raw_obj->map(); !raw_map.is_null()) {
+    Print(raw_map);
+  }
+}
+
+void TestConservativePinningScope(Isolate* isolate) {
+  ConservativePinningScope pinning_scope(isolate->heap());
+  Tagged<JSObject> raw_obj = *isolate->factory()->NewJSObjectWithNullProto();
+  CauseGCRaw(raw_obj, isolate);
+  Print(raw_obj);
+}
+
+void TestConservativePinningScopeWitness(
+    Isolate* isolate, ConservativePinningScope& pinning_scope_witness) {
+  Tagged<JSObject> raw_obj = *isolate->factory()->NewJSObjectWithNullProto();
+  CauseGCRaw(raw_obj, isolate);
+  Print(raw_obj);
+}
+
 }  // namespace internal
 }  // namespace v8

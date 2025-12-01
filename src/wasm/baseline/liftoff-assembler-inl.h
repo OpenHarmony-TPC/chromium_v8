@@ -6,6 +6,7 @@
 #define V8_WASM_BASELINE_LIFTOFF_ASSEMBLER_INL_H_
 
 #include "src/wasm/baseline/liftoff-assembler.h"
+// Include the non-inl header before the rest of the headers.
 
 // Include platform specific implementation.
 #if V8_TARGET_ARCH_IA32
@@ -126,12 +127,8 @@ void LiftoffAssembler::LoadSmiAsInt32(LiftoffRegister dst, Register src_addr,
 
 void LiftoffAssembler::LoadCodePointer(Register dst, Register src_addr,
                                        int32_t offset_imm) {
-  if constexpr (V8_ENABLE_WASM_CODE_POINTER_TABLE_BOOL) {
     return Load(LiftoffRegister(dst), src_addr, no_reg, offset_imm,
                 LoadType::kI32Load);
-  } else {
-    return LoadFullPointer(dst, src_addr, offset_imm);
-  }
 }
 
 void LiftoffAssembler::emit_ptrsize_add(Register dst, Register lhs,

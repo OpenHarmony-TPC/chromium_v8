@@ -245,7 +245,7 @@ void RegExpMacroAssemblerMIPS::CheckCharacterLT(base::uc16 limit,
   BranchOrBacktrack(on_less, lt, current_character(), Operand(limit));
 }
 
-void RegExpMacroAssemblerMIPS::CheckGreedyLoop(Label* on_equal) {
+void RegExpMacroAssemblerMIPS::CheckFixedLengthLoop(Label* on_equal) {
   Label backtrack_non_equal;
   __ Lw(a0, MemOperand(backtrack_stackpointer(), 0));
   __ Branch(&backtrack_non_equal, ne, current_input_offset(), Operand(a0));
@@ -699,8 +699,8 @@ void RegExpMacroAssemblerMIPS::PopRegExpBasePointer(Register stack_pointer_out,
   StoreRegExpStackPointerToMemory(stack_pointer_out, scratch);
 }
 
-Handle<HeapObject> RegExpMacroAssemblerMIPS::GetCode(Handle<String> source,
-                                                     RegExpFlags flags) {
+DirectHandle<HeapObject> RegExpMacroAssemblerMIPS::GetCode(
+    DirectHandle<String> source, RegExpFlags flags) {
   Label return_v0;
   if (masm_->has_exception()) {
     // If the code gets corrupted due to long regular expressions and lack of
@@ -1118,13 +1118,18 @@ void RegExpMacroAssemblerMIPS::PushBacktrack(Label* label) {
 
 void RegExpMacroAssemblerMIPS::PushCurrentPosition() {
   Push(current_input_offset());
+  CheckStackLimit();
 }
 
 void RegExpMacroAssemblerMIPS::PushRegister(int register_index,
                                             StackCheckFlag check_stack_limit) {
   __ Ld(a0, register_location(register_index));
   Push(a0);
-  if (check_stack_limit) CheckStackLimit();
+  if (check_stack_limit) {
+    CheckStackLimit();
+  } else if (V8_UNLIKELY(v8_flags.slow_debug_code)) {
+    AssertAboveStackLimitMinusSlack();
+  }
 }
 
 void RegExpMacroAssemblerMIPS::ReadCurrentPositionFromRegister(int reg) {
@@ -1373,6 +1378,27 @@ void RegExpMacroAssemblerMIPS::CheckStackLimit() {
   __ li(a0, Operand(stack_limit));
   __ Ld(a0, MemOperand(a0));
   SafeCall(&stack_overflow_label_, ls, backtrack_stackpointer(), Operand(a0));
+}
+
+void RegExpMacroAssemblerMIPS::AssertAboveStackLimitMinusSlack() {
+  ExternalReference stack_limit =
+      ExternalReference::address_of_regexp_stack_limit_address(
+          masm_->isolate());
+
+  __ li(a0, Operand(stack_limit));
+  __ Ld(a0, MemOperand(a0));
+  SafeCall(&stack_overflow_label_, ls, backtrack_stackpointer(), Operand(a0));
+
+  DCHECK(v8_flags.slow_debug_code);
+  Label no_stack_overflow;
+  ASM_CODE_COMMENT_STRING(masm_.get(), "AssertAboveStackLimitMinusSlack");
+  auto l = ExternalReference::address_of_regexp_stack_limit_address(isolate());
+  __ li(a0, l);
+  __ Ld(a0, MemOperand(a0));
+  __ Dsubu(a0, a0, Operand(RegExpStack::kStackLimitSlackSize));
+  __ Branch(&no_stack_overflow, hi, backtrack_stackpointer(), Operand(a0));
+  __ DebugBreak();
+  __ bind(&no_stack_overflow);
 }
 
 void RegExpMacroAssemblerMIPS::LoadCurrentCharacterUnchecked(int cp_offset,

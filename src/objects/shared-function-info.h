@@ -48,8 +48,6 @@ namespace wasm {
 class CanonicalValueType;
 struct WasmModule;
 class ValueType;
-using FunctionSig = Signature<ValueType>;
-using CanonicalSig = Signature<CanonicalValueType>;
 }  // namespace wasm
 #endif
 
@@ -122,8 +120,8 @@ class UncompiledData
                                            ExposedTrustedObject> {
  public:
   inline void InitAfterBytecodeFlush(
-      IsolateForSandbox isolate, Tagged<String> inferred_name,
-      int start_position, int end_position,
+      Isolate* isolate, Tagged<String> inferred_name, int start_position,
+      int end_position,
       std::function<void(Tagged<HeapObject> object, ObjectSlot slot,
                          Tagged<HeapObject> target)>
           gc_notify_updated_slot);
@@ -310,13 +308,17 @@ class SharedFunctionInfo
 
   // [internal formal parameter count]: The declared number of parameters.
   // For subclass constructors, also includes new.target.
-  // The size of function's frame is
-  // internal_formal_parameter_count_with_receiver.
   //
-  // NOTE: this API should be considered DEPRECATED. Please obtain the
-  // parameter count from the Code/BytecodeArray or another trusted source
-  // instead. See also crbug.com/40931165.
-  // TODO(saelo): mark as V8_DEPRECATE_SOON once the remaining users are fixed.
+  // NOTE: SharedFunctionInfo objects are located inside the sandbox, so an
+  // attacker able to corrupt in-sandbox memory can change this field
+  // arbitrarily. As such, it is not safe to use this field for invoking a
+  // JSFunction or computing the size of stack frames (or similar use-cases
+  // that involve accessing out-of-sandbox memory such as the stack). Instead,
+  // for such purposes, a trusted parameter count must be used, the source of
+  // which depends on the concrete use case. For example, a (trusted) parameter
+  // count can be obtained from a BytecodeArray (e.g. for interpreting
+  // bytecode), a Code object (e.g. for deoptimizing optimized code), or the
+  // JSDispatchTable (e.g. for invoking a JSFunction).
   inline void set_internal_formal_parameter_count(int value);
   inline uint16_t internal_formal_parameter_count_with_receiver() const;
   inline uint16_t internal_formal_parameter_count_without_receiver() const;
@@ -329,7 +331,6 @@ class SharedFunctionInfo
   // Set the formal parameter count so the function code will be
   // called without using argument adaptor frames.
   inline void DontAdaptArguments();
-  inline bool IsDontAdaptArguments() const;
 
   // Accessors for the data associated with this SFI.
   //
@@ -361,6 +362,10 @@ class SharedFunctionInfo
   // Helper function when no Isolate is available. Prefer to use the variant
   // with an isolate parameter if possible.
   inline Tagged<Object> GetTrustedData() const;
+
+  // Some code may encounter unreachable unusable objects and needs to skip
+  // over them without crashing.
+  inline bool HasUnpublishedTrustedData(IsolateForSandbox isolate) const;
 
  private:
   // For the sandbox, the function's data is split across two fields, with the
@@ -408,7 +413,7 @@ class SharedFunctionInfo
   inline Tagged<InterpreterData> interpreter_data(
       IsolateForSandbox isolate) const;
   inline void set_interpreter_data(
-      Tagged<InterpreterData> interpreter_data,
+      Isolate* isolate, Tagged<InterpreterData> interpreter_data,
       WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
   DECL_GETTER(HasBaselineCode, bool)
   DECL_RELEASE_ACQUIRE_ACCESSORS(baseline_code, Tagged<Code>)
@@ -520,6 +525,7 @@ class SharedFunctionInfo
 
   // [flags] Bit field containing various flags about the function.
   DECL_RELAXED_INT32_ACCESSORS(flags)
+  DECL_RELAXED_INT32_ACCESSORS(function_literal_id)
   DECL_UINT8_ACCESSORS(flags2)
 
   DECL_UINT16_ACCESSORS(age)
@@ -583,6 +589,9 @@ class SharedFunctionInfo
   // closest outer class scope.
   DECL_BOOLEAN_ACCESSORS(private_name_lookup_skips_outer_class)
 
+  // Indicates that the shared function info was live-edited.
+  DECL_BOOLEAN_ACCESSORS(live_edited)
+
   inline FunctionKind kind() const;
 
   int UniqueIdInScript() const;
@@ -601,7 +610,8 @@ class SharedFunctionInfo
   // Indicates whether optimizations have been disabled for this shared function
   // info. If we cannot optimize the function we disable optimization to avoid
   // spending time attempting to optimize it again.
-  inline bool optimization_disabled() const;
+  inline bool optimization_disabled(CodeKind kind) const;
+  inline bool all_optimization_disabled() const;
 
   // The reason why optimization was disabled.
   inline BailoutReason disabled_optimization_reason() const;
@@ -618,8 +628,8 @@ class SharedFunctionInfo
 
   // [source code]: Source code for the function.
   bool HasSourceCode() const;
-  static Handle<Object> GetSourceCode(Isolate* isolate,
-                                      DirectHandle<SharedFunctionInfo> shared);
+  static DirectHandle<Object> GetSourceCode(
+      Isolate* isolate, DirectHandle<SharedFunctionInfo> shared);
   static Handle<Object> GetSourceCodeHarmony(
       Isolate* isolate, DirectHandle<SharedFunctionInfo> shared);
 
@@ -672,7 +682,7 @@ class SharedFunctionInfo
   };
   // Returns the first value that applies (see enum definition for the order).
   template <typename IsolateT>
-  Inlineability GetInlineability(IsolateT* isolate) const;
+  Inlineability GetInlineability(CodeKind code_kind, IsolateT* isolate) const;
 
   // Source size of this function.
   int SourceSize();
@@ -709,7 +719,7 @@ class SharedFunctionInfo
 
   inline bool CanCollectSourcePosition(Isolate* isolate);
   static void EnsureSourcePositionsAvailable(
-      Isolate* isolate, Handle<SharedFunctionInfo> shared_info);
+      Isolate* isolate, DirectHandle<SharedFunctionInfo> shared_info);
 
   template <typename IsolateT>
   bool AreSourcePositionsAvailable(IsolateT* isolate) const;
@@ -829,6 +839,8 @@ class SharedFunctionInfo
   TQ_OBJECT_CONSTRUCTORS(SharedFunctionInfo)
 };
 
+std::ostream& operator<<(std::ostream& os, SharedFunctionInfo::Inlineability i);
+
 // A SharedFunctionInfoWrapper wraps a SharedFunctionInfo from trusted space.
 // It can be useful when a protected pointer reference to a SharedFunctionInfo
 // is needed, for example for a ProtectedFixedArray.
@@ -874,13 +886,29 @@ class V8_NODISCARD IsCompiledScope {
                          Isolate* isolate);
   inline IsCompiledScope(const Tagged<SharedFunctionInfo> shared,
                          LocalIsolate* isolate);
-  inline IsCompiledScope() : retain_code_(), is_compiled_(false) {}
+  inline IsCompiledScope() = default;
 
   inline bool is_compiled() const { return is_compiled_; }
 
  private:
-  MaybeHandle<HeapObject> retain_code_;
-  bool is_compiled_;
+  MaybeHandle<HeapObject> retain_code_ = {};
+  bool is_compiled_ = false;
+};
+
+// IsBaselineCompiledScope enables a caller to check if a function is baseline
+// compiled, and ensure it remains compiled (i.e., doesn't have it's baseline
+// code flushed) while the scope is retained.
+class V8_NODISCARD IsBaselineCompiledScope {
+ public:
+  inline IsBaselineCompiledScope(const Tagged<SharedFunctionInfo> shared,
+                                 Isolate* isolate);
+  inline IsBaselineCompiledScope() = default;
+
+  inline bool is_compiled() const { return is_compiled_; }
+
+ private:
+  MaybeHandle<Code> retain_code_ = {};
+  bool is_compiled_ = false;
 };
 
 std::ostream& operator<<(std::ostream& os, const SourceCodeOf& v);

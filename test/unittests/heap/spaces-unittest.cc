@@ -15,6 +15,7 @@
 #include "src/heap/main-allocator.h"
 #include "src/heap/mutable-page-metadata.h"
 #include "src/heap/spaces-inl.h"
+#include "src/heap/trusted-range.h"
 #include "test/unittests/test-utils.h"
 
 namespace v8 {
@@ -23,8 +24,8 @@ namespace internal {
 static Tagged<HeapObject> AllocateUnaligned(MainAllocator* allocator,
                                             SpaceWithLinearArea* space,
                                             int size) {
-  AllocationResult allocation =
-      allocator->AllocateRaw(size, kTaggedAligned, AllocationOrigin::kRuntime);
+  AllocationResult allocation = allocator->AllocateRaw(
+      size, kTaggedAligned, AllocationOrigin::kRuntime, AllocationHint());
   CHECK(!allocation.IsFailure());
   Tagged<HeapObject> filler;
   CHECK(allocation.To(&filler));
@@ -35,8 +36,8 @@ static Tagged<HeapObject> AllocateUnaligned(MainAllocator* allocator,
 static Tagged<HeapObject> AllocateUnaligned(OldLargeObjectSpace* allocator,
                                             OldLargeObjectSpace* space,
                                             int size) {
-  AllocationResult allocation =
-      allocator->AllocateRaw(space->heap()->main_thread_local_heap(), size);
+  AllocationResult allocation = allocator->AllocateRaw(
+      space->heap()->main_thread_local_heap(), size, AllocationHint());
   CHECK(!allocation.IsFailure());
   Tagged<HeapObject> filler;
   CHECK(allocation.To(&filler));
@@ -63,7 +64,7 @@ TEST_F(SpacesTest, CompactionSpaceMerge) {
   for (PageMetadata* p : *old_space) {
     // Unlink free lists from the main space to avoid reusing the memory for
     // compaction spaces.
-    old_space->UnlinkFreeListCategories(p);
+    old_space->free_list()->EvictFreeListItems(p);
   }
 
   // Cannot loop until "Available()" since we initially have 0 bytes available
@@ -77,7 +78,7 @@ TEST_F(SpacesTest, CompactionSpaceMerge) {
     Tagged<HeapObject> object =
         allocator
             .AllocateRaw(kMaxRegularHeapObjectSize, kTaggedAligned,
-                         AllocationOrigin::kGC)
+                         AllocationOrigin::kGC, AllocationHint())
             .ToObjectChecked();
     heap->CreateFillerObjectAt(object.address(), kMaxRegularHeapObjectSize);
   }
@@ -397,6 +398,43 @@ TEST_F(SpacesTest, InlineAllocationObserverCadence) {
   CHECK_EQ(observer1.count(), 32);
   CHECK_EQ(observer2.count(), 28);
 }
+
+#if V8_ENABLE_SANDBOX
+TEST_F(SpacesTest, TrustedSpaceNullPage) {
+  // Trusted space should have a reserved, inaccessible area at the start to
+  // mitigate (compressed) nullptr dereference bugs.
+
+  v8::Isolate::Scope isolate_scope(v8_isolate());
+  v8::HandleScope handle_scope(v8_isolate());
+  v8::Context::New(v8_isolate())->Enter();
+
+  Address trusted_space_base =
+      TrustedRange::GetProcessWideTrustedRange()->base();
+  const size_t size_of_reserved_area = 1 * MB;
+
+  // Test that no objects are allocated in the reserved area.
+  MainAllocator* trusted_space_allocator =
+      i_isolate()->heap()->allocator()->trusted_space_allocator();
+  for (int i = 0; i < 64; ++i) {
+    Tagged<HeapObject> allocation = AllocateUnaligned(
+        trusted_space_allocator, i_isolate()->heap()->trusted_space(), 32);
+    CHECK_GE(allocation.address(), trusted_space_base);
+    size_t offset = allocation.address() - trusted_space_base;
+    CHECK_GT(offset, size_of_reserved_area);
+  }
+
+  // Test that the reserved area is inaccessible.
+  auto ReadByteAt = [](Address address) {
+    return *reinterpret_cast<volatile uint8_t*>(address);
+  };
+  uint8_t buf = 0;
+  EXPECT_DEATH_IF_SUPPORTED(buf += ReadByteAt(trusted_space_base), "");
+  EXPECT_DEATH_IF_SUPPORTED(
+      buf += ReadByteAt(trusted_space_base + size_of_reserved_area - 1), "");
+  // Mostly just to prevent the compiler from optimizing away the memory loads.
+  CHECK_EQ(buf, 0);
+}
+#endif  // V8_ENABLE_SANDBOX
 
 }  // namespace internal
 }  // namespace v8

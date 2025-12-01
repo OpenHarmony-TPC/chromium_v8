@@ -27,6 +27,15 @@ namespace v8::internal::compiler::turboshaft {
 // statically-computable number of iterations, partially unrolls other small
 // inner loops, and remove loops that we detect as always having 0 iterations.
 
+#ifdef DEBUG
+#define TRACE(x)                                                               \
+  do {                                                                         \
+    if (v8_flags.turboshaft_trace_unrolling) StdoutStream() << x << std::endl; \
+  } while (false)
+#else
+#define TRACE(x)
+#endif
+
 class IterationCount {
   enum class Kind { kExact, kApprox, kUnknown };
 
@@ -51,6 +60,10 @@ class IterationCount {
 
   size_t exact_count() const {
     DCHECK_EQ(kind_, Kind::kExact);
+    return count_;
+  }
+  size_t approx_count() const {
+    DCHECK_EQ(kind_, Kind::kApprox);
     return count_;
   }
 
@@ -169,7 +182,8 @@ class V8_EXPORT_PRIVATE LoopUnrollingAnalyzer {
   LoopUnrollingAnalyzer(Zone* phase_zone, Graph* input_graph, bool is_wasm)
       : input_graph_(input_graph),
         matcher_(*input_graph),
-        loop_finder_(phase_zone, input_graph),
+        loop_finder_(phase_zone, input_graph,
+                     {LoopFinder::ConfigFlags::kFindCalls}),
         loop_iteration_count_(phase_zone),
         canonical_loop_matcher_(matcher_),
         is_wasm_(is_wasm),
@@ -192,7 +206,7 @@ class V8_EXPORT_PRIVATE LoopUnrollingAnalyzer {
   bool ShouldPartiallyUnrollLoop(const Block* loop_header) const {
     DCHECK(loop_header->IsLoop());
     LoopFinder::LoopInfo info = loop_finder_.GetLoopInfo(loop_header);
-    return !info.has_inner_loops &&
+    return !info.has_inner_loops && !info.has_any_call &&
            info.op_count < kMaxLoopSizeForPartialUnrolling;
   }
 
@@ -305,21 +319,6 @@ class LoopStackCheckElisionReducer : public Next {
     }
   }
 
-  V<AnyOrNone> REDUCE_INPUT_GRAPH(Call)(V<AnyOrNone> ig_idx,
-                                        const CallOp& call) {
-    LABEL_BLOCK(no_change) { return Next::ReduceInputGraphCall(ig_idx, call); }
-    if (ShouldSkipOptimizationStep()) goto no_change;
-
-    if (skip_next_stack_check_ &&
-        call.IsStackCheck(__ input_graph(), broker_,
-                          StackCheckKind::kJSIterationBody)) {
-      skip_next_stack_check_ = false;
-      return {};
-    }
-
-    goto no_change;
-  }
-
   V<None> REDUCE_INPUT_GRAPH(JSStackCheck)(V<None> ig_idx,
                                            const JSStackCheckOp& stack_check) {
     if (skip_next_stack_check_ &&
@@ -402,7 +401,7 @@ class LoopUnrollingReducer : public Next {
     goto no_change;
   }
 
-  OpIndex REDUCE_INPUT_GRAPH(Branch)(OpIndex ig_idx, const BranchOp& branch) {
+  V<None> REDUCE_INPUT_GRAPH(Branch)(V<None> ig_idx, const BranchOp& branch) {
     LABEL_BLOCK(no_change) {
       return Next::ReduceInputGraphBranch(ig_idx, branch);
     }
@@ -432,25 +431,6 @@ class LoopUnrollingReducer : public Next {
         DCHECK(is_true_in_loop && is_false_in_loop);
       }
     }
-    goto no_change;
-  }
-
-  V<AnyOrNone> REDUCE_INPUT_GRAPH(Call)(V<AnyOrNone> ig_idx,
-                                        const CallOp& call) {
-    LABEL_BLOCK(no_change) { return Next::ReduceInputGraphCall(ig_idx, call); }
-    if (ShouldSkipOptimizationStep()) goto no_change;
-
-    if (V8_LIKELY(!IsRunningBuiltinPipeline())) {
-      if (skip_next_stack_check_ &&
-          call.IsStackCheck(__ input_graph(), broker_,
-                            StackCheckKind::kJSIterationBody)) {
-        // When we unroll a loop, we get rid of its stack checks. (note that
-        // we don't do this for the last folded body of partially unrolled
-        // loops so that the loop keeps one stack check).
-        return {};
-      }
-    }
-
     goto no_change;
   }
 
@@ -528,6 +508,7 @@ class LoopUnrollingReducer : public Next {
 
 template <class Next>
 void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
+  TRACE("LoopUnrolling: partially unrolling loop at " << header->index().id());
   DCHECK_EQ(unrolling_, UnrollingStatus::kNotUnrolling);
   DCHECK(!skip_next_stack_check_);
   unrolling_ = UnrollingStatus::kUnrolling;
@@ -537,6 +518,7 @@ void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
 
   size_t unroll_count = analyzer_.GetPartialUnrollCount(header);
   DCHECK_GT(unroll_count, 0);
+  TRACE("> UnrollCount: " << unroll_count);
 
   ScopedModification<bool> set_true(__ turn_loop_without_backedge_into_merge(),
                                     false);
@@ -545,21 +527,29 @@ void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
   // Emitting the 1st iteration of the loop (with a proper loop header). We
   // remove the stack check of all iterations except the last one.
   ScopedModification<bool> skip_stack_checks(&skip_next_stack_check_, true);
+  TRACE("> Emitting first iteraton (with header)");
   Block* output_graph_header =
       __ CloneSubGraph(loop_body, /* keep_loop_kinds */ true);
-  if (StopUnrollingIfUnreachable(output_graph_header)) return;
+  if (StopUnrollingIfUnreachable(output_graph_header)) {
+    TRACE("> Next iteration is unreachable, stopping unrolling");
+    return;
+  }
 
   // Emitting the subsequent folded iterations. We set `unrolling_` to
   // kUnrolling so that stack checks are skipped.
   unrolling_ = UnrollingStatus::kUnrolling;
   for (size_t i = 0; i < unroll_count - 1; i++) {
     // We remove the stack check of all iterations but the last one.
+    TRACE("> Emitting iteration " << i);
     bool is_last_iteration = i == unroll_count - 2;
-    ScopedModification<bool> skip_stack_checks(&skip_next_stack_check_,
-                                               !is_last_iteration);
+    ScopedModification<bool> inner_skip_stack_checks(&skip_next_stack_check_,
+                                                     !is_last_iteration);
 
     __ CloneSubGraph(loop_body, /* keep_loop_kinds */ false);
-    if (StopUnrollingIfUnreachable(output_graph_header)) return;
+    if (StopUnrollingIfUnreachable(output_graph_header)) {
+      TRACE("> Next iteration is unreachable, stopping unrolling");
+      return;
+    }
   }
 
   // ReduceInputGraphGoto ignores backedge Gotos while kUnrolling is true, which
@@ -571,9 +561,11 @@ void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
   // We use a custom `FixLoopPhis` because the mapping from old->new is a bit
   // "messed up" by having emitted multiple times the same block. See the
   // comments in `FixLoopPhis` for more details.
+  TRACE("> Patching loop phis");
   FixLoopPhis(header, output_graph_header, backedge_block);
 
   unrolling_ = UnrollingStatus::kNotUnrolling;
+  TRACE("> Finished partially unrolling loop " << header->index().id());
 }
 
 template <class Next>
@@ -630,6 +622,7 @@ void LoopUnrollingReducer<Next>::FixLoopPhis(const Block* input_graph_loop,
 
 template <class Next>
 void LoopUnrollingReducer<Next>::RemoveLoop(const Block* header) {
+  TRACE("LoopUnrolling: removing loop at " << header->index().id());
   DCHECK_EQ(unrolling_, UnrollingStatus::kNotUnrolling);
   DCHECK(!skip_next_stack_check_);
   // When removing a loop, we still need to emit the header (since it has to
@@ -643,29 +636,39 @@ void LoopUnrollingReducer<Next>::RemoveLoop(const Block* header) {
 
 template <class Next>
 void LoopUnrollingReducer<Next>::FullyUnrollLoop(const Block* header) {
+  TRACE("LoopUnrolling: fully unrolling loop at " << header->index().id());
   DCHECK_EQ(unrolling_, UnrollingStatus::kNotUnrolling);
   DCHECK(!skip_next_stack_check_);
   ScopedModification<bool> skip_stack_checks(&skip_next_stack_check_, true);
 
   size_t iter_count = analyzer_.GetIterationCount(header).exact_count();
+  TRACE("> iter_count: " << iter_count);
 
   auto loop_body = analyzer_.GetLoopBody(header);
   current_loop_header_ = header;
 
   unrolling_ = UnrollingStatus::kUnrolling;
   for (size_t i = 0; i < iter_count; i++) {
+    TRACE("> Emitting iteration " << i);
     __ CloneSubGraph(loop_body, /* keep_loop_kinds */ false);
-    if (StopUnrollingIfUnreachable()) return;
+    if (StopUnrollingIfUnreachable()) {
+      TRACE("> Next iteration is unreachable, stopping unrolling");
+      return;
+    }
   }
 
   // The loop actually finishes on the header rather than its last block. We
   // thus inline the header, and we'll replace its final BranchOp by a GotoOp to
   // outside of the loop.
+  TRACE("> Emitting the final header");
   unrolling_ = UnrollingStatus::kRemoveLoop;
   __ CloneAndInlineBlock(header);
 
   unrolling_ = UnrollingStatus::kNotUnrolling;
+  TRACE("> Finished fully unrolling loop " << header->index().id());
 }
+
+#undef TRACE
 
 #include "src/compiler/turboshaft/undef-assembler-macros.inc"
 

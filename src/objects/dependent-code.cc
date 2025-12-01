@@ -7,6 +7,7 @@
 #include "src/base/bits.h"
 #include "src/deoptimizer/deoptimizer.h"
 #include "src/objects/allocation-site-inl.h"
+#include "src/objects/contexts.h"
 #include "src/objects/dependent-code-inl.h"
 #include "src/objects/map.h"
 
@@ -21,13 +22,15 @@ Tagged<DependentCode> DependentCode::GetDependentCode(
     return Cast<PropertyCell>(object)->dependent_code();
   } else if (IsAllocationSite(object)) {
     return Cast<AllocationSite>(object)->dependent_code();
-  } else if (IsContextSidePropertyCell(object)) {
-    return Cast<ContextSidePropertyCell>(object)->dependent_code();
+  } else if (IsContextCell(object)) {
+    return Cast<ContextCell>(object)->dependent_code();
+  } else if (IsScopeInfo(object)) {
+    return Cast<ScopeInfo>(object)->dependent_code();
   }
   UNREACHABLE();
 }
 
-void DependentCode::SetDependentCode(Handle<HeapObject> object,
+void DependentCode::SetDependentCode(DirectHandle<HeapObject> object,
                                      DirectHandle<DependentCode> dep) {
   if (IsMap(*object)) {
     Cast<Map>(object)->set_dependent_code(*dep);
@@ -35,8 +38,10 @@ void DependentCode::SetDependentCode(Handle<HeapObject> object,
     Cast<PropertyCell>(object)->set_dependent_code(*dep);
   } else if (IsAllocationSite(*object)) {
     Cast<AllocationSite>(object)->set_dependent_code(*dep);
-  } else if (IsContextSidePropertyCell(*object)) {
-    Cast<ContextSidePropertyCell>(object)->set_dependent_code(*dep);
+  } else if (IsContextCell(*object)) {
+    Cast<ContextCell>(object)->set_dependent_code(*dep);
+  } else if (IsScopeInfo(*object)) {
+    Cast<ScopeInfo>(object)->set_dependent_code(*dep);
   } else {
     UNREACHABLE();
   }
@@ -67,7 +72,7 @@ void DependentCode::InstallDependency(Isolate* isolate, Handle<Code> code,
   }
   Handle<DependentCode> old_deps(DependentCode::GetDependentCode(*object),
                                  isolate);
-  Handle<DependentCode> new_deps =
+  DirectHandle<DependentCode> new_deps =
       InsertWeakCode(isolate, old_deps, groups, code);
 
   // Update the list head if necessary.
@@ -76,7 +81,7 @@ void DependentCode::InstallDependency(Isolate* isolate, Handle<Code> code,
   }
 }
 
-Handle<DependentCode> DependentCode::InsertWeakCode(
+DirectHandle<DependentCode> DependentCode::InsertWeakCode(
     Isolate* isolate, Handle<DependentCode> entries, DependencyGroups groups,
     DirectHandle<Code> code) {
   if (entries->length() == entries->capacity()) {
@@ -140,9 +145,9 @@ bool DependentCode::MarkCodeForDeoptimization(
       // deopt reason. Only one group is reported to avoid string concatenation.
       DependencyGroup first_group = static_cast<DependencyGroup>(
           1 << base::bits::CountTrailingZeros32(groups & deopt_groups));
-      const char* reason = DependentCode::DependencyGroupName(first_group);
-
-      code->SetMarkedForDeoptimization(isolate, reason);
+      code->SetMarkedForDeoptimization(
+          isolate,
+          DependentCode::DependencyGroupToLazyDeoptReason(first_group));
       marked_something = true;
     }
 
@@ -203,8 +208,39 @@ const char* DependentCode::DependencyGroupName(DependencyGroup group) {
       return "allocation-site-tenuring-changed";
     case kAllocationSiteTransitionChangedGroup:
       return "allocation-site-transition-changed";
-    case kScriptContextSlotPropertyChangedGroup:
+    case kContextCellChangedGroup:
       return "script-context-slot-property-changed";
+    case kEmptyContextExtensionGroup:
+      return "empty-context-extension";
+  }
+  UNREACHABLE();
+}
+
+LazyDeoptimizeReason DependentCode::DependencyGroupToLazyDeoptReason(
+    DependencyGroup group) {
+  switch (group) {
+    case kTransitionGroup:
+      return LazyDeoptimizeReason::kMapDeprecated;
+    case kPrototypeCheckGroup:
+      return LazyDeoptimizeReason::kPrototypeChange;
+    case kPropertyCellChangedGroup:
+      return LazyDeoptimizeReason::kPropertyCellChange;
+    case kFieldConstGroup:
+      return LazyDeoptimizeReason::kFieldTypeConstChange;
+    case kFieldTypeGroup:
+      return LazyDeoptimizeReason::kFieldTypeChange;
+    case kFieldRepresentationGroup:
+      return LazyDeoptimizeReason::kFieldRepresentationChange;
+    case kInitialMapChangedGroup:
+      return LazyDeoptimizeReason::kInitialMapChange;
+    case kAllocationSiteTenuringChangedGroup:
+      return LazyDeoptimizeReason::kAllocationSiteTenuringChange;
+    case kAllocationSiteTransitionChangedGroup:
+      return LazyDeoptimizeReason::kAllocationSiteTransitionChange;
+    case kContextCellChangedGroup:
+      return LazyDeoptimizeReason::kContextCellChange;
+    case kEmptyContextExtensionGroup:
+      return LazyDeoptimizeReason::kEmptyContextExtensionChange;
   }
   UNREACHABLE();
 }

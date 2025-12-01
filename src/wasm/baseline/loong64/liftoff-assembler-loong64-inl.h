@@ -8,6 +8,7 @@
 #include "src/codegen/interface-descriptors-inl.h"
 #include "src/codegen/loong64/assembler-loong64-inl.h"
 #include "src/codegen/machine-type.h"
+#include "src/compiler/linkage.h"
 #include "src/heap/mutable-page-metadata.h"
 #include "src/wasm/baseline/liftoff-assembler.h"
 #include "src/wasm/baseline/parallel-move-inl.h"
@@ -90,7 +91,6 @@ inline void Load(LiftoffAssembler* assm, LiftoffRegister dst, MemOperand src,
     case kI64:
     case kRef:
     case kRefNull:
-    case kRtt:
       assm->Ld_d(dst.gp(), src);
       break;
     case kF32:
@@ -119,7 +119,6 @@ inline void Store(LiftoffAssembler* assm, MemOperand dst, LiftoffRegister src,
     case kI64:
     case kRefNull:
     case kRef:
-    case kRtt:
       assm->St_d(src.gp(), dst);
       break;
     case kF32:
@@ -148,7 +147,6 @@ inline void push(LiftoffAssembler* assm, LiftoffRegister reg, ValueKind kind) {
     case kI64:
     case kRefNull:
     case kRef:
-    case kRtt:
       assm->Push(reg.gp());
       break;
     case kF32:
@@ -198,6 +196,9 @@ inline void StoreToMemory(LiftoffAssembler* assm, MemOperand dst,
     assm->St_d(temp, dst);
   }
 }
+
+static_assert(!kLiftoffAssemblerFpCacheRegs.has(kScratchDoubleReg));
+static_assert(!kLiftoffAssemblerFpCacheRegs.has(kScratchDoubleReg2));
 
 }  // namespace liftoff
 
@@ -272,7 +273,7 @@ void LiftoffAssembler::PatchPrepareStackFrame(
   // assembler to try to grow the buffer.
   constexpr int kAvailableSpace = 256;
   MacroAssembler patching_assembler(
-      nullptr, AssemblerOptions{}, CodeObjectRequired::kNo,
+      zone(), AssemblerOptions{}, CodeObjectRequired::kNo,
       ExternalAssemblerBuffer(buffer_start_ + offset, kAvailableSpace));
 
   if (V8_LIKELY(frame_size < 4 * KB)) {
@@ -318,6 +319,7 @@ void LiftoffAssembler::PatchPrepareStackFrame(
     regs_to_save.set(WasmHandleStackOverflowDescriptor::GapRegister());
     regs_to_save.set(WasmHandleStackOverflowDescriptor::FrameBaseRegister());
     for (auto reg : kGpParamRegisters) regs_to_save.set(reg);
+    for (auto reg : kFpParamRegisters) regs_to_save.set(reg);
     PushRegisters(regs_to_save);
     li(WasmHandleStackOverflowDescriptor::GapRegister(), frame_size);
     Add_d(WasmHandleStackOverflowDescriptor::FrameBaseRegister(), fp,
@@ -437,6 +439,7 @@ void LiftoffAssembler::CheckStackShrink() {
   }
   LiftoffRegList regs_to_save;
   for (auto reg : kGpReturnRegisters) regs_to_save.set(reg);
+  for (auto reg : kFpReturnRegisters) regs_to_save.set(reg);
   PushRegisters(regs_to_save);
   li(kCArgRegs[0], ExternalReference::isolate_address());
   PrepareCallCFunction(1, kScratchReg);
@@ -735,6 +738,31 @@ void LiftoffAssembler::AtomicLoad(LiftoffRegister dst, Register src_addr,
   }
 }
 
+void LiftoffAssembler::AtomicLoadTaggedPointer(Register dst, Register src_addr,
+                                               Register offset_reg,
+                                               int32_t offset_imm,
+                                               AtomicMemoryOrder memory_order,
+                                               uint32_t* protected_load_pc,
+                                               bool needs_shift) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  MemOperand src_op = liftoff::GetMemOp(this, src_addr, offset_reg, offset_imm);
+  uint32_t pc_offset_of_load = 0;
+
+#if V8_COMPRESS_POINTERS
+  Ld_w(dst, src_op);
+  pc_offset_of_load = pc_offset() - kInstrSize;
+  dbar(0);
+  DecompressTagged(dst, dst);
+#else
+  Ld_d(dst, src_op);
+  pc_offset_of_load = pc_offset() - kInstrSize;
+  dbar(0);
+#endif
+  if (protected_load_pc != nullptr) {
+    *protected_load_pc = pc_offset_of_load;
+  }
+}
+
 void LiftoffAssembler::AtomicStore(Register dst_addr, Register offset_reg,
                                    uintptr_t offset_imm, LiftoffRegister src,
                                    StoreType type, LiftoffRegList pinned,
@@ -769,6 +797,44 @@ void LiftoffAssembler::AtomicStore(Register dst_addr, Register offset_reg,
     default:
       UNREACHABLE();
   }
+}
+
+void LiftoffAssembler::AtomicStoreTaggedPointer(
+    Register dst_addr, Register offset_reg, int32_t offset_imm, Register src,
+    LiftoffRegList pinned, AtomicMemoryOrder memory_order,
+    uint32_t* protected_store_pc) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  MemOperand dst_op = liftoff::GetMemOp(this, dst_addr, offset_reg, offset_imm);
+
+  if (COMPRESS_POINTERS_BOOL) {
+    dbar(0);
+    St_w(src, dst_op);
+  } else {
+    dbar(0);
+    St_d(src, dst_op);
+  }
+  if (protected_store_pc != nullptr) {
+    *protected_store_pc = pc_offset() - kInstrSize;
+  }
+
+  if (v8_flags.disable_write_barriers) return;
+  // The write barrier.
+  Label exit;
+  CheckPageFlag(dst_addr, MemoryChunk::kPointersFromHereAreInterestingMask,
+                kZero, &exit);
+  JumpIfSmi(src, &exit);
+  CheckPageFlag(src, MemoryChunk::kPointersToHereAreInterestingMask, eq, &exit);
+
+  Operand offset_op = Operand(offset_imm);
+  UseScratchRegisterScope temps(this);
+  if (offset_reg.is_valid()) {
+    Register scratch = temps.Acquire();
+    bstrpick_d(scratch, offset_reg, 31, 0);
+    offset_op = Operand(scratch);
+  }
+  CallRecordWriteStubSaveRegisters(dst_addr, offset_op, SaveFPRegsMode::kSave,
+                                   StubCallMode::kCallWasmRuntimeStub);
+  bind(&exit);
 }
 
 #define ASSEMBLE_ATOMIC_BINOP_EXT(load_linked, store_conditional, size, \
@@ -1063,7 +1129,6 @@ void LiftoffAssembler::MoveStackValue(uint32_t dst_offset, uint32_t src_offset,
     case kI64:
     case kRefNull:
     case kRef:
-    case kRtt:
     case kF64:
       Ld_d(scratch, liftoff::GetStackSlot(src_offset));
       St_d(scratch, liftoff::GetStackSlot(dst_offset));
@@ -1100,7 +1165,6 @@ void LiftoffAssembler::Spill(int offset, LiftoffRegister reg, ValueKind kind) {
     case kI64:
     case kRef:
     case kRefNull:
-    case kRtt:
       St_d(reg.gp(), dst);
       break;
     case kF32:
@@ -1153,8 +1217,6 @@ void LiftoffAssembler::Fill(LiftoffRegister reg, int offset, ValueKind kind) {
     case kI64:
     case kRef:
     case kRefNull:
-    // TODO(LOONG_dev): LOONG64 Check, MIPS64 dosn't need, ARM64/LOONG64 need?
-    case kRtt:
       Ld_d(reg.gp(), src);
       break;
     case kF32:
@@ -1579,14 +1641,12 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
       MacroAssembler::bstrpick_w(dst.gp(), src.gp(), 31, 0);
       return true;
     case kExprI32SConvertF32: {
-      LiftoffRegister rounded = GetUnusedRegister(kFpReg, LiftoffRegList{src});
-      LiftoffRegister converted_back =
-          GetUnusedRegister(kFpReg, LiftoffRegList{src, rounded});
+      DoubleRegister rounded = kScratchDoubleReg;
 
       // Real conversion.
-      MacroAssembler::Trunc_s(rounded.fp(), src.fp());
-      ftintrz_w_s(kScratchDoubleReg, rounded.fp());
-      movfr2gr_s(dst.gp(), kScratchDoubleReg);
+      MacroAssembler::Trunc_s(rounded, src.fp());
+      ftintrz_w_s(kScratchDoubleReg2, rounded);
+      movfr2gr_s(dst.gp(), kScratchDoubleReg2);
       // Avoid INT32_MAX as an overflow indicator and use INT32_MIN instead,
       // because INT32_MIN allows easier out-of-bounds detection.
       MacroAssembler::Add_w(kScratchReg, dst.gp(), 1);
@@ -1594,60 +1654,54 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
       MacroAssembler::Movn(dst.gp(), kScratchReg, kScratchReg2);
 
       // Checking if trap.
-      movgr2fr_w(kScratchDoubleReg, dst.gp());
-      ffint_s_w(converted_back.fp(), kScratchDoubleReg);
-      MacroAssembler::CompareF32(rounded.fp(), converted_back.fp(), CEQ);
+      movgr2fr_w(kScratchDoubleReg2, dst.gp());
+      ffint_s_w(kScratchDoubleReg2, kScratchDoubleReg2);
+      MacroAssembler::CompareF32(rounded, kScratchDoubleReg2, CEQ);
       MacroAssembler::BranchFalseF(trap);
       return true;
     }
     case kExprI32UConvertF32: {
-      LiftoffRegister rounded = GetUnusedRegister(kFpReg, LiftoffRegList{src});
-      LiftoffRegister converted_back =
-          GetUnusedRegister(kFpReg, LiftoffRegList{src, rounded});
+      DoubleRegister rounded = kScratchDoubleReg;
 
       // Real conversion.
-      MacroAssembler::Trunc_s(rounded.fp(), src.fp());
-      MacroAssembler::Ftintrz_uw_s(dst.gp(), rounded.fp(), kScratchDoubleReg);
+      MacroAssembler::Trunc_s(rounded, src.fp());
+      MacroAssembler::Ftintrz_uw_s(dst.gp(), rounded, kScratchDoubleReg2);
       // Avoid UINT32_MAX as an overflow indicator and use 0 instead,
       // because 0 allows easier out-of-bounds detection.
       MacroAssembler::Add_w(kScratchReg, dst.gp(), 1);
       MacroAssembler::Movz(dst.gp(), zero_reg, kScratchReg);
 
       // Checking if trap.
-      MacroAssembler::Ffint_d_uw(converted_back.fp(), dst.gp());
-      fcvt_s_d(converted_back.fp(), converted_back.fp());
-      MacroAssembler::CompareF32(rounded.fp(), converted_back.fp(), CEQ);
+      MacroAssembler::Ffint_d_uw(kScratchDoubleReg2, dst.gp());
+      fcvt_s_d(kScratchDoubleReg2, kScratchDoubleReg2);
+      MacroAssembler::CompareF32(rounded, kScratchDoubleReg2, CEQ);
       MacroAssembler::BranchFalseF(trap);
       return true;
     }
     case kExprI32SConvertF64: {
-      LiftoffRegister rounded = GetUnusedRegister(kFpReg, LiftoffRegList{src});
-      LiftoffRegister converted_back =
-          GetUnusedRegister(kFpReg, LiftoffRegList{src, rounded});
+      DoubleRegister rounded = kScratchDoubleReg;
 
       // Real conversion.
-      MacroAssembler::Trunc_d(rounded.fp(), src.fp());
-      ftintrz_w_d(kScratchDoubleReg, rounded.fp());
-      movfr2gr_s(dst.gp(), kScratchDoubleReg);
+      MacroAssembler::Trunc_d(rounded, src.fp());
+      ftintrz_w_d(kScratchDoubleReg2, rounded);
+      movfr2gr_s(dst.gp(), kScratchDoubleReg2);
 
       // Checking if trap.
-      ffint_d_w(converted_back.fp(), kScratchDoubleReg);
-      MacroAssembler::CompareF64(rounded.fp(), converted_back.fp(), CEQ);
+      ffint_d_w(kScratchDoubleReg2, kScratchDoubleReg2);
+      MacroAssembler::CompareF64(rounded, kScratchDoubleReg2, CEQ);
       MacroAssembler::BranchFalseF(trap);
       return true;
     }
     case kExprI32UConvertF64: {
-      LiftoffRegister rounded = GetUnusedRegister(kFpReg, LiftoffRegList{src});
-      LiftoffRegister converted_back =
-          GetUnusedRegister(kFpReg, LiftoffRegList{src, rounded});
+      DoubleRegister rounded = kScratchDoubleReg;
 
       // Real conversion.
-      MacroAssembler::Trunc_d(rounded.fp(), src.fp());
-      MacroAssembler::Ftintrz_uw_d(dst.gp(), rounded.fp(), kScratchDoubleReg);
+      MacroAssembler::Trunc_d(rounded, src.fp());
+      MacroAssembler::Ftintrz_uw_d(dst.gp(), rounded, kScratchDoubleReg2);
 
       // Checking if trap.
-      MacroAssembler::Ffint_d_uw(converted_back.fp(), dst.gp());
-      MacroAssembler::CompareF64(rounded.fp(), converted_back.fp(), CEQ);
+      MacroAssembler::Ffint_d_uw(kScratchDoubleReg2, dst.gp());
+      MacroAssembler::CompareF64(rounded, kScratchDoubleReg2, CEQ);
       MacroAssembler::BranchFalseF(trap);
       return true;
     }
@@ -1661,14 +1715,12 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
       MacroAssembler::bstrpick_d(dst.gp(), src.gp(), 31, 0);
       return true;
     case kExprI64SConvertF32: {
-      LiftoffRegister rounded = GetUnusedRegister(kFpReg, LiftoffRegList{src});
-      LiftoffRegister converted_back =
-          GetUnusedRegister(kFpReg, LiftoffRegList{src, rounded});
+      DoubleRegister rounded = kScratchDoubleReg;
 
       // Real conversion.
-      MacroAssembler::Trunc_s(rounded.fp(), src.fp());
-      ftintrz_l_s(kScratchDoubleReg, rounded.fp());
-      movfr2gr_d(dst.gp(), kScratchDoubleReg);
+      MacroAssembler::Trunc_s(rounded, src.fp());
+      ftintrz_l_s(kScratchDoubleReg2, rounded);
+      movfr2gr_d(dst.gp(), kScratchDoubleReg2);
       // Avoid INT64_MAX as an overflow indicator and use INT64_MIN instead,
       // because INT64_MIN allows easier out-of-bounds detection.
       MacroAssembler::Add_d(kScratchReg, dst.gp(), 1);
@@ -1676,9 +1728,9 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
       MacroAssembler::Movn(dst.gp(), kScratchReg, kScratchReg2);
 
       // Checking if trap.
-      movgr2fr_d(kScratchDoubleReg, dst.gp());
-      ffint_s_l(converted_back.fp(), kScratchDoubleReg);
-      MacroAssembler::CompareF32(rounded.fp(), converted_back.fp(), CEQ);
+      movgr2fr_d(kScratchDoubleReg2, dst.gp());
+      ffint_s_l(kScratchDoubleReg2, kScratchDoubleReg2);
+      MacroAssembler::CompareF32(rounded, kScratchDoubleReg2, CEQ);
       MacroAssembler::BranchFalseF(trap);
       return true;
     }
@@ -1692,14 +1744,12 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
       return true;
     }
     case kExprI64SConvertF64: {
-      LiftoffRegister rounded = GetUnusedRegister(kFpReg, LiftoffRegList{src});
-      LiftoffRegister converted_back =
-          GetUnusedRegister(kFpReg, LiftoffRegList{src, rounded});
+      DoubleRegister rounded = kScratchDoubleReg;
 
       // Real conversion.
-      MacroAssembler::Trunc_d(rounded.fp(), src.fp());
-      ftintrz_l_d(kScratchDoubleReg, rounded.fp());
-      movfr2gr_d(dst.gp(), kScratchDoubleReg);
+      MacroAssembler::Trunc_d(rounded, src.fp());
+      ftintrz_l_d(kScratchDoubleReg2, rounded);
+      movfr2gr_d(dst.gp(), kScratchDoubleReg2);
       // Avoid INT64_MAX as an overflow indicator and use INT64_MIN instead,
       // because INT64_MIN allows easier out-of-bounds detection.
       MacroAssembler::Add_d(kScratchReg, dst.gp(), 1);
@@ -1707,9 +1757,9 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
       MacroAssembler::Movn(dst.gp(), kScratchReg, kScratchReg2);
 
       // Checking if trap.
-      movgr2fr_d(kScratchDoubleReg, dst.gp());
-      ffint_d_l(converted_back.fp(), kScratchDoubleReg);
-      MacroAssembler::CompareF64(rounded.fp(), converted_back.fp(), CEQ);
+      movgr2fr_d(kScratchDoubleReg2, dst.gp());
+      ffint_d_l(kScratchDoubleReg2, kScratchDoubleReg2);
+      MacroAssembler::CompareF64(rounded, kScratchDoubleReg2, CEQ);
       MacroAssembler::BranchFalseF(trap);
       return true;
     }
@@ -1865,8 +1915,7 @@ void LiftoffAssembler::emit_cond_jump(Condition cond, Label* label,
     if (kind == kI64) {
       MacroAssembler::Branch(label, cond, lhs, Operand(rhs));
     } else {
-      DCHECK((kind == kI32) || (kind == kRtt) || (kind == kRef) ||
-             (kind == kRefNull));
+      DCHECK((kind == kI32) || (kind == kRef) || (kind == kRefNull));
       MacroAssembler::CompareTaggedAndBranch(label, cond, lhs, Operand(rhs));
     }
   }
@@ -2022,7 +2071,8 @@ void LiftoffAssembler::LoadTransform(LiftoffRegister dst, Register src_addr,
                                      Register offset_reg, uintptr_t offset_imm,
                                      LoadType type,
                                      LoadTransformationKind transform,
-                                     uint32_t* protected_load_pc) {
+                                     uint32_t* protected_load_pc,
+                                     bool i64_offset) {
   bailout(kSimd, "load extend and load splat unimplemented");
 }
 
@@ -3549,21 +3599,17 @@ void LiftoffAssembler::TailCallNativeWasmCode(Address addr) {
 void LiftoffAssembler::CallIndirect(const ValueKindSig* sig,
                                     compiler::CallDescriptor* call_descriptor,
                                     Register target) {
-  if (target == no_reg) {
-    Pop(kScratchReg);
-    Call(kScratchReg);
-  } else {
-    Call(target);
-  }
+  // For loong64, we have more cache registers than wasm parameters. That means
+  // that target will always be in a register.
+  DCHECK(target.is_valid());
+  CallWasmCodePointer(target, call_descriptor->signature_hash());
 }
 
-void LiftoffAssembler::TailCallIndirect(Register target) {
-  if (target == no_reg) {
-    Pop(kScratchReg);
-    Jump(kScratchReg);
-  } else {
-    Jump(target);
-  }
+void LiftoffAssembler::TailCallIndirect(
+    compiler::CallDescriptor* call_descriptor, Register target) {
+  DCHECK(target.is_valid());
+  CallWasmCodePointer(target, call_descriptor->signature_hash(),
+                      CallJumpMode::kTailCall);
 }
 
 void LiftoffAssembler::CallBuiltin(Builtin builtin) {
@@ -3583,8 +3629,8 @@ void LiftoffAssembler::DeallocateStackSlot(uint32_t size) {
 
 void LiftoffAssembler::MaybeOSR() {}
 
-void LiftoffAssembler::emit_set_if_nan(Register dst, FPURegister src,
-                                       ValueKind kind) {
+void LiftoffAssembler::emit_store_nonzero_if_nan(Register dst, FPURegister src,
+                                                 ValueKind kind) {
   UseScratchRegisterScope temps(this);
   Register scratch = temps.Acquire();
   Label not_nan;
@@ -3600,11 +3646,16 @@ void LiftoffAssembler::emit_set_if_nan(Register dst, FPURegister src,
   bind(&not_nan);
 }
 
-void LiftoffAssembler::emit_s128_set_if_nan(Register dst, LiftoffRegister src,
-                                            Register tmp_gp,
-                                            LiftoffRegister tmp_s128,
-                                            ValueKind lane_kind) {
+void LiftoffAssembler::emit_s128_store_nonzero_if_nan(Register dst,
+                                                      LiftoffRegister src,
+                                                      Register tmp_gp,
+                                                      LiftoffRegister tmp_s128,
+                                                      ValueKind lane_kind) {
   UNIMPLEMENTED();
+}
+
+void LiftoffAssembler::emit_store_nonzero(Register dst) {
+  St_d(dst, MemOperand(dst, 0));
 }
 
 void LiftoffStackSlots::Construct(int param_slots) {

@@ -41,7 +41,7 @@ MaybeLocal<Module> ResolveCallback(Local<Context> context,
                                    Local<FixedArray> import_attributes,
                                    Local<Module> referrer) {
   CHECK_EQ(0, import_attributes->Length());
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   if (specifier->StrictEquals(
           String::NewFromUtf8(isolate, "./dep1.js").ToLocalChecked())) {
     return dep1_global.Get(isolate);
@@ -70,6 +70,7 @@ TEST_F(ModuleTest, ModuleInstantiationFailures1) {
     CHECK_EQ(Module::kUninstantiated, module->GetStatus());
     Local<FixedArray> module_requests = module->GetModuleRequests();
     CHECK_EQ(2, module_requests->Length());
+    CHECK(module_requests->Get(context(), 0)->IsModuleRequest());
     Local<ModuleRequest> module_request_0 =
         module_requests->Get(context(), 0).As<ModuleRequest>();
     CHECK(
@@ -81,6 +82,7 @@ TEST_F(ModuleTest, ModuleInstantiationFailures1) {
     CHECK_EQ(7, loc.GetColumnNumber());
     CHECK_EQ(0, module_request_0->GetImportAttributes()->Length());
 
+    CHECK(module_requests->Get(context(), 1)->IsModuleRequest());
     Local<ModuleRequest> module_request_1 =
         module_requests->Get(context(), 1).As<ModuleRequest>();
     CHECK(
@@ -141,7 +143,7 @@ static v8::Global<Module> barModule_global;
 MaybeLocal<Module> ResolveCallbackWithImportAttributes(
     Local<Context> context, Local<String> specifier,
     Local<FixedArray> import_attributes, Local<Module> referrer) {
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   if (specifier->StrictEquals(
           String::NewFromUtf8(isolate, "./foo.js").ToLocalChecked())) {
     CHECK_EQ(0, import_attributes->Length());
@@ -270,9 +272,9 @@ TEST_F(ModuleTest, ModuleInstantiationWithImportAttributes) {
   // gmock-support.h, we could use IsInt32 to replace
   // this.
   {
-    Local<Value> result = RunJS("Object.expando");
-    CHECK(result->IsInt32());
-    CHECK_EQ(42, result->Int32Value(context()).FromJust());
+    Local<Value> res = RunJS("Object.expando");
+    CHECK(res->IsInt32());
+    CHECK_EQ(42, res->Int32Value(context()).FromJust());
   }
   CHECK(!try_catch.HasCaught());
   i::v8_flags.harmony_import_attributes = prev_import_attributes;
@@ -371,7 +373,7 @@ static MaybeLocal<Module> CompileSpecifierAsModuleResolveCallback(
     Local<Context> context, Local<String> specifier,
     Local<FixedArray> import_attributes, Local<Module> referrer) {
   CHECK_EQ(0, import_attributes->Length());
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   ScriptOrigin origin = ModuleOrigin(
       String::NewFromUtf8(isolate, "module.js").ToLocalChecked(), isolate);
   ScriptCompiler::Source source(specifier, origin);
@@ -407,9 +409,9 @@ TEST_F(ModuleTest, ModuleEvaluation) {
   // gmock-support.h, we could use IsInt32 to replace
   // this.
   {
-    Local<Value> result = RunJS("Object.expando");
-    CHECK(result->IsInt32());
-    CHECK_EQ(10, result->Int32Value(context()).FromJust());
+    Local<Value> res = RunJS("Object.expando");
+    CHECK(res->IsInt32());
+    CHECK_EQ(10, res->Int32Value(context()).FromJust());
   }
   CHECK(!try_catch.HasCaught());
 }
@@ -443,9 +445,9 @@ TEST_F(ModuleTest, ModuleEvaluationError1) {
     // gmock-support.h, we could use IsInt32 to replace
     // this.
     {
-      Local<Value> result = RunJS("Object.x");
-      CHECK(result->IsInt32());
-      CHECK_EQ(1, result->Int32Value(context()).FromJust());
+      Local<Value> res = RunJS("Object.x");
+      CHECK(res->IsInt32());
+      CHECK_EQ(1, res->Int32Value(context()).FromJust());
     }
     // With top level await, we do not throw and errored evaluation returns
     // a rejected promise with the exception.
@@ -465,9 +467,9 @@ TEST_F(ModuleTest, ModuleEvaluationError1) {
     // gmock-support.h, we could use IsInt32 to replace
     // this.
     {
-      Local<Value> result = RunJS("Object.x");
-      CHECK(result->IsInt32());
-      CHECK_EQ(1, result->Int32Value(context()).FromJust());
+      Local<Value> res = RunJS("Object.x");
+      CHECK(res->IsInt32());
+      CHECK_EQ(1, res->Int32Value(context()).FromJust());
     }
 
     // With top level await, we do not throw and errored evaluation returns
@@ -487,7 +489,7 @@ MaybeLocal<Module> ResolveCallbackForModuleEvaluationError2(
     Local<Context> context, Local<String> specifier,
     Local<FixedArray> import_attributes, Local<Module> referrer) {
   CHECK_EQ(0, import_attributes->Length());
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   if (specifier->StrictEquals(
           String::NewFromUtf8(isolate, "./failure.js").ToLocalChecked())) {
     return failure_module_global.Get(isolate);
@@ -888,7 +890,7 @@ v8::MaybeLocal<v8::Promise> HostImportModuleDynamicallyCallbackResolve(
     Local<Context> context, Local<Data> host_defined_options,
     Local<Value> resource_name, Local<String> specifier,
     Local<FixedArray> import_attributes) {
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   Local<v8::Promise::Resolver> resolver =
       v8::Promise::Resolver::New(context).ToLocalChecked();
   DynamicImportData* data =
@@ -901,7 +903,7 @@ v8::MaybeLocal<v8::Promise> HostImportModuleDynamicallyCallbackReject(
     Local<Context> context, Local<Data> host_defined_options,
     Local<Value> resource_name, Local<String> specifier,
     Local<FixedArray> import_attributes) {
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   Local<v8::Promise::Resolver> resolver =
       v8::Promise::Resolver::New(context).ToLocalChecked();
   DynamicImportData* data =
@@ -1078,7 +1080,7 @@ MaybeLocal<Module> ResolveCallbackForIsGraphAsyncTopLevelAwait(
     Local<Context> context, Local<String> specifier,
     Local<FixedArray> import_attributes, Local<Module> referrer) {
   CHECK_EQ(0, import_attributes->Length());
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   if (specifier->StrictEquals(
           String::NewFromUtf8(isolate, "./async_leaf.js").ToLocalChecked())) {
     return async_leaf_module_global.Get(isolate);

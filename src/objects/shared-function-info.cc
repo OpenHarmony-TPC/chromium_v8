@@ -37,7 +37,7 @@ void SharedFunctionInfo::Init(ReadOnlyRoots ro_roots, int unique_id) {
   DisallowGarbageCollection no_gc;
 
   // Set the function data to the "illegal" builtin. Ideally we'd use some sort
-  // of "uninitialized" marker here, but it's cheaper to use a valid buitin and
+  // of "uninitialized" marker here, but it's cheaper to use a valid builtin and
   // avoid having to do uninitialized checks elsewhere.
   set_builtin_id(Builtin::kIllegal);
 
@@ -51,7 +51,7 @@ void SharedFunctionInfo::Init(ReadOnlyRoots ro_roots, int unique_id) {
   set_raw_outer_scope_info_or_feedback_metadata(ro_roots.the_hole_value(),
                                                 SKIP_WRITE_BARRIER);
   set_script(ro_roots.undefined_value(), kReleaseStore, SKIP_WRITE_BARRIER);
-  set_function_literal_id(kInvalidInfoId);
+  set_function_literal_id(kInvalidInfoId, kRelaxedStore);
   set_unique_id(unique_id);
 
   // Set integer fields (smi or int, depending on the architecture).
@@ -72,11 +72,8 @@ void SharedFunctionInfo::Init(ReadOnlyRoots ro_roots, int unique_id) {
   clear_padding();
 }
 
+// LINT.IfChange(GetSharedFunctionInfoCode)
 Tagged<Code> SharedFunctionInfo::GetCode(Isolate* isolate) const {
-  // ======
-  // NOTE: This chain of checks MUST be kept in sync with the equivalent CSA
-  // GetSharedFunctionInfoCode method in code-stub-assembler.cc.
-  // ======
 
   Tagged<Object> data = GetTrustedData(isolate);
   if (data != Smi::zero()) {
@@ -150,6 +147,7 @@ Tagged<Code> SharedFunctionInfo::GetCode(Isolate* isolate) const {
 
   UNREACHABLE();
 }
+// LINT.ThenChange(/src/codegen/code-stub-assembler.cc:GetSharedFunctionInfoCode)
 
 SharedFunctionInfo::ScriptIterator::ScriptIterator(Isolate* isolate,
                                                    Tagged<Script> script)
@@ -250,7 +248,8 @@ void SharedFunctionInfo::CopyFrom(Tagged<SharedFunctionInfo> other,
   set_expected_nof_properties(other->expected_nof_properties());
   set_flags2(other->flags2());
   set_flags(other->flags(kRelaxedLoad), kRelaxedStore);
-  set_function_literal_id(other->function_literal_id());
+  set_function_literal_id(other->function_literal_id(kRelaxedLoad),
+                          kRelaxedStore);
   set_unique_id(other->unique_id());
   set_age(0);
 
@@ -280,7 +279,8 @@ bool SharedFunctionInfo::HasDebugInfo(Isolate* isolate) const {
 int SharedFunctionInfo::UniqueIdInScript() const {
   // Script scopes start "before" the script to avoid clashing with a scope that
   // starts on character 0.
-  if (function_literal_id() == kFunctionLiteralIdTopLevel) return -2;
+  if (function_literal_id(kRelaxedLoad) == kFunctionLiteralIdTopLevel)
+    return -2;
   // Wrapped functions start before the function body, but after the script
   // start, to avoid clashing with a scope starting on character 0.
   if (syntax_kind() == FunctionSyntaxKind::kWrapped) return -1;
@@ -412,7 +412,7 @@ void SharedFunctionInfo::DiscardCompiled(
   int start_position = shared_info->StartPosition();
   int end_position = shared_info->EndPosition();
 
-  MaybeHandle<UncompiledData> data;
+  MaybeDirectHandle<UncompiledData> data;
   if (!shared_info->HasUncompiledDataWithPreparseData()) {
     // Create a new UncompiledData, without pre-parsed scope.
     data = isolate->factory()->NewUncompiledDataWithoutPreparseData(
@@ -440,7 +440,7 @@ void SharedFunctionInfo::DiscardCompiled(
 }
 
 // static
-Handle<Object> SharedFunctionInfo::GetSourceCode(
+DirectHandle<Object> SharedFunctionInfo::GetSourceCode(
     Isolate* isolate, DirectHandle<SharedFunctionInfo> shared) {
   if (!shared->HasSourceCode()) return isolate->factory()->undefined_value();
   Handle<String> source(Cast<String>(Cast<Script>(shared->script())->source()),
@@ -464,14 +464,15 @@ Handle<Object> SharedFunctionInfo::GetSourceCodeHarmony(
   DCHECK(!shared->name_should_print_as_anonymous());
   IncrementalStringBuilder builder(isolate);
   builder.AppendCStringLiteral("function ");
-  builder.AppendString(Handle<String>(shared->Name(), isolate));
+  builder.AppendString(DirectHandle<String>(shared->Name(), isolate));
   builder.AppendCharacter('(');
   DirectHandle<FixedArray> args(
       Cast<Script>(shared->script())->wrapped_arguments(), isolate);
   int argc = args->length();
   for (int i = 0; i < argc; i++) {
     if (i > 0) builder.AppendCStringLiteral(", ");
-    builder.AppendString(Handle<String>(Cast<String>(args->get(i)), isolate));
+    builder.AppendString(
+        DirectHandle<String>(Cast<String>(args->get(i)), isolate));
   }
   builder.AppendCStringLiteral(") {\n");
   builder.AppendString(source);
@@ -523,8 +524,9 @@ void SharedFunctionInfo::DisableOptimization(Isolate* isolate,
     CodeKind kind = abstract_code(isolate)->kind(isolate);
     CHECK(kind == CodeKind::INTERPRETED_FUNCTION || kind == CodeKind::BUILTIN);
   }
-  PROFILE(isolate, CodeDisableOptEvent(handle(abstract_code(isolate), isolate),
-                                       handle(*this, isolate)));
+  PROFILE(isolate,
+          CodeDisableOptEvent(direct_handle(abstract_code(isolate), isolate),
+                              direct_handle(*this, isolate)));
   if (v8_flags.trace_opt) {
     CodeTracer::Scope scope(isolate->GetCodeTracer());
     PrintF(scope.file(), "[disabled optimization for ");
@@ -543,7 +545,8 @@ void SharedFunctionInfo::InitFromFunctionLiteral(IsolateT* isolate,
   {
     DisallowGarbageCollection no_gc;
     Tagged<SharedFunctionInfo> raw_sfi = *lit->shared_function_info();
-    DCHECK_EQ(raw_sfi->function_literal_id(), lit->function_literal_id());
+    DCHECK_EQ(raw_sfi->function_literal_id(kRelaxedLoad),
+              lit->function_literal_id());
     // When adding fields here, make sure DeclarationScope::AnalyzePartially is
     // updated accordingly.
     raw_sfi->set_internal_formal_parameter_count(
@@ -576,6 +579,9 @@ void SharedFunctionInfo::InitFromFunctionLiteral(IsolateT* isolate,
       raw_sfi->set_private_name_lookup_skips_outer_class(
           lit->scope()->private_name_lookup_skips_outer_class());
     }
+    if (lit->scope()->is_reparsed()) {
+      raw_sfi->SetScopeInfo(*lit->scope()->scope_info());
+    }
 
     raw_sfi->set_length(lit->function_length());
 
@@ -603,7 +609,7 @@ template <typename IsolateT>
 void SharedFunctionInfo::CreateAndSetUncompiledData(IsolateT* isolate,
                                                     FunctionLiteral* lit) {
   DCHECK(!lit->shared_function_info()->HasUncompiledData());
-  Handle<UncompiledData> data;
+  DirectHandle<UncompiledData> data;
   ProducedPreparseData* scope_data = lit->produced_preparse_data();
   if (scope_data != nullptr) {
     Handle<PreparseData> preparse_data = scope_data->Serialize(isolate);
@@ -761,12 +767,17 @@ int SharedFunctionInfo::EndPosition() const {
 void SharedFunctionInfo::UpdateFromFunctionLiteralForLiveEdit(
     IsolateForSandbox isolate, FunctionLiteral* lit) {
   Tagged<Object> maybe_scope_info = name_or_scope_info(kAcquireLoad);
+  // TODO(crbug.com/401059828): remove once crashes are gone.
+  set_live_edited(true);
+
   if (IsScopeInfo(maybe_scope_info)) {
     // Updating the ScopeInfo is safe since they are identical modulo
     // source positions.
     Tagged<ScopeInfo> new_scope_info = *lit->scope()->scope_info();
-    DCHECK(new_scope_info->Equals(Cast<ScopeInfo>(maybe_scope_info), true));
-    SetScopeInfo(new_scope_info);
+    Tagged<ScopeInfo> old_scope_info = Cast<ScopeInfo>(maybe_scope_info);
+    DCHECK(new_scope_info->Equals(old_scope_info, true));
+    old_scope_info->SetPositionInfo(new_scope_info->position_info_start(),
+                                    new_scope_info->position_info_end());
   } else if (!is_compiled()) {
     CHECK(HasUncompiledData());
     if (HasUncompiledDataWithPreparseData()) {
@@ -815,7 +826,7 @@ void SharedFunctionInfo::EnsureBytecodeArrayAvailable(
 
 // static
 void SharedFunctionInfo::EnsureSourcePositionsAvailable(
-    Isolate* isolate, Handle<SharedFunctionInfo> shared_info) {
+    Isolate* isolate, DirectHandle<SharedFunctionInfo> shared_info) {
   if (shared_info->CanCollectSourcePosition(isolate)) {
     std::optional<Isolate::ExceptionScope> exception_scope;
     if (isolate->has_exception()) {
@@ -836,8 +847,7 @@ void SharedFunctionInfo::InstallDebugBytecode(
 
   {
     DisallowGarbageCollection no_gc;
-    base::SharedMutexGuard<base::kExclusive> mutex_guard(
-        isolate->shared_function_info_access());
+    base::MutexGuard guard(isolate->shared_function_info_access());
     Tagged<DebugInfo> debug_info = shared->GetDebugInfo(isolate);
     debug_info->set_original_bytecode_array(*original_bytecode_array,
                                             kReleaseStore);
@@ -850,8 +860,7 @@ void SharedFunctionInfo::InstallDebugBytecode(
 void SharedFunctionInfo::UninstallDebugBytecode(
     Tagged<SharedFunctionInfo> shared, Isolate* isolate) {
   DisallowGarbageCollection no_gc;
-  base::SharedMutexGuard<base::kExclusive> mutex_guard(
-      isolate->shared_function_info_access());
+  base::MutexGuard guard(isolate->shared_function_info_access());
   Tagged<DebugInfo> debug_info = shared->GetDebugInfo(isolate);
   Tagged<BytecodeArray> original_bytecode_array =
       debug_info->OriginalBytecodeArray(isolate);
@@ -885,5 +894,39 @@ bool SharedFunctionInfo::UniqueIdsAreUnique(Isolate* isolate) {
   return true;
 }
 #endif  // DEBUG
+
+std::ostream& operator<<(std::ostream& os,
+                         SharedFunctionInfo::Inlineability i) {
+  switch (i) {
+    case SharedFunctionInfo::Inlineability::kHasNoScript:
+      os << "has no script";
+      break;
+    case SharedFunctionInfo::Inlineability::kNeedsBinaryCoverage:
+      os << "needs binary coverage";
+      break;
+    case SharedFunctionInfo::Inlineability::kIsBuiltin:
+      os << "is builtin";
+      break;
+    case SharedFunctionInfo::Inlineability::kIsNotUserCode:
+      os << "is not user code";
+      break;
+    case SharedFunctionInfo::Inlineability::kHasNoBytecode:
+      os << "has no bytecode";
+      break;
+    case SharedFunctionInfo::Inlineability::kExceedsBytecodeLimit:
+      os << "exceeds bytecode limit";
+      break;
+    case SharedFunctionInfo::Inlineability::kMayContainBreakPoints:
+      os << "may contain breakpoints";
+      break;
+    case SharedFunctionInfo::Inlineability::kHasOptimizationDisabled:
+      os << "has optimization disabled";
+      break;
+    case SharedFunctionInfo::Inlineability::kIsInlineable:
+      os << "is inlineable (!)";
+      break;
+  }
+  return os;
+}
 
 }  // namespace v8::internal

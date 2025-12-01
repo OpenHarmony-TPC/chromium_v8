@@ -2,8 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "test/common/flag-utils.h"
+#if BUILDFLAG(IS_OHOS)
+#pragma pack(push, 8)
 #include "test/common/node-observer-tester.h"
+#pragma pack(pop)
+#else
+#include "test/common/node-observer-tester.h"
+#endif
 #include "test/unittests/test-utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 

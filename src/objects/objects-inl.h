@@ -1,16 +1,18 @@
 // Copyright 2012 the V8 project authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-//
+
+#ifndef V8_OBJECTS_OBJECTS_INL_H_
+#define V8_OBJECTS_OBJECTS_INL_H_
+
 // Review notes:
 //
 // - The use of macros in these inline functions may seem superfluous
 // but it is absolutely needed to make sure gcc generates optimal
 // code. gcc is not happy when attempting to inline too deep.
-//
 
-#ifndef V8_OBJECTS_OBJECTS_INL_H_
-#define V8_OBJECTS_OBJECTS_INL_H_
+#include "src/objects/objects.h"
+// Include the non-inl header before the rest of the headers.
 
 #include "include/v8-internal.h"
 #include "src/base/bits.h"
@@ -26,6 +28,7 @@
 #include "src/heap/heap-write-barrier-inl.h"
 #include "src/heap/read-only-heap-inl.h"
 #include "src/numbers/conversions-inl.h"
+#include "src/objects/allocation-site.h"
 #include "src/objects/casting.h"
 #include "src/objects/deoptimization-data.h"
 #include "src/objects/heap-number-inl.h"
@@ -36,12 +39,13 @@
 #include "src/objects/keys.h"
 #include "src/objects/literal-objects.h"
 #include "src/objects/lookup-inl.h"  // TODO(jkummerow): Drop.
+#include "src/objects/number-string-cache-inl.h"
 #include "src/objects/object-list-macros.h"
-#include "src/objects/objects.h"
 #include "src/objects/oddball-inl.h"
 #include "src/objects/property-details.h"
 #include "src/objects/property.h"
 #include "src/objects/regexp-match-info-inl.h"
+#include "src/objects/scope-info-inl.h"
 #include "src/objects/shared-function-info.h"
 #include "src/objects/slots-inl.h"
 #include "src/objects/slots.h"
@@ -90,11 +94,6 @@ bool IsTaggedIndex(Tagged<Object> obj) {
          TaggedIndex::IsValid(Tagged<TaggedIndex>(obj.ptr()).value());
 }
 
-bool IsJSObjectThatCanBeTrackedAsPrototype(Tagged<Object> obj) {
-  return IsHeapObject(obj) &&
-         IsJSObjectThatCanBeTrackedAsPrototype(Cast<HeapObject>(obj));
-}
-
 #define IS_TYPE_FUNCTION_DEF(type_)                                          \
   bool Is##type_(Tagged<Object> obj) {                                       \
     return IsHeapObject(obj) && Is##type_(Cast<HeapObject>(obj));            \
@@ -136,10 +135,10 @@ bool IsAnyHole(Tagged<Object> obj) { return IsHole(obj); }
     return Is##Type(obj, ReadOnlyRoots(isolate));                \
   }                                                              \
   bool Is##Type(Tagged<Object> obj) {                            \
-    return IsHeapObject(obj) && Is##Type(Cast<HeapObject>(obj)); \
+    return Is##Type(obj, GetReadOnlyRoots());                    \
   }                                                              \
   bool Is##Type(Tagged<HeapObject> obj) {                        \
-    return Is##Type(obj, obj->GetReadOnlyRoots());               \
+    return Is##Type(obj, GetReadOnlyRoots());                    \
   }                                                              \
   bool Is##Type(HeapObject obj) {                                \
     static_assert(kTaggedCanConvertToRawObjects);                \
@@ -185,20 +184,22 @@ bool IsNullOrUndefined(Tagged<Object> obj, ReadOnlyRoots roots) {
 }
 
 bool IsNullOrUndefined(Tagged<Object> obj) {
-  return IsHeapObject(obj) && IsNullOrUndefined(Cast<HeapObject>(obj));
+  return IsNullOrUndefined(obj, GetReadOnlyRoots());
 }
 
 bool IsNullOrUndefined(Tagged<HeapObject> obj) {
-  return IsNullOrUndefined(obj, obj->GetReadOnlyRoots());
+  return IsNullOrUndefined(obj, GetReadOnlyRoots());
 }
 
 bool IsZero(Tagged<Object> obj) { return obj == Smi::zero(); }
 
 bool IsPublicSymbol(Tagged<Object> obj) {
-  return IsSymbol(obj) && !Cast<Symbol>(obj)->is_private();
+  Tagged<Symbol> symbol;
+  return TryCast<Symbol>(obj, &symbol) && !symbol->is_private();
 }
 bool IsPrivateSymbol(Tagged<Object> obj) {
-  return IsSymbol(obj) && Cast<Symbol>(obj)->is_private();
+  Tagged<Symbol> symbol;
+  return TryCast<Symbol>(obj, &symbol) && symbol->is_private();
 }
 
 bool IsNoSharedNameSentinel(Tagged<Object> obj) {
@@ -218,6 +219,7 @@ bool IsNoSharedNameSentinel(Tagged<Object> obj) {
   };
 HEAP_OBJECT_ORDINARY_TYPE_LIST(IS_HELPER_DEF)
 HEAP_OBJECT_TRUSTED_TYPE_LIST(IS_HELPER_DEF)
+VIRTUAL_OBJECT_TYPE_LIST(IS_HELPER_DEF)
 ODDBALL_LIST(IS_HELPER_DEF)
 
 #define IS_HELPER_DEF_STRUCT(NAME, Name, name) IS_HELPER_DEF(Name)
@@ -254,6 +256,14 @@ struct CastTraits<JSAny> {
     return IsPrimitive(value) || IsJSReceiver(value);
   }
 };
+template <>
+struct CastTraits<AllocationSiteWithWeakNext> {
+  template <typename From>
+  static inline bool AllowFrom(Tagged<From> value) {
+    Tagged<AllocationSite> site;
+    return TryCast<AllocationSite>(value, &site) && site->HasWeakNext();
+  }
+};
 
 template <>
 struct CastTraits<FieldType> {
@@ -288,16 +298,18 @@ template <>
 struct CastTraits<FreshlyAllocatedBigInt> : public CastTraits<BigInt> {};
 template <>
 struct CastTraits<JSIteratorResult> : public CastTraits<JSObject> {};
+template <>
+struct CastTraits<JSUint8ArraySetFromResult> : public CastTraits<JSObject> {};
 
 template <>
 struct CastTraits<DeoptimizationFrameTranslation>
     : public CastTraits<TrustedByteArray> {};
 
-template <class T, typename std::enable_if_t<
-                       (std::is_arithmetic_v<T> ||
-                        std::is_enum_v<T>)&&!std::is_floating_point_v<T>,
-                       int>>
-T HeapObject::Relaxed_ReadField(size_t offset) const {
+template <class T>
+T HeapObject::Relaxed_ReadField(size_t offset) const
+  requires((std::is_arithmetic_v<T> || std::is_enum_v<T>) &&
+           !std::is_floating_point_v<T>)
+{
   // Pointer compression causes types larger than kTaggedSize to be
   // unaligned. Atomic loads must be aligned.
   DCHECK_IMPLIES(COMPRESS_POINTERS_BOOL, sizeof(T) <= kTaggedSize);
@@ -306,11 +318,11 @@ T HeapObject::Relaxed_ReadField(size_t offset) const {
       reinterpret_cast<AtomicT*>(field_address(offset))));
 }
 
-template <class T, typename std::enable_if_t<
-                       (std::is_arithmetic_v<T> ||
-                        std::is_enum_v<T>)&&!std::is_floating_point_v<T>,
-                       int>>
-void HeapObject::Relaxed_WriteField(size_t offset, T value) {
+template <class T>
+void HeapObject::Relaxed_WriteField(size_t offset, T value)
+  requires((std::is_arithmetic_v<T> || std::is_enum_v<T>) &&
+           !std::is_floating_point_v<T>)
+{
   // Pointer compression causes types larger than kTaggedSize to be
   // unaligned. Atomic stores must be aligned.
   DCHECK_IMPLIES(COMPRESS_POINTERS_BOOL, sizeof(T) <= kTaggedSize);
@@ -320,11 +332,11 @@ void HeapObject::Relaxed_WriteField(size_t offset, T value) {
       static_cast<AtomicT>(value));
 }
 
-template <class T, typename std::enable_if_t<
-                       (std::is_arithmetic_v<T> ||
-                        std::is_enum_v<T>)&&!std::is_floating_point_v<T>,
-                       int>>
-T HeapObject::Acquire_ReadField(size_t offset) const {
+template <class T>
+T HeapObject::Acquire_ReadField(size_t offset) const
+  requires((std::is_arithmetic_v<T> || std::is_enum_v<T>) &&
+           !std::is_floating_point_v<T>)
+{
   // Pointer compression causes types larger than kTaggedSize to be
   // unaligned. Atomic loads must be aligned.
   DCHECK_IMPLIES(COMPRESS_POINTERS_BOOL, sizeof(T) <= kTaggedSize);
@@ -390,6 +402,11 @@ bool OutsideSandboxOrInReadonlySpace(Tagged<HeapObject> obj) {
 #endif
 }
 
+bool IsJSObjectThatCanBeTrackedAsPrototype(Tagged<Object> obj) {
+  return IsHeapObject(obj) &&
+         IsJSObjectThatCanBeTrackedAsPrototype(Cast<HeapObject>(obj));
+}
+
 bool IsJSObjectThatCanBeTrackedAsPrototype(Tagged<HeapObject> obj) {
   // Do not optimize objects in the shared heap because it is not
   // threadsafe. Objects in the shared heap have fixed layouts and their maps
@@ -397,14 +414,17 @@ bool IsJSObjectThatCanBeTrackedAsPrototype(Tagged<HeapObject> obj) {
   return IsJSObject(obj) && !HeapLayout::InWritableSharedSpace(*obj);
 }
 
-bool IsJSApiWrapperObject(Tagged<Map> map) {
-  const InstanceType instance_type = map->instance_type();
-  return InstanceTypeChecker::IsJSAPIObjectWithEmbedderSlots(instance_type) ||
-         InstanceTypeChecker::IsJSSpecialObject(instance_type);
+bool IsAnyObjectThatCanBeTrackedAsPrototype(Tagged<Object> obj) {
+  return IsHeapObject(obj) &&
+         IsAnyObjectThatCanBeTrackedAsPrototype(Cast<HeapObject>(obj));
 }
 
-bool IsJSApiWrapperObject(Tagged<HeapObject> js_obj) {
-  return IsJSApiWrapperObject(js_obj->map());
+bool IsAnyObjectThatCanBeTrackedAsPrototype(Tagged<HeapObject> obj) {
+  // Do not optimize objects in the shared heap because it is not
+  // threadsafe. Objects in the shared heap have fixed layouts and their maps
+  // never change.
+  return (IsJSObject(obj) || IsWasmObject(obj)) &&
+         !HeapLayout::InWritableSharedSpace(*obj);
 }
 
 DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsUniqueName) {
@@ -435,7 +455,7 @@ DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsConstructor) {
 }
 
 DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsSourceTextModuleInfo) {
-  return obj->map(cage_base) == obj->GetReadOnlyRoots().module_info_map();
+  return obj->map(cage_base) == GetReadOnlyRoots().module_info_map();
 }
 
 DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsConsString) {
@@ -613,7 +633,7 @@ bool IsPrimitive(Tagged<Object> obj, PtrComprCageBase cage_base) {
 }
 
 // static
-Maybe<bool> Object::IsArray(Handle<Object> object) {
+Maybe<bool> Object::IsArray(DirectHandle<Object> object) {
   if (IsSmi(*object)) return Just(false);
   auto heap_object = Cast<HeapObject>(object);
   if (IsJSArray(*heap_object)) return Just(true);
@@ -628,11 +648,15 @@ DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsUndetectable) {
 DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsAccessCheckNeeded) {
   if (IsJSGlobalProxy(obj, cage_base)) {
     const Tagged<JSGlobalProxy> proxy = Cast<JSGlobalProxy>(obj);
-    Tagged<JSGlobalObject> global =
-        proxy->GetIsolate()->context()->global_object();
-    return proxy->IsDetachedFrom(global);
+    Isolate* isolate = Isolate::Current();
+    Tagged<JSGlobalObject> global = isolate->context()->global_object();
+    return proxy->IsDetachedFrom(isolate, global);
   }
   return obj->map(cage_base)->is_access_check_needed();
+}
+
+DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsSmiStringCache) {
+  return IsFixedArray(obj);
 }
 
 #define MAKE_STRUCT_PREDICATE(NAME, Name, name)                             \
@@ -648,6 +672,12 @@ DEF_HEAP_OBJECT_PREDICATE(HeapObject, IsAccessCheckNeeded) {
   }                                                                         \
   bool Is##Name(HeapObject obj, PtrComprCageBase cage_base) {               \
     static_assert(kTaggedCanConvertToRawObjects);                           \
+    return Is##Name(Tagged<HeapObject>(obj), cage_base);                    \
+  }                                                                         \
+  bool Is##Name(const HeapObjectLayout* obj) {                              \
+    return Is##Name(Tagged<HeapObject>(obj));                               \
+  }                                                                         \
+  bool Is##Name(const HeapObjectLayout* obj, PtrComprCageBase cage_base) {  \
     return Is##Name(Tagged<HeapObject>(obj), cage_base);                    \
   }
 // static
@@ -670,6 +700,18 @@ double Object::NumberValue(Tagged<HeapNumber> obj) {
 }
 double Object::NumberValue(Tagged<Smi> obj) {
   return NumberValue(Cast<Number>(obj));
+}
+
+// static
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+Maybe<double> Object::IntegerValue(Isolate* isolate, HandleType<T> input) {
+  ASSIGN_RETURN_ON_EXCEPTION_VALUE(
+      isolate, input, ConvertToNumber(isolate, input), Nothing<double>());
+  if (IsSmi(*input)) {
+    return Just(static_cast<double>(Cast<Smi>(*input).value()));
+  }
+  return Just(DoubleToInteger(Cast<HeapNumber>(*input)->value()));
 }
 
 // static
@@ -729,8 +771,7 @@ Representation Object::OptimalRepresentation(Tagged<Object> obj,
   Tagged<HeapObject> heap_object = Cast<HeapObject>(obj);
   if (IsHeapNumber(heap_object, cage_base)) {
     return Representation::Double();
-  } else if (IsUninitialized(heap_object,
-                             heap_object->GetReadOnlyRoots(cage_base))) {
+  } else if (IsUninitialized(heap_object)) {
     return Representation::None();
   }
   return Representation::HeapObject();
@@ -740,7 +781,12 @@ Representation Object::OptimalRepresentation(Tagged<Object> obj,
 ElementsKind Object::OptimalElementsKind(Tagged<Object> obj,
                                          PtrComprCageBase cage_base) {
   if (IsSmi(obj)) return PACKED_SMI_ELEMENTS;
-  if (IsNumber(obj, cage_base)) return PACKED_DOUBLE_ELEMENTS;
+  if (IsHeapNumber(obj, cage_base)) return PACKED_DOUBLE_ELEMENTS;
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+  if (IsUndefined(obj, GetReadOnlyRoots())) {
+    return HOLEY_DOUBLE_ELEMENTS;
+  }
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
   return PACKED_ELEMENTS;
 }
 
@@ -776,83 +822,102 @@ bool Object::ToUint32(Tagged<Object> obj, uint32_t* value) {
 }
 
 // static
-MaybeHandle<JSReceiver> Object::ToObject(Isolate* isolate,
-                                         Handle<Object> object,
-                                         const char* method_name) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<JSReceiver>::MaybeType Object::ToObject(
+    Isolate* isolate, HandleType<T> object, const char* method_name) {
   if (IsJSReceiver(*object)) return Cast<JSReceiver>(object);
   return ToObjectImpl(isolate, object, method_name);
 }
 
 // static
-MaybeHandle<Name> Object::ToName(Isolate* isolate, Handle<Object> input) {
+template <template <typename> typename HandleType>
+typename HandleType<Name>::MaybeType Object::ToName(Isolate* isolate,
+                                                    HandleType<Object> input)
+  requires(std::is_convertible_v<HandleType<Object>, DirectHandle<Object>>)
+{
   if (IsName(*input)) return Cast<Name>(input);
   return ConvertToName(isolate, input);
 }
 
 // static
-MaybeHandle<Object> Object::ToPropertyKey(Isolate* isolate,
-                                          Handle<Object> value) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Object>::MaybeType Object::ToPropertyKey(
+    Isolate* isolate, HandleType<T> value) {
   if (IsSmi(*value) || IsName(Cast<HeapObject>(*value))) return value;
   return ConvertToPropertyKey(isolate, value);
 }
 
 // static
-MaybeHandle<Object> Object::ToPrimitive(Isolate* isolate, Handle<Object> input,
-                                        ToPrimitiveHint hint) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Object>::MaybeType Object::ToPrimitive(
+    Isolate* isolate, HandleType<T> input, ToPrimitiveHint hint) {
   if (IsPrimitive(*input)) return input;
   return JSReceiver::ToPrimitive(isolate, Cast<JSReceiver>(input), hint);
 }
 
 // static
-MaybeHandle<Number> Object::ToNumber(Isolate* isolate, Handle<Object> input) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Number>::MaybeType Object::ToNumber(Isolate* isolate,
+                                                        HandleType<T> input) {
   if (IsNumber(*input)) return Cast<Number>(input);  // Shortcut.
-  return ConvertToNumber(isolate, input);
+  return ConvertToNumber(isolate, Cast<Object>(input));
 }
 
 // static
-MaybeHandle<Object> Object::ToNumeric(Isolate* isolate, Handle<Object> input) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Object>::MaybeType Object::ToNumeric(Isolate* isolate,
+                                                         HandleType<T> input) {
   if (IsNumber(*input) || IsBigInt(*input)) return input;  // Shortcut.
-  return ConvertToNumeric(isolate, input);
+  return ConvertToNumeric(isolate, Cast<Object>(input));
 }
 
 // static
-MaybeHandle<Number> Object::ToInteger(Isolate* isolate, Handle<Object> input) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Number>::MaybeType Object::ToInteger(Isolate* isolate,
+                                                         HandleType<T> input) {
   if (IsSmi(*input)) return Cast<Smi>(input);
-  return ConvertToInteger(isolate, input);
+  return ConvertToInteger(isolate, Cast<Object>(input));
 }
 
 // static
-MaybeHandle<Number> Object::ToInt32(Isolate* isolate, Handle<Object> input) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Number>::MaybeType Object::ToInt32(Isolate* isolate,
+                                                       HandleType<T> input) {
   if (IsSmi(*input)) return Cast<Smi>(input);
-  return ConvertToInt32(isolate, input);
+  return ConvertToInt32(isolate, Cast<Object>(input));
 }
 
 // static
-MaybeHandle<Number> Object::ToUint32(Isolate* isolate, Handle<Object> input) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Number>::MaybeType Object::ToUint32(Isolate* isolate,
+                                                        HandleType<T> input) {
   if (IsSmi(*input)) {
-    return handle(Smi::ToUint32Smi(Cast<Smi>(*input)), isolate);
+    return typename HandleType<Number>::MaybeType(
+        Smi::ToUint32Smi(Cast<Smi>(*input)), isolate);
   }
-  return ConvertToUint32(isolate, input);
+  return ConvertToUint32(isolate, Cast<Object>(input));
 }
 
 // static
-template <typename T, typename>
-MaybeHandle<String> Object::ToString(Isolate* isolate, Handle<T> input) {
-  // T should be a subtype of Object, which is enforced by the second template
-  // argument.
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<String>::MaybeType Object::ToString(Isolate* isolate,
+                                                        HandleType<T> input) {
   if (IsString(*input)) return Cast<String>(input);
-  return ConvertToString(isolate, input);
-}
-
-template <typename T, typename>
-MaybeDirectHandle<String> Object::ToString(Isolate* isolate,
-                                           DirectHandle<T> input) {
-  if (IsString(*input)) return Cast<String>(input);
-  return ConvertToString(isolate, indirect_handle(input, isolate));
+  return ConvertToString(isolate, Cast<Object>(input));
 }
 
 // static
-MaybeHandle<Object> Object::ToLength(Isolate* isolate, Handle<Object> input) {
+MaybeHandle<Object> Object::ToLength(Isolate* isolate,
+                                     DirectHandle<Object> input) {
   if (IsSmi(*input)) {
     int value = std::max(Smi::ToInt(*input), 0);
     return handle(Smi::FromInt(value), isolate);
@@ -861,29 +926,35 @@ MaybeHandle<Object> Object::ToLength(Isolate* isolate, Handle<Object> input) {
 }
 
 // static
-MaybeHandle<Object> Object::ToIndex(Isolate* isolate, Handle<Object> input,
-                                    MessageTemplate error_index) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Object>::MaybeType Object::ToIndex(
+    Isolate* isolate, HandleType<T> input, MessageTemplate error_index) {
   if (IsSmi(*input) && Smi::ToInt(*input) >= 0) return input;
-  return ConvertToIndex(isolate, input, error_index);
+  return ConvertToIndex(isolate, Cast<Object>(input), error_index);
 }
 
-MaybeHandle<Object> Object::GetProperty(Isolate* isolate, Handle<JSAny> object,
-                                        Handle<Name> name) {
+MaybeHandle<Object> Object::GetProperty(Isolate* isolate,
+                                        DirectHandle<JSAny> object,
+                                        DirectHandle<Name> name) {
   LookupIterator it(isolate, object, name);
   if (!it.IsFound()) return it.factory()->undefined_value();
   return GetProperty(&it);
 }
 
-MaybeHandle<Object> Object::GetElement(Isolate* isolate, Handle<JSAny> object,
+MaybeHandle<Object> Object::GetElement(Isolate* isolate,
+                                       DirectHandle<JSAny> object,
                                        uint32_t index) {
   LookupIterator it(isolate, object, index);
   if (!it.IsFound()) return it.factory()->undefined_value();
   return GetProperty(&it);
 }
 
-MaybeHandle<Object> Object::SetElement(Isolate* isolate, Handle<JSAny> object,
-                                       uint32_t index, Handle<Object> value,
-                                       ShouldThrow should_throw) {
+MaybeDirectHandle<Object> Object::SetElement(Isolate* isolate,
+                                             DirectHandle<JSAny> object,
+                                             uint32_t index,
+                                             DirectHandle<Object> value,
+                                             ShouldThrow should_throw) {
   LookupIterator it(isolate, object, index);
   MAYBE_RETURN_NULL(
       SetProperty(&it, value, StoreOrigin::kMaybeKeyed, Just(should_throw)));
@@ -926,10 +997,10 @@ void HeapObject::InitExternalPointerField(size_t offset,
                                              tag, mode);
 }
 
-template <ExternalPointerTag tag>
+template <ExternalPointerTagRange tag_range>
 Address HeapObject::ReadExternalPointerField(size_t offset,
                                              IsolateForSandbox isolate) const {
-  return i::ReadExternalPointerField<tag>(field_address(offset), isolate);
+  return i::ReadExternalPointerField<tag_range>(field_address(offset), isolate);
 }
 
 template <CppHeapPointerTag lower_bound, CppHeapPointerTag upper_bound>
@@ -962,6 +1033,19 @@ void HeapObject::SetupLazilyInitializedExternalPointerField(size_t offset) {
 #endif  // V8_ENABLE_SANDBOX
 }
 
+bool HeapObject::IsLazilyInitializedExternalPointerFieldInitialized(
+    size_t offset) const {
+#ifdef V8_ENABLE_SANDBOX
+  auto location =
+      reinterpret_cast<ExternalPointerHandle*>(field_address(offset));
+  ExternalPointerHandle handle = base::AsAtomic32::Relaxed_Load(location);
+  return handle != kNullExternalPointerHandle;
+#else
+  return ReadMaybeUnalignedValue<Address>(field_address(offset)) !=
+         kNullAddress;
+#endif  // V8_ENABLE_SANDBOX
+}
+
 template <ExternalPointerTag tag>
 void HeapObject::WriteLazilyInitializedExternalPointerField(
     size_t offset, IsolateForSandbox isolate, Address value) {
@@ -973,7 +1057,7 @@ void HeapObject::WriteLazilyInitializedExternalPointerField(
   ExternalPointerHandle handle = base::AsAtomic32::Relaxed_Load(location);
   if (handle == kNullExternalPointerHandle) {
     // Field has not been initialized yet.
-    ExternalPointerHandle handle = table.AllocateAndInitializeEntry(
+    handle = table.AllocateAndInitializeEntry(
         isolate.GetExternalPointerTableSpaceFor(tag, address()), value, tag);
     base::AsAtomic32::Release_Store(location, handle);
     // In this case, we're adding a reference from an existing object to a new
@@ -1005,13 +1089,20 @@ void HeapObject::WriteLazilyInitializedCppHeapPointerField(
                                                value, tag);
 }
 
-void HeapObject::InitSelfIndirectPointerField(size_t offset,
-                                              IsolateForSandbox isolate) {
+#if V8_ENABLE_SANDBOX
+
+void HeapObject::InitSelfIndirectPointerField(
+    size_t offset, IsolateForSandbox isolate,
+    TrustedPointerPublishingScope* opt_publishing_scope) {
   DCHECK(IsExposedTrustedObject(*this));
   InstanceType instance_type = map()->instance_type();
-  IndirectPointerTag tag = IndirectPointerTagFromInstanceType(instance_type);
-  i::InitSelfIndirectPointerField(field_address(offset), isolate, *this, tag);
+  bool shared = HeapLayout::InAnySharedSpace(*this);
+  IndirectPointerTag tag =
+      IndirectPointerTagFromInstanceType(instance_type, shared);
+  i::InitSelfIndirectPointerField(field_address(offset), isolate, *this, tag,
+                                  opt_publishing_scope);
 }
+#endif  // V8_ENABLE_SANDBOX
 
 template <IndirectPointerTag tag>
 Tagged<ExposedTrustedObject> HeapObject::ReadTrustedPointerField(
@@ -1068,6 +1159,17 @@ bool HeapObject::IsTrustedPointerFieldEmpty(size_t offset) const {
 #endif
 }
 
+bool HeapObject::IsTrustedPointerFieldUnpublished(
+    size_t offset, IndirectPointerTag tag, IsolateForSandbox isolate) const {
+#ifdef V8_ENABLE_SANDBOX
+  IndirectPointerHandle handle = ACQUIRE_READ_UINT32_FIELD(*this, offset);
+  const TrustedPointerTable& table = isolate.GetTrustedPointerTableFor(tag);
+  return table.IsUnpublished(handle);
+#else
+  return false;
+#endif
+}
+
 void HeapObject::ClearTrustedPointerField(size_t offset) {
 #ifdef V8_ENABLE_SANDBOX
   RELEASE_WRITE_UINT32_FIELD(*this, offset, kNullIndirectPointerHandle);
@@ -1109,24 +1211,26 @@ void HeapObject::WriteCodeEntrypointViaCodePointerField(size_t offset,
   i::WriteCodeEntrypointViaCodePointerField(field_address(offset), value, tag);
 }
 
-void HeapObject::AllocateAndInstallJSDispatchHandle(size_t offset,
-                                                    IsolateForSandbox isolate,
-                                                    uint16_t parameter_count,
-                                                    Tagged<Code> code,
-                                                    WriteBarrierMode mode) {
+// static
+template <typename ObjectType>
+JSDispatchHandle HeapObject::AllocateAndInstallJSDispatchHandle(
+    ObjectType host, size_t offset, Isolate* isolate, uint16_t parameter_count,
+    DirectHandle<Code> code, WriteBarrierMode mode) {
 #ifdef V8_ENABLE_LEAPTIERING
-  JSDispatchTable* jdt = GetProcessWideJSDispatchTable();
   JSDispatchTable::Space* space =
-      isolate.GetJSDispatchTableSpaceFor(field_address(offset));
+      isolate->GetJSDispatchTableSpaceFor(host->field_address(offset));
   JSDispatchHandle handle =
-      jdt->AllocateAndInitializeEntry(space, parameter_count, code);
+      isolate->factory()->NewJSDispatchHandle(parameter_count, code, space);
 
   // Use a Release_Store to ensure that the store of the pointer into the table
   // is not reordered after the store of the handle. Otherwise, other threads
   // may access an uninitialized table entry and crash.
-  auto location = reinterpret_cast<JSDispatchHandle*>(field_address(offset));
+  auto location =
+      reinterpret_cast<JSDispatchHandle*>(host->field_address(offset));
   base::AsAtomic32::Release_Store(location, handle);
-  CONDITIONAL_JS_DISPATCH_HANDLE_WRITE_BARRIER(*this, handle, mode);
+  CONDITIONAL_JS_DISPATCH_HANDLE_WRITE_BARRIER(*host, handle, mode);
+
+  return handle;
 #else
   UNREACHABLE();
 #endif  // V8_ENABLE_LEAPTIERING
@@ -1146,8 +1250,8 @@ InstructionStreamSlot HeapObject::RawInstructionStreamField(
 }
 
 ExternalPointerSlot HeapObject::RawExternalPointerField(
-    int byte_offset, ExternalPointerTag tag) const {
-  return ExternalPointerSlot(field_address(byte_offset), tag);
+    int byte_offset, ExternalPointerTagRange tag_range) const {
+  return ExternalPointerSlot(field_address(byte_offset), tag_range);
 }
 
 CppHeapPointerSlot HeapObject::RawCppHeapPointerField(int byte_offset) const {
@@ -1250,19 +1354,6 @@ ReadOnlyRoots HeapObjectLayout::EarlyGetReadOnlyRoots() const {
   return ReadOnlyHeap::EarlyGetReadOnlyRoots(Tagged(this));
 }
 
-ReadOnlyRoots HeapObject::GetReadOnlyRoots() const {
-  return ReadOnlyHeap::GetReadOnlyRoots(*this);
-}
-
-ReadOnlyRoots HeapObjectLayout::GetReadOnlyRoots() const {
-  return ReadOnlyHeap::GetReadOnlyRoots(Tagged(this));
-}
-
-// TODO(v8:13788): Remove this cage-ful accessor.
-ReadOnlyRoots HeapObject::GetReadOnlyRoots(PtrComprCageBase cage_base) const {
-  return GetReadOnlyRoots();
-}
-
 Tagged<Map> HeapObject::map() const {
   // This method is never used for objects located in code space
   // (InstructionStream and free space fillers) and thus it is fine to use
@@ -1284,6 +1375,11 @@ Tagged<Map> HeapObjectLayout::map() const {
 Tagged<Map> HeapObjectLayout::map(AcquireLoadTag) const {
   // TODO(leszeks): Support MapWord members and access via that instead.
   return Tagged<HeapObject>(this)->map(kAcquireLoad);
+}
+
+MapWord HeapObjectLayout::map_word(RelaxedLoadTag) const {
+  // TODO(leszeks): Support MapWord members and access via that instead.
+  return Tagged<HeapObject>(this)->map_word(kRelaxedLoad);
 }
 
 void HeapObjectLayout::set_map(Isolate* isolate, Tagged<Map> value) {
@@ -1497,6 +1593,12 @@ void HeapObjectLayout::set_map_word_forwarded(Tagged<HeapObject> target_object,
   Tagged<HeapObject>(this)->set_map_word_forwarded(target_object, tag);
 }
 
+void HeapObjectLayout::set_map_word_forwarded(Tagged<HeapObject> target_object,
+                                              RelaxedStoreTag tag) {
+  // TODO(leszeks): Support MapWord members and access via that instead.
+  Tagged<HeapObject>(this)->set_map_word_forwarded(target_object, tag);
+}
+
 void HeapObject::set_map_word_forwarded(Tagged<HeapObject> target_object,
                                         ReleaseStoreTag) {
   MapField::Release_Store_Map_Word(
@@ -1506,6 +1608,14 @@ void HeapObject::set_map_word_forwarded(Tagged<HeapObject> target_object,
 bool HeapObject::release_compare_and_swap_map_word_forwarded(
     MapWord old_map_word, Tagged<HeapObject> new_target_object) {
   Tagged_t result = MapField::Release_CompareAndSwap(
+      *this, old_map_word,
+      MapWord::FromForwardingAddress(*this, new_target_object));
+  return result == static_cast<Tagged_t>(old_map_word.ptr());
+}
+
+bool HeapObject::relaxed_compare_and_swap_map_word_forwarded(
+    MapWord old_map_word, Tagged<HeapObject> new_target_object) {
+  Tagged_t result = MapField::Relaxed_CompareAndSwap(
       *this, old_map_word,
       MapWord::FromForwardingAddress(*this, new_target_object));
   return result == static_cast<Tagged_t>(old_map_word.ptr());
@@ -1591,29 +1701,55 @@ WriteBarrierMode HeapObject::GetWriteBarrierMode(
 }
 
 // static
-AllocationAlignment HeapObject::RequiredAlignment(Tagged<Map> map) {
+AllocationAlignment HeapObject::RequiredAlignment(AllocationSpace space,
+                                                  Tagged<Map> map) {
+  return RequiredAlignment(
+      IsAnySharedSpace(space) ? kInSharedSpace : kNotInSharedSpace, map);
+}
+
+// static
+AllocationAlignment HeapObject::RequiredAlignment(InSharedSpace in_shared_space,
+                                                  Tagged<Map> map) {
   // TODO(v8:4153): We should think about requiring double alignment
   // in general for ByteArray, since they are used as backing store for typed
   // arrays now.
   // TODO(ishell, v8:8875): Consider using aligned allocations for BigInt.
-  if (USE_ALLOCATION_ALIGNMENT_BOOL) {
+  if (USE_ALLOCATION_ALIGNMENT_HEAP_NUMBER_BOOL) {
     int instance_type = map->instance_type();
 
-    static_assert(!USE_ALLOCATION_ALIGNMENT_BOOL ||
+    static_assert(!USE_ALLOCATION_ALIGNMENT_HEAP_NUMBER_BOOL ||
                   (sizeof(FixedDoubleArray::Header) & kDoubleAlignmentMask) ==
                       kTaggedSize);
     if (instance_type == FIXED_DOUBLE_ARRAY_TYPE) return kDoubleAligned;
 
-    static_assert(!USE_ALLOCATION_ALIGNMENT_BOOL ||
+    static_assert(!USE_ALLOCATION_ALIGNMENT_HEAP_NUMBER_BOOL ||
                   (offsetof(HeapNumber, value_) & kDoubleAlignmentMask) ==
                       kTaggedSize);
     if (instance_type == HEAP_NUMBER_TYPE) return kDoubleUnaligned;
   }
+#if V8_ENABLE_WEBASSEMBLY
+  if (in_shared_space && v8_flags.experimental_wasm_shared) [[unlikely]] {
+    int instance_type = map->instance_type();
+    if (instance_type == WASM_STRUCT_TYPE) {
+      // The map of a shared wasm struct needs to be in the shared space.
+      DCHECK(HeapLayout::InWritableSharedSpace(map));
+      return kDoubleAligned;
+    } else if (instance_type == WASM_ARRAY_TYPE) {
+      // The map of a shared wasm array needs to be in the shared space.
+      DCHECK(HeapLayout::InWritableSharedSpace(map));
+      return kDoubleUnaligned;
+    }
+  }
+#endif
   return kTaggedAligned;
 }
 
 bool HeapObject::CheckRequiredAlignment(PtrComprCageBase cage_base) const {
-  AllocationAlignment alignment = HeapObject::RequiredAlignment(map(cage_base));
+  const InSharedSpace in_shared_space = HeapLayout::InWritableSharedSpace(*this)
+                                            ? kInSharedSpace
+                                            : kNotInSharedSpace;
+  AllocationAlignment alignment =
+      HeapObject::RequiredAlignment(in_shared_space, map(cage_base));
   CHECK_EQ(0, Heap::GetFillToAlign(address(), alignment));
   return true;
 }
@@ -1623,8 +1759,8 @@ Address HeapObject::GetFieldAddress(int field_offset) const {
 }
 
 // static
-Maybe<bool> Object::GreaterThan(Isolate* isolate, Handle<Object> x,
-                                Handle<Object> y) {
+Maybe<bool> Object::GreaterThan(Isolate* isolate, DirectHandle<Object> x,
+                                DirectHandle<Object> y) {
   Maybe<ComparisonResult> result = Compare(isolate, x, y);
   if (result.IsJust()) {
     switch (result.FromJust()) {
@@ -1640,8 +1776,8 @@ Maybe<bool> Object::GreaterThan(Isolate* isolate, Handle<Object> x,
 }
 
 // static
-Maybe<bool> Object::GreaterThanOrEqual(Isolate* isolate, Handle<Object> x,
-                                       Handle<Object> y) {
+Maybe<bool> Object::GreaterThanOrEqual(Isolate* isolate, DirectHandle<Object> x,
+                                       DirectHandle<Object> y) {
   Maybe<ComparisonResult> result = Compare(isolate, x, y);
   if (result.IsJust()) {
     switch (result.FromJust()) {
@@ -1657,8 +1793,8 @@ Maybe<bool> Object::GreaterThanOrEqual(Isolate* isolate, Handle<Object> x,
 }
 
 // static
-Maybe<bool> Object::LessThan(Isolate* isolate, Handle<Object> x,
-                             Handle<Object> y) {
+Maybe<bool> Object::LessThan(Isolate* isolate, DirectHandle<Object> x,
+                             DirectHandle<Object> y) {
   Maybe<ComparisonResult> result = Compare(isolate, x, y);
   if (result.IsJust()) {
     switch (result.FromJust()) {
@@ -1674,8 +1810,8 @@ Maybe<bool> Object::LessThan(Isolate* isolate, Handle<Object> x,
 }
 
 // static
-Maybe<bool> Object::LessThanOrEqual(Isolate* isolate, Handle<Object> x,
-                                    Handle<Object> y) {
+Maybe<bool> Object::LessThanOrEqual(Isolate* isolate, DirectHandle<Object> x,
+                                    DirectHandle<Object> y) {
   Maybe<ComparisonResult> result = Compare(isolate, x, y);
   if (result.IsJust()) {
     switch (result.FromJust()) {
@@ -1691,30 +1827,33 @@ Maybe<bool> Object::LessThanOrEqual(Isolate* isolate, Handle<Object> x,
 }
 
 MaybeHandle<Object> Object::GetPropertyOrElement(Isolate* isolate,
-                                                 Handle<JSAny> object,
-                                                 Handle<Name> name) {
-  PropertyKey key(isolate, name);
+                                                 DirectHandle<JSAny> object,
+                                                 DirectHandle<Name> name) {
+  return GetPropertyOrElement(isolate, object, PropertyKey(isolate, name));
+}
+
+MaybeHandle<Object> Object::GetPropertyOrElement(Isolate* isolate,
+                                                 DirectHandle<JSAny> object,
+                                                 PropertyKey key) {
   LookupIterator it(isolate, object, key);
   return GetProperty(&it);
 }
 
-MaybeHandle<Object> Object::SetPropertyOrElement(
-    Isolate* isolate, Handle<JSAny> object, Handle<Name> name,
-    Handle<Object> value, Maybe<ShouldThrow> should_throw,
+MaybeDirectHandle<Object> Object::SetPropertyOrElement(
+    Isolate* isolate, DirectHandle<JSAny> object, DirectHandle<Name> name,
+    DirectHandle<Object> value, Maybe<ShouldThrow> should_throw,
     StoreOrigin store_origin) {
-  PropertyKey key(isolate, name);
+  return SetPropertyOrElement(isolate, object, PropertyKey(isolate, name),
+                              value, should_throw, store_origin);
+}
+
+MaybeDirectHandle<Object> Object::SetPropertyOrElement(
+    Isolate* isolate, DirectHandle<JSAny> object, PropertyKey key,
+    DirectHandle<Object> value, Maybe<ShouldThrow> should_throw,
+    StoreOrigin store_origin) {
   LookupIterator it(isolate, object, key);
   MAYBE_RETURN_NULL(SetProperty(&it, value, store_origin, should_throw));
   return value;
-}
-
-MaybeHandle<Object> Object::GetPropertyOrElement(Handle<JSAny> receiver,
-                                                 Handle<Name> name,
-                                                 Handle<JSReceiver> holder) {
-  Isolate* isolate = holder->GetIsolate();
-  PropertyKey key(isolate, name);
-  LookupIterator it(isolate, receiver, key, holder);
-  return GetProperty(&it);
 }
 
 // static
@@ -1756,6 +1895,10 @@ Tagged<Object> Object::GetSimpleHash(Tagged<Object> object) {
   } else if (InstanceTypeChecker::IsScript(instance_type)) {
     int id = Cast<Script>(object)->id();
     return Smi::FromInt(ComputeUnseededHash(id) & Smi::kMaxValue);
+  } else if (InstanceTypeChecker::IsTemplateInfo(instance_type)) {
+    uint32_t hash = Cast<TemplateInfo>(object)->GetHash();
+    DCHECK_EQ(hash, hash & Smi::kMaxValue);
+    return Smi::FromInt(hash);
   }
 
   DCHECK(!InstanceTypeChecker::IsHole(instance_type));
@@ -1786,7 +1929,7 @@ bool IsShared(Tagged<Object> obj) {
 
   // RO objects are shared when the RO space is shared.
   if (HeapLayout::InReadOnlySpace(object)) {
-    return ReadOnlyHeap::IsReadOnlySpaceShared();
+    return true;
   }
 
   // Check if this object is already shared.
@@ -1804,6 +1947,11 @@ bool IsShared(Tagged<Object> obj) {
     case SHARED_UNCACHED_EXTERNAL_ONE_BYTE_STRING_TYPE:
       DCHECK(HeapLayout::InAnySharedSpace(object));
       return true;
+#if V8_ENABLE_WEBASSEMBLY
+    case WASM_STRUCT_TYPE:
+    case WASM_ARRAY_TYPE:
+      return HeapLayout::InAnySharedSpace(object);
+#endif
     case INTERNALIZED_TWO_BYTE_STRING_TYPE:
     case INTERNALIZED_ONE_BYTE_STRING_TYPE:
     case EXTERNAL_INTERNALIZED_TWO_BYTE_STRING_TYPE:
@@ -1823,10 +1971,12 @@ bool IsShared(Tagged<Object> obj) {
 }
 
 // static
-MaybeHandle<Object> Object::Share(Isolate* isolate, Handle<Object> value,
-                                  ShouldThrow throw_if_cannot_be_shared) {
+template <typename T, template <typename> typename HandleType>
+  requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+typename HandleType<Object>::MaybeType Object::Share(
+    Isolate* isolate, HandleType<T> value,
+    ShouldThrow throw_if_cannot_be_shared) {
   // Sharing values requires the RO space be shared.
-  DCHECK(ReadOnlyHeap::IsReadOnlySpaceShared());
   if (IsShared(*value)) return value;
   return ShareSlow(isolate, Cast<HeapObject>(value), throw_if_cannot_be_shared);
 }
@@ -1838,15 +1988,21 @@ bool Object::CanBeHeldWeakly(Tagged<Object> obj) {
     // TODO(v8:12547) Shared structs and arrays should only be able to point
     // to shared values in weak collections. For now, disallow them as weak
     // collection keys.
-    if (v8_flags.harmony_struct) {
-      return !IsJSSharedStruct(obj) && !IsJSSharedArray(obj);
+#if V8_ENABLE_WEBASSEMBLY
+    if (v8_flags.experimental_wasm_shared &&
+        (IsWasmStruct(obj) || IsWasmArray(obj)) &&
+        HeapLayout::InAnySharedSpace(Cast<HeapObject>(obj))) {
+      return false;
     }
-    return true;
+#endif
+    return (!v8_flags.harmony_struct ||
+            (!IsJSSharedStruct(obj) && !IsJSSharedArray(obj)));
   }
   return IsSymbol(obj) && !Cast<Symbol>(obj)->is_in_public_symbol_table();
 }
 
-Handle<Object> ObjectHashTableShape::AsHandle(Handle<Object> key) {
+DirectHandle<Object> ObjectHashTableShapeBase::AsHandle(
+    DirectHandle<Object> key) {
   return key;
 }
 
@@ -1867,8 +2023,8 @@ static inline uint32_t ObjectAddressForHashing(Address object) {
   return MemoryChunk::AddressToOffset(object);
 }
 
-static inline Handle<Object> MakeEntryPair(Isolate* isolate, size_t index,
-                                           DirectHandle<Object> value) {
+static inline DirectHandle<Object> MakeEntryPair(Isolate* isolate, size_t index,
+                                                 DirectHandle<Object> value) {
   DirectHandle<Object> key = isolate->factory()->SizeToString(index);
   DirectHandle<FixedArray> entry_storage = isolate->factory()->NewFixedArray(2);
   {
@@ -1879,9 +2035,9 @@ static inline Handle<Object> MakeEntryPair(Isolate* isolate, size_t index,
                                                     PACKED_ELEMENTS, 2);
 }
 
-static inline Handle<Object> MakeEntryPair(Isolate* isolate,
-                                           DirectHandle<Object> key,
-                                           DirectHandle<Object> value) {
+static inline DirectHandle<Object> MakeEntryPair(Isolate* isolate,
+                                                 DirectHandle<Object> key,
+                                                 DirectHandle<Object> value) {
   DirectHandle<FixedArray> entry_storage = isolate->factory()->NewFixedArray(2);
   {
     entry_storage->set(0, *key, SKIP_WRITE_BARRIER);

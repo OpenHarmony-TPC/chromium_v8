@@ -298,10 +298,16 @@ class EscapeAnalysisTracker : public ZoneObject {
 
  private:
   friend class EscapeAnalysisResult;
-  static constexpr int kTrackingBudget = 600;
+  static constexpr int kTrackingBudget = 1300;
 
   VirtualObject* NewVirtualObject(int size) {
-    if (number_of_tracked_bytes_ + size >= kTrackingBudget) return nullptr;
+    if (number_of_tracked_bytes_ + size >= kTrackingBudget) {
+      if (V8_UNLIKELY(v8_flags.trace_turbo_bailouts)) {
+        std::cout
+            << "Bailing out in Escape Analysis because of kTrackingBudget\n";
+      }
+      return nullptr;
+    }
     number_of_tracked_bytes_ += size;
     return zone_->New<VirtualObject>(&variable_states_, next_object_id_++,
                                      size);
@@ -318,7 +324,7 @@ class EscapeAnalysisTracker : public ZoneObject {
 };
 
 EffectGraphReducer::EffectGraphReducer(
-    Graph* graph, std::function<void(Node*, Reduction*)> reduce,
+    TFGraph* graph, std::function<void(Node*, Reduction*)> reduce,
     TickCounter* tick_counter, Zone* zone)
     : graph_(graph),
       state_(graph, kNumStates),
@@ -598,6 +604,32 @@ Node* LowerCompareMapsWithoutLoad(Node* checked_map,
   return replacement;
 }
 
+namespace {
+bool CheckMapsHelper(EscapeAnalysisTracker::Scope* current, Node* checked,
+                     ZoneRefSet<Map> target) {
+  const VirtualObject* vobject = current->GetVirtualObject(checked);
+  Variable map_field;
+  Node* map;
+  if (vobject && !vobject->HasEscaped() &&
+      vobject->FieldAt(HeapObject::kMapOffset).To(&map_field) &&
+      current->Get(map_field).To(&map)) {
+    if (map) {
+      Type const map_type = NodeProperties::GetType(map);
+      if (map_type.IsHeapConstant() &&
+          target.contains(map_type.AsHeapConstant()->Ref().AsMap())) {
+        current->MarkForDeletion();
+        return true;
+      }
+    } else {
+      // If the variable has no value, we have not reached the fixed-point
+      // yet.
+      return true;
+    }
+  }
+  return false;
+}
+}  // namespace
+
 void ReduceNode(const Operator* op, EscapeAnalysisTracker::Scope* current,
                 JSGraph* jsgraph) {
   switch (op->opcode()) {
@@ -785,25 +817,18 @@ void ReduceNode(const Operator* op, EscapeAnalysisTracker::Scope* current,
     case IrOpcode::kCheckMaps: {
       CheckMapsParameters params = CheckMapsParametersOf(op);
       Node* checked = current->ValueInput(0);
-      const VirtualObject* vobject = current->GetVirtualObject(checked);
-      Variable map_field;
-      Node* map;
-      if (vobject && !vobject->HasEscaped() &&
-          vobject->FieldAt(HeapObject::kMapOffset).To(&map_field) &&
-          current->Get(map_field).To(&map)) {
-        if (map) {
-          Type const map_type = NodeProperties::GetType(map);
-          if (map_type.IsHeapConstant() &&
-              params.maps().contains(
-                  map_type.AsHeapConstant()->Ref().AsMap())) {
-            current->MarkForDeletion();
-            break;
-          }
-        } else {
-          // If the variable has no value, we have not reached the fixed-point
-          // yet.
-          break;
-        }
+      if (CheckMapsHelper(current, checked, params.maps())) {
+        break;
+      }
+      current->SetEscaped(checked);
+      break;
+    }
+    case IrOpcode::kTransitionElementsKindOrCheckMap: {
+      ElementsTransitionWithMultipleSources params =
+          ElementsTransitionWithMultipleSourcesOf(op);
+      Node* checked = current->ValueInput(0);
+      if (CheckMapsHelper(current, checked, ZoneRefSet<Map>(params.target()))) {
+        break;
       }
       current->SetEscaped(checked);
       break;

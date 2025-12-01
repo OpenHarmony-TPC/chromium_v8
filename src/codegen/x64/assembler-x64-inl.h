@@ -5,10 +5,12 @@
 #ifndef V8_CODEGEN_X64_ASSEMBLER_X64_INL_H_
 #define V8_CODEGEN_X64_ASSEMBLER_X64_INL_H_
 
+#include "src/codegen/x64/assembler-x64.h"
+// Include the non-inl header before the rest of the headers.
+
 #include "src/base/cpu.h"
 #include "src/base/memory.h"
 #include "src/codegen/flush-instruction-cache.h"
-#include "src/codegen/x64/assembler-x64.h"
 #include "src/debug/debug.h"
 #include "src/heap/heap-layout-inl.h"
 #include "src/objects/objects-inl.h"
@@ -217,8 +219,9 @@ int32_t Assembler::relative_target_offset(Address target, Address pc) {
 }
 
 void Assembler::deserialization_set_target_internal_reference_at(
-    Address pc, Address target, RelocInfo::Mode mode) {
-  WriteUnalignedValue(pc, target);
+    Address pc, Address target, WritableJitAllocation& jit_allocation,
+    RelocInfo::Mode mode) {
+  jit_allocation.WriteUnalignedValue(pc, target);
 }
 
 int Assembler::deserialization_special_target_size(
@@ -226,11 +229,12 @@ int Assembler::deserialization_special_target_size(
   return kSpecialTargetSize;
 }
 
-Handle<Code> Assembler::code_target_object_handle_at(Address pc) {
+DirectHandle<Code> Assembler::code_target_object_handle_at(Address pc) {
   return GetCodeTarget(ReadUnalignedValue<int32_t>(pc));
 }
 
-Handle<HeapObject> Assembler::compressed_embedded_object_handle_at(Address pc) {
+DirectHandle<HeapObject> Assembler::compressed_embedded_object_handle_at(
+    Address pc) {
   return GetEmbeddedObject(ReadUnalignedValue<uint32_t>(pc));
 }
 
@@ -303,15 +307,14 @@ Tagged<HeapObject> RelocInfo::target_object(PtrComprCageBase cage_base) {
   if (IsCompressedEmbeddedObject(rmode_)) {
     Tagged_t compressed = ReadUnalignedValue<Tagged_t>(pc_);
     DCHECK(!HAS_SMI_TAG(compressed));
-    Tagged<Object> obj(
-        V8HeapCompressionScheme::DecompressTagged(cage_base, compressed));
+    Tagged<Object> obj(V8HeapCompressionScheme::DecompressTagged(compressed));
     return Cast<HeapObject>(obj);
   }
   DCHECK(IsFullEmbeddedObject(rmode_));
   return Cast<HeapObject>(Tagged<Object>(ReadUnalignedValue<Address>(pc_)));
 }
 
-Handle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
+DirectHandle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
   DCHECK(IsCodeTarget(rmode_) || IsEmbeddedObjectMode(rmode_));
   if (IsCodeTarget(rmode_)) {
     return origin->code_target_object_handle_at(pc_);
@@ -320,7 +323,7 @@ Handle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
       return origin->compressed_embedded_object_handle_at(pc_);
     }
     DCHECK(IsFullEmbeddedObject(rmode_));
-    return Cast<HeapObject>(ReadUnalignedValue<Handle<Object>>(pc_));
+    return Cast<HeapObject>(ReadUnalignedValue<IndirectHandle<Object>>(pc_));
   }
 }
 
@@ -338,15 +341,15 @@ void WritableRelocInfo::set_target_external_reference(
   }
 }
 
-WasmCodePointer RelocInfo::wasm_indirect_call_target() const {
-  DCHECK(rmode_ == RelocInfo::WASM_INDIRECT_CALL_TARGET);
-  return ReadUnalignedValue<WasmCodePointer>(pc_);
+WasmCodePointer RelocInfo::wasm_code_pointer_table_entry() const {
+  DCHECK(rmode_ == RelocInfo::WASM_CODE_POINTER_TABLE_ENTRY);
+  return WasmCodePointer{ReadUnalignedValue<uint32_t>(pc_)};
 }
 
-void WritableRelocInfo::set_wasm_indirect_call_target(
+void WritableRelocInfo::set_wasm_code_pointer_table_entry(
     WasmCodePointer target, ICacheFlushMode icache_flush_mode) {
-  DCHECK(rmode_ == RelocInfo::WASM_INDIRECT_CALL_TARGET);
-  jit_allocation_.WriteUnalignedValue(pc_, target);
+  DCHECK(rmode_ == RelocInfo::WASM_CODE_POINTER_TABLE_ENTRY);
+  jit_allocation_.WriteUnalignedValue(pc_, target.value());
   if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
     FlushInstructionCache(pc_, sizeof(Address));
   }
@@ -360,6 +363,11 @@ Address RelocInfo::target_internal_reference() {
 Address RelocInfo::target_internal_reference_address() {
   DCHECK(rmode_ == INTERNAL_REFERENCE);
   return pc_;
+}
+
+JSDispatchHandle RelocInfo::js_dispatch_handle() {
+  DCHECK(rmode_ == JS_DISPATCH_HANDLE);
+  return ReadUnalignedValue<JSDispatchHandle>(pc_);
 }
 
 void WritableRelocInfo::set_target_object(Tagged<HeapObject> target,

@@ -32,7 +32,7 @@ class WireBytesStorage;
 
 namespace compiler {
 
-class Graph;
+class TFGraph;
 class LiveRange;
 class TopLevelLiveRange;
 class Instruction;
@@ -78,7 +78,7 @@ class JSONEscaped {
   std::string str_;
 };
 
-struct TurboJsonFile : public std::ofstream {
+struct V8_EXPORT_PRIVATE TurboJsonFile : public std::ofstream {
   TurboJsonFile(OptimizedCompilationInfo* info, std::ios_base::openmode mode);
   ~TurboJsonFile() override;
 };
@@ -125,17 +125,13 @@ class V8_EXPORT_PRIVATE SourceIdAssigner {
   std::vector<int> source_ids_;
 };
 
-void JsonPrintFunctionSource(std::ostream& os, int source_id,
-                             std::unique_ptr<char[]> function_name,
-                             Handle<Script> script, Isolate* isolate,
-                             Handle<SharedFunctionInfo> shared, bool with_key);
-
 void JsonPrintAllBytecodeSources(std::ostream& os,
                                  OptimizedCompilationInfo* info);
 
 void JsonPrintBytecodeSource(std::ostream& os, int source_id,
                              std::unique_ptr<char[]> function_name,
-                             DirectHandle<BytecodeArray> bytecode_array);
+                             DirectHandle<BytecodeArray> bytecode_array,
+                             Tagged<FeedbackVector> feedback_vector = {});
 
 void JsonPrintAllSourceWithPositions(std::ostream& os,
                                      OptimizedCompilationInfo* info,
@@ -150,9 +146,10 @@ void JsonPrintAllSourceWithPositionsWasm(
 
 void JsonPrintFunctionSource(std::ostream& os, int source_id,
                              std::unique_ptr<char[]> function_name,
-                             Handle<Script> script, Isolate* isolate,
-                             Handle<SharedFunctionInfo> shared,
+                             DirectHandle<Script> script, Isolate* isolate,
+                             DirectHandle<SharedFunctionInfo> shared,
                              bool with_key = false);
+
 std::unique_ptr<char[]> GetVisualizerLogFileName(OptimizedCompilationInfo* info,
                                                  const char* optional_base_dir,
                                                  const char* phase,
@@ -160,7 +157,7 @@ std::unique_ptr<char[]> GetVisualizerLogFileName(OptimizedCompilationInfo* info,
 
 class JSONGraphWriter {
  public:
-  JSONGraphWriter(std::ostream& os, const Graph* graph,
+  JSONGraphWriter(std::ostream& os, const TFGraph* graph,
                   const SourcePositionTable* positions,
                   const NodeOriginTable* origins);
 
@@ -179,7 +176,7 @@ class JSONGraphWriter {
  protected:
   std::ostream& os_;
   Zone* zone_;
-  const Graph* graph_;
+  const TFGraph* graph_;
   const SourcePositionTable* positions_;
   const NodeOriginTable* origins_;
   bool first_node_;
@@ -187,14 +184,14 @@ class JSONGraphWriter {
 };
 
 struct GraphAsJSON {
-  GraphAsJSON(const Graph& g, SourcePositionTable* p, NodeOriginTable* o)
+  GraphAsJSON(const TFGraph& g, SourcePositionTable* p, NodeOriginTable* o)
       : graph(g), positions(p), origins(o) {}
-  const Graph& graph;
+  const TFGraph& graph;
   const SourcePositionTable* positions;
   const NodeOriginTable* origins;
 };
 
-V8_INLINE V8_EXPORT_PRIVATE GraphAsJSON AsJSON(const Graph& g,
+V8_INLINE V8_EXPORT_PRIVATE GraphAsJSON AsJSON(const TFGraph& g,
                                                SourcePositionTable* p,
                                                NodeOriginTable* o) {
   return GraphAsJSON(g, p, o);
@@ -204,8 +201,8 @@ V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& os,
                                            const GraphAsJSON& ad);
 
 struct AsRPO {
-  explicit AsRPO(const Graph& g) : graph(g) {}
-  const Graph& graph;
+  explicit AsRPO(const TFGraph& g) : graph(g) {}
+  const TFGraph& graph;
 };
 
 V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& os, const AsRPO& ad);

@@ -39,6 +39,7 @@
 
 #include "src/base/lazy-instance.h"
 #include "src/base/macros.h"
+#include "src/base/platform/mutex.h"
 #include "src/base/platform/platform-posix.h"
 #include "src/base/platform/platform.h"
 #include "src/base/platform/time.h"
@@ -275,8 +276,6 @@ int OS::ActivationFrameAlignment() {
 #if V8_TARGET_ARCH_ARM
   // On EABI ARM targets this is required for fp correctness in the
   // runtime system.
-  return 8;
-#elif V8_TARGET_ARCH_MIPS
   return 8;
 #elif V8_TARGET_ARCH_S390X
   return 8;
@@ -843,8 +842,7 @@ int OS::GetCurrentProcessId() {
   return static_cast<int>(getpid());
 }
 
-
-int OS::GetCurrentThreadId() {
+int OS::GetCurrentThreadIdInternal() {
 #if V8_OS_DARWIN || (V8_OS_ANDROID && defined(__APPLE__))
   return static_cast<int>(pthread_mach_thread_np(pthread_self()));
 #elif V8_OS_LINUX

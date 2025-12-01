@@ -5,11 +5,13 @@
 #ifndef V8_OBJECTS_EMBEDDER_DATA_SLOT_INL_H_
 #define V8_OBJECTS_EMBEDDER_DATA_SLOT_INL_H_
 
+#include "src/objects/embedder-data-slot.h"
+// Include the non-inl header before the rest of the headers.
+
 #include "src/base/memory.h"
 #include "src/common/globals.h"
 #include "src/heap/heap-write-barrier-inl.h"
 #include "src/objects/embedder-data-array.h"
-#include "src/objects/embedder-data-slot.h"
 #include "src/objects/js-objects-inl.h"
 #include "src/objects/objects-inl.h"
 #include "src/sandbox/external-pointer-inl.h"
@@ -127,7 +129,6 @@ bool EmbedderDataSlot::store_aligned_pointer(IsolateForSandbox isolate,
   Address value = reinterpret_cast<Address>(ptr);
   if (!HAS_SMI_TAG(value)) return false;
 #ifdef V8_ENABLE_SANDBOX
-  DCHECK_EQ(0, value & kExternalPointerTagMask);
   // When the sandbox is enabled, the external pointer handles in
   // EmbedderDataSlots are lazily initialized: initially they contain the null
   // external pointer handle (see EmbedderDataSlot::Initialize), and only once

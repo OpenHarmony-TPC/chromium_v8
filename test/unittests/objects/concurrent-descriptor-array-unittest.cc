@@ -80,11 +80,11 @@ TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject) {
   auto factory = i_isolate()->factory();
   HandleScope handle_scope(i_isolate());
 
-  Handle<JSFunction> function =
+  DirectHandle<JSFunction> function =
       factory->NewFunctionForTesting(factory->empty_string());
   Handle<JSObject> js_object = factory->NewJSObject(function);
   Handle<String> name = MakeString("property");
-  Handle<Object> value = MakeString("dummy_value");
+  DirectHandle<Object> value = MakeString("dummy_value");
   // For the default constructor function no in-object properties are reserved
   // hence adding a single property will initialize the property-array.
   JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, name, value,
@@ -109,8 +109,8 @@ TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject) {
 
   // Exercise descriptor in main thread too.
   for (int i = 0; i < 7; ++i) {
-    Handle<String> filler_name = MakeName("filler_property_", i);
-    Handle<Object> filler_value = MakeString("dummy_value");
+    DirectHandle<String> filler_name = MakeName("filler_property_", i);
+    DirectHandle<Object> filler_value = MakeString("dummy_value");
     JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, filler_name,
                                                       filler_value, NONE)
         .Check();
@@ -128,11 +128,11 @@ TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject_ManyElements) {
   auto factory = i_isolate()->factory();
   HandleScope handle_scope(i_isolate());
 
-  Handle<JSFunction> function =
+  DirectHandle<JSFunction> function =
       factory->NewFunctionForTesting(factory->empty_string());
   Handle<JSObject> js_object = factory->NewJSObject(function);
   Handle<String> name = MakeString("property");
-  Handle<Object> value = MakeString("dummy_value");
+  DirectHandle<Object> value = MakeString("dummy_value");
   // For the default constructor function no in-object properties are reserved
   // hence adding a single property will initialize the property-array.
   JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, name, value,
@@ -143,8 +143,8 @@ TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject_ManyElements) {
   // since we are going search in a background thread, we force a linear search
   // that is safe to do in the background.
   for (int i = 0; i < 10; ++i) {
-    Handle<String> filler_name = MakeName("filler_property_", i);
-    Handle<Object> filler_value = MakeString("dummy_value");
+    DirectHandle<String> filler_name = MakeName("filler_property_", i);
+    DirectHandle<Object> filler_value = MakeString("dummy_value");
     JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, filler_name,
                                                       filler_value, NONE)
         .Check();
@@ -169,8 +169,8 @@ TEST_F(ConcurrentDescriptorArrayTest, LinearSearchFlatObject_ManyElements) {
 
   // Exercise descriptor in main thread too.
   for (int i = 10; i < 20; ++i) {
-    Handle<String> filler_name = MakeName("filler_property_", i);
-    Handle<Object> filler_value = MakeString("dummy_value");
+    DirectHandle<String> filler_name = MakeName("filler_property_", i);
+    DirectHandle<Object> filler_value = MakeString("dummy_value");
     JSObject::DefinePropertyOrElementIgnoreAttributes(js_object, filler_name,
                                                       filler_value, NONE)
         .Check();

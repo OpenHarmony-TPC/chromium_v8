@@ -5,8 +5,10 @@
 #ifndef V8_HEAP_HEAP_LAYOUT_INL_H_
 #define V8_HEAP_HEAP_LAYOUT_INL_H_
 
-#include "src/flags/flags.h"
 #include "src/heap/heap-layout.h"
+// Include the non-inl header before the rest of the headers.
+
+#include "src/flags/flags.h"
 #include "src/heap/memory-chunk-inl.h"
 #include "src/objects/casting.h"
 #include "src/objects/objects.h"
@@ -68,11 +70,9 @@ bool HeapLayout::InWritableSharedSpace(Tagged<HeapObject> object) {
 
 // static
 bool HeapLayout::InAnySharedSpace(Tagged<HeapObject> object) {
-#ifdef V8_SHARED_RO_HEAP
   if (HeapLayout::InReadOnlySpace(object)) {
-    return V8_SHARED_RO_HEAP_BOOL;
+    return true;
   }
-#endif  // V8_SHARED_RO_HEAP
   return HeapLayout::InWritableSharedSpace(object);
 }
 

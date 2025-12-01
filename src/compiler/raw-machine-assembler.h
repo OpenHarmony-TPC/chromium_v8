@@ -47,7 +47,7 @@ class SourcePositionTable;
 class V8_EXPORT_PRIVATE RawMachineAssembler {
  public:
   RawMachineAssembler(
-      Isolate* isolate, Graph* graph, CallDescriptor* call_descriptor,
+      Isolate* isolate, TFGraph* graph, CallDescriptor* call_descriptor,
       MachineRepresentation word = MachineType::PointerRepresentation(),
       MachineOperatorBuilder::Flags flags =
           MachineOperatorBuilder::Flag::kNoFlags,
@@ -60,7 +60,7 @@ class V8_EXPORT_PRIVATE RawMachineAssembler {
   RawMachineAssembler& operator=(const RawMachineAssembler&) = delete;
 
   Isolate* isolate() const { return isolate_; }
-  Graph* graph() const { return graph_; }
+  TFGraph* graph() const { return graph_; }
   Zone* zone() const { return graph()->zone(); }
   MachineOperatorBuilder* machine() { return &machine_; }
   CommonOperatorBuilder* common() { return &common_; }
@@ -74,7 +74,7 @@ class V8_EXPORT_PRIVATE RawMachineAssembler {
   // Finalizes the schedule and transforms it into a graph that's suitable for
   // it to be used for Turbofan optimization and re-scheduling. Note that this
   // RawMachineAssembler becomes invalid after export.
-  Graph* ExportForOptimization();
+  TFGraph* ExportForOptimization();
 
   // ===========================================================================
   // The following utility methods create new nodes with specific operators and
@@ -865,11 +865,22 @@ class V8_EXPORT_PRIVATE RawMachineAssembler {
   Node* ChangeInt32ToInt64(Node* a) {
     return AddNode(machine()->ChangeInt32ToInt64(), a);
   }
+  Node* ChangeInt32ToIntPtr(Node* a) {
+    if (kSystemPointerSize == 8) {
+      return ChangeInt32ToInt64(a);
+    } else {
+      return a;
+    }
+  }
   Node* ChangeUint32ToUint64(Node* a) {
     return AddNode(machine()->ChangeUint32ToUint64(), a);
   }
   Node* TruncateFloat64ToFloat32(Node* a) {
     return AddNode(machine()->TruncateFloat64ToFloat32(), a);
+  }
+  Node* TruncateFloat64ToFloat16RawBits(Node* a) {
+    return AddNode(machine()->TruncateFloat64ToFloat16RawBits().placeholder(),
+                   a);
   }
   Node* TruncateInt64ToInt32(Node* a) {
     return AddNode(machine()->TruncateInt64ToInt32(), a);
@@ -1084,7 +1095,8 @@ class V8_EXPORT_PRIVATE RawMachineAssembler {
   // Control flow.
   void Goto(RawMachineLabel* label);
   void Branch(Node* condition, RawMachineLabel* true_val,
-              RawMachineLabel* false_val);
+              RawMachineLabel* false_val,
+              BranchHint branch_hint = BranchHint::kNone);
   void Switch(Node* index, RawMachineLabel* default_label,
               const int32_t* case_values, RawMachineLabel** case_labels,
               size_t case_count);
@@ -1198,12 +1210,12 @@ class V8_EXPORT_PRIVATE RawMachineAssembler {
 
   Schedule* schedule() { return schedule_; }
 
-  static void OptimizeControlFlow(Schedule* schedule, Graph* graph,
+  static void OptimizeControlFlow(Schedule* schedule, TFGraph* graph,
                                   CommonOperatorBuilder* common);
 
   Isolate* isolate_;
 
-  Graph* graph_;
+  TFGraph* graph_;
   Schedule* schedule_;
   SourcePositionTable* source_positions_;
   MachineOperatorBuilder machine_;

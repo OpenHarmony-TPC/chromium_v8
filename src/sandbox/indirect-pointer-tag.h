@@ -34,8 +34,8 @@ namespace internal {
 // guaranteed to work (similar for how we do it for ExternalPointerTags).
 
 constexpr int kIndirectPointerTagShift = 48;
-constexpr uint64_t kIndirectPointerTagMask = 0x7fff000000000000;
-constexpr uint64_t kTrustedPointerTableMarkBit = 0x8000000000000000;
+constexpr uint64_t kIndirectPointerTagMask = 0x7fff'0000'0000'0000;
+constexpr uint64_t kTrustedPointerTableMarkBit = 0x8000'0000'0000'0000;
 // We use a reserved bit for the free entry tag so that the
 // kUnknownIndirectPointerTag cannot untag free entries. Due to that, not all
 // tags in the kAllTagsForAndBasedTypeChecking are usable here (which is
@@ -46,9 +46,27 @@ constexpr uint64_t kTrustedPointerTableMarkBit = 0x8000000000000000;
 // Note that we use a bit in the 2nd most significant byte here due to top byte
 // ignore (TBI), which allows dereferencing pointers even if bits in the most
 // significant byte are set.
-constexpr uint64_t kTrustedPointerTableFreeEntryBit = 0x0080000000000000;
+constexpr uint64_t kTrustedPointerTableFreeEntryBit = 0x0080'0000'0000'0000;
 constexpr uint64_t kIndirectPointerTagMaskWithoutFreeEntryBit =
-    0x7f7f000000000000;
+    0x7f7f'0000'0000'0000;
+
+// TODO(saelo): Also switch the trusted pointer table to use a range-based type
+// checking mechanism instead of the AND-based one. This will allow us to
+// support type hierarchies and allow for more tags. See the
+// ExternalPointerTable for the type checking scheme that we should use here.
+constexpr uint64_t kAllTagsForAndBasedTypeChecking[] = {
+    0b00001111, 0b00010111, 0b00011011, 0b00011101, 0b00011110, 0b00100111,
+    0b00101011, 0b00101101, 0b00101110, 0b00110011, 0b00110101, 0b00110110,
+    0b00111001, 0b00111010, 0b00111100, 0b01000111, 0b01001011, 0b01001101,
+    0b01001110, 0b01010011, 0b01010101, 0b01010110, 0b01011001, 0b01011010,
+    0b01011100, 0b01100011, 0b01100101, 0b01100110, 0b01101001, 0b01101010,
+    0b01101100, 0b01110001, 0b01110010, 0b01110100, 0b01111000, 0b10000111,
+    0b10001011, 0b10001101, 0b10001110, 0b10010011, 0b10010101, 0b10010110,
+    0b10011001, 0b10011010, 0b10011100, 0b10100011, 0b10100101, 0b10100110,
+    0b10101001, 0b10101010, 0b10101100, 0b10110001, 0b10110010, 0b10110100,
+    0b10111000, 0b11000011, 0b11000101, 0b11000110, 0b11001001, 0b11001010,
+    0b11001100, 0b11010001, 0b11010010, 0b11010100, 0b11011000, 0b11100001,
+    0b11100010, 0b11100100, 0b11101000, 0b11110000};
 
 // Shared trusted pointers are owned by the shared Isolate and stored in the
 // shared trusted pointer table associated with that Isolate, where they can
@@ -57,9 +75,11 @@ constexpr uint64_t kIndirectPointerTagMaskWithoutFreeEntryBit =
 // TODO(358918874): Consider having explicitly shared types (e.g.
 // `ExposedSharedTrustedObject`) and enforcing that shared tags are only ever
 // used with shared types.
-#define SHARED_TRUSTED_POINTER_TAG_LIST(V) \
-  V(kFirstSharedTrustedTag, 1)             \
-  V(kLastSharedTrustedTag, 1)
+#define SHARED_TRUSTED_POINTER_TAG_LIST(V)               \
+  V(kFirstSharedTrustedTag, 1)                           \
+  V(kSharedWasmTrustedInstanceDataIndirectPointerTag, 1) \
+  V(kSharedWasmDispatchTableIndirectPointerTag, 2)       \
+  V(kLastSharedTrustedTag, 2)
 // Leave some space in the tag range here for future shared tags.
 
 // Trusted pointers using these tags are kept in a per-Isolate trusted
@@ -74,11 +94,13 @@ constexpr uint64_t kIndirectPointerTagMaskWithoutFreeEntryBit =
   IF_WASM(V, kWasmTrustedInstanceDataIndirectPointerTag, 11) \
   IF_WASM(V, kWasmInternalFunctionIndirectPointerTag, 12)    \
   IF_WASM(V, kWasmFunctionDataIndirectPointerTag, 13)        \
-  V(kLastPerIsolateTrustedTag, 13)
+  IF_WASM(V, kWasmDispatchTableIndirectPointerTag, 14)       \
+  V(kLastPerIsolateTrustedTag, 14)
 
-#define INDIRECT_POINTER_TAG_LIST(V) \
-  SHARED_TRUSTED_POINTER_TAG_LIST(V) \
-  PER_ISOLATE_INDIRECT_POINTER_TAG_LIST(V)
+#define INDIRECT_POINTER_TAG_LIST(V)       \
+  SHARED_TRUSTED_POINTER_TAG_LIST(V)       \
+  PER_ISOLATE_INDIRECT_POINTER_TAG_LIST(V) \
+  V(kUnpublishedIndirectPointerTag, 34)
 
 #define MAKE_TAG(i) \
   (kAllTagsForAndBasedTypeChecking[i] << kIndirectPointerTagShift)
@@ -132,6 +154,8 @@ enum IndirectPointerTag : uint64_t {
 #undef INDIRECT_POINTER_TAG_ENUM_DECL
 };
 
+#undef MAKE_TAG
+
 #define VALIDATE_INDIRECT_POINTER_TAG(name, tag_id)        \
   static_assert((name & kIndirectPointerTagMask) == name); \
   static_assert((name & kIndirectPointerTagMaskWithoutFreeEntryBit) == name);
@@ -180,7 +204,7 @@ V8_INLINE constexpr bool IsTrustedSpaceMigrationInProgressForObjectsWithTag(
 static_assert(!IsValidIndirectPointerTag(kIndirectPointerNullTag));
 
 V8_INLINE IndirectPointerTag
-IndirectPointerTagFromInstanceType(InstanceType instance_type) {
+IndirectPointerTagFromInstanceType(InstanceType instance_type, bool shared) {
   switch (instance_type) {
     case CODE_TYPE:
       return kCodeIndirectPointerTag;
@@ -201,8 +225,12 @@ IndirectPointerTagFromInstanceType(InstanceType instance_type) {
       // our tag checking mechanism.
       return kRegExpDataIndirectPointerTag;
 #if V8_ENABLE_WEBASSEMBLY
+    case WASM_DISPATCH_TABLE_TYPE:
+      return shared ? kSharedWasmDispatchTableIndirectPointerTag
+                    : kWasmDispatchTableIndirectPointerTag;
     case WASM_TRUSTED_INSTANCE_DATA_TYPE:
-      return kWasmTrustedInstanceDataIndirectPointerTag;
+      return shared ? kSharedWasmTrustedInstanceDataIndirectPointerTag
+                    : kWasmTrustedInstanceDataIndirectPointerTag;
     case WASM_INTERNAL_FUNCTION_TYPE:
       return kWasmInternalFunctionIndirectPointerTag;
     case WASM_FUNCTION_DATA_TYPE:
@@ -217,22 +245,6 @@ IndirectPointerTagFromInstanceType(InstanceType instance_type) {
       UNREACHABLE();
   }
 }
-
-V8_INLINE InstanceType
-InstanceTypeFromIndirectPointerTag(IndirectPointerTag tag) {
-  DCHECK(IsValidIndirectPointerTag(tag));
-  switch (tag) {
-#define CASE(name, instance_type, tag_id) \
-  case MAKE_TAG(tag_id):                  \
-    return instance_type;                 \
-    break;
-#undef CASE
-    default:
-      UNREACHABLE();
-  }
-}
-
-#undef MAKE_TAG
 
 // Sanity checks.
 #define CHECK_SHARED_TRUSTED_POINTER_TAGS(Tag, ...) \

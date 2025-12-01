@@ -196,7 +196,7 @@ void RegExpMacroAssemblerIA32::CheckCharacterLT(base::uc16 limit,
   BranchOrBacktrack(less, on_less);
 }
 
-void RegExpMacroAssemblerIA32::CheckGreedyLoop(Label* on_equal) {
+void RegExpMacroAssemblerIA32::CheckFixedLengthLoop(Label* on_equal) {
   Label fallthrough;
   __ cmp(edi, Operand(backtrack_stackpointer(), 0));
   __ j(not_equal, &fallthrough);
@@ -755,8 +755,8 @@ void RegExpMacroAssemblerIA32::PopRegExpBasePointer(Register stack_pointer_out,
   StoreRegExpStackPointerToMemory(stack_pointer_out, scratch);
 }
 
-Handle<HeapObject> RegExpMacroAssemblerIA32::GetCode(Handle<String> source,
-                                                     RegExpFlags flags) {
+DirectHandle<HeapObject> RegExpMacroAssemblerIA32::GetCode(
+    DirectHandle<String> source, RegExpFlags flags) {
   Label return_eax;
   // Finalize code - write the entry point code now we know how many
   // registers we need.
@@ -1147,6 +1147,7 @@ void RegExpMacroAssemblerIA32::PushBacktrack(Label* label) {
 
 void RegExpMacroAssemblerIA32::PushCurrentPosition() {
   Push(edi);
+  CheckStackLimit();
 }
 
 
@@ -1154,7 +1155,11 @@ void RegExpMacroAssemblerIA32::PushRegister(int register_index,
                                             StackCheckFlag check_stack_limit) {
   __ mov(eax, register_location(register_index));
   Push(eax);
-  if (check_stack_limit) CheckStackLimit();
+  if (check_stack_limit) {
+    CheckStackLimit();
+  } else if (V8_UNLIKELY(v8_flags.slow_debug_code)) {
+    AssertAboveStackLimitMinusSlack();
+  }
 }
 
 
@@ -1381,6 +1386,18 @@ void RegExpMacroAssemblerIA32::CheckStackLimit() {
   __ bind(&no_stack_overflow);
 }
 
+void RegExpMacroAssemblerIA32::AssertAboveStackLimitMinusSlack() {
+  DCHECK(v8_flags.slow_debug_code);
+  Label no_stack_overflow;
+  ASM_CODE_COMMENT_STRING(masm_.get(), "AssertAboveStackLimitMinusSlack");
+  auto l = ExternalReference::address_of_regexp_stack_limit_address(isolate());
+  __ mov(eax, __ ExternalReferenceAsOperand(l, eax));
+  __ sub(eax, Immediate(RegExpStack::kStackLimitSlackSize));
+  __ cmp(backtrack_stackpointer(), eax);
+  __ j(above, &no_stack_overflow);
+  __ int3();
+  __ bind(&no_stack_overflow);
+}
 
 void RegExpMacroAssemblerIA32::LoadCurrentCharacterUnchecked(int cp_offset,
                                                              int characters) {

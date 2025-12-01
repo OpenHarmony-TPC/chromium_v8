@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_WASM_WASM_MODULE_BUILDER_H_
+#define V8_WASM_WASM_MODULE_BUILDER_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
-
-#ifndef V8_WASM_WASM_MODULE_BUILDER_H_
-#define V8_WASM_WASM_MODULE_BUILDER_H_
 
 #include <optional>
 
@@ -198,6 +198,7 @@ class V8_EXPORT_PRIVATE WasmFunctionBuilder : public ZoneObject {
   void EmitWithU32V(WasmOpcode opcode, ModuleTypeIndex index) {
     EmitWithU32V(opcode, index.index);
   }
+  void EmitHeapType(HeapType type);
   void EmitValueType(ValueType type);
   void EmitDirectCallIndex(uint32_t index);
   void EmitFromInitializerExpression(const WasmInitExpr& init_expr);
@@ -388,16 +389,14 @@ class V8_EXPORT_PRIVATE WasmModuleBuilder : public ZoneObject {
   void EndRecursiveTypeGroup() {
     // Make sure we are in a recursive group.
     DCHECK_NE(current_recursive_group_start_, -1);
-    // Make sure the current recursive group has at least one element.
-    DCHECK_GT(static_cast<int>(types_.size()), current_recursive_group_start_);
-    recursive_groups_.emplace(
+    recursive_groups_.emplace_back(
         current_recursive_group_start_,
         static_cast<uint32_t>(types_.size()) - current_recursive_group_start_);
     current_recursive_group_start_ = -1;
   }
 
   void AddRecursiveTypeGroup(uint32_t start, uint32_t size) {
-    recursive_groups_.emplace(start, size);
+    recursive_groups_.emplace_back(start, size);
   }
 
   // Writing methods.
@@ -549,8 +548,11 @@ class V8_EXPORT_PRIVATE WasmModuleBuilder : public ZoneObject {
   ZoneVector<ModuleTypeIndex> tags_;
   ZoneUnorderedMap<FunctionSig, ModuleTypeIndex> signature_map_;
   int current_recursive_group_start_;
-  // first index -> size
-  ZoneUnorderedMap<uint32_t, uint32_t> recursive_groups_;
+  struct RecGroup {
+    uint32_t start_index;
+    uint32_t size;
+  };
+  ZoneVector<RecGroup> recursive_groups_;
   int start_function_index_;
 #if DEBUG
   // Once AddExportedImport is called, no more imports can be added.

@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --allow-natives-syntax --experimental-wasm-jspi
+// Flags: --experimental-wasm-stack-switching
+// Flags: --allow-natives-syntax --experimental-wasm-type-reflection
 // Flags: --expose-gc --wasm-stack-switching-stack-size=100
-// Flags: --experimental-wasm-type-reflection
 
 d8.file.execute("test/mjsunit/wasm/wasm-module-builder.js");
 
@@ -164,7 +164,7 @@ d8.file.execute("test/mjsunit/wasm/wasm-module-builder.js");
   assertPromiseResult(wrapper(arg), v => assertEquals(arg.valueOf(), v));
 })();
 
-// Check that the suspender does not suspend if the import's
+// Check that the suspender DOES suspend even if the import's
 // return value is not a promise.
 (function TestStackSwitchNoPromise() {
   print(arguments.callee.name);
@@ -184,7 +184,7 @@ d8.file.execute("test/mjsunit/wasm/wasm-module-builder.js");
   let instance = builder.instantiate({m: {import: wasm_js_import}});
   let wrapped_export = WebAssembly.promising(instance.exports.test);
   let result = wrapped_export();
-  assertEquals(42, instance.exports.g.value);
+  assertEquals(0, instance.exports.g.value);
 })();
 
 (function TestStackSwitchSuspendArgs() {
@@ -608,20 +608,6 @@ function TestNestedSuspenders(suspend) {
   worker.postMessage(module);
   assertEquals('terminate', worker.getMessage());
   worker.terminateAndWait();
-})();
-
-(function TestUnwrappedExportError() {
-  print(arguments.callee.name);
-  let builder = new WasmModuleBuilder();
-  import_index = builder.addImport('m', 'import', kSig_v_v);
-  builder.addFunction("test", kSig_v_v)
-      .addBody([
-          kExprCallFunction, import_index,
-      ]).exportFunc();
-  let js_import = new WebAssembly.Suspending(() => Promise.resolve());
-  let instance = builder.instantiate({m: {import: js_import}});
-  assertThrows(instance.exports.test, WebAssembly.RuntimeError,
-      /attempting to suspend without a WebAssembly.promising export/);
 })();
 
 // A promising export splits the logical stack into multiple segments in memory.

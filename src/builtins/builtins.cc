@@ -162,19 +162,6 @@ int Builtins::GetStackParameterCount(Builtin builtin) {
   return builtin_metadata[ToInt(builtin)].data.parameter_count;
 }
 
-namespace {
-
-void ParameterCountToString(char* buffer, size_t buffer_size,
-                            int parameter_count) {
-  if (parameter_count == kDontAdaptArgumentsSentinel) {
-    snprintf(buffer, buffer_size, "kDontAdaptArgumentsSentinel");
-  } else {
-    snprintf(buffer, buffer_size, "JSParameterCount(%d)", parameter_count - 1);
-  }
-}
-
-}  // namespace
-
 // static
 bool Builtins::CheckFormalParameterCount(
     Builtin builtin, int function_length,
@@ -184,31 +171,18 @@ bool Builtins::CheckFormalParameterCount(
     return true;
   }
 
-  Kind kind = KindOf(builtin);
-  // TODO(ishell): enable the check for TFJ/TSJ.
-  if (kind == CPP) {
-    int parameter_count = Builtins::GetFormalParameterCount(builtin);
-    if (parameter_count != formal_parameter_count_with_receiver) {
-      if ((false)) {
-        // Enable this block to print a command line that should fix the
-        // mismatch.
-        const size_t kBufSize = 32;
-        char actual_count[kBufSize];
-        char expected_count[kBufSize];
-        ParameterCountToString(actual_count, kBufSize, parameter_count);
-        ParameterCountToString(expected_count, kBufSize,
-                               formal_parameter_count_with_receiver);
-        PrintF(
-            "\n##### "
-            "sed -i -z -r 's/%s\\(%s,[\\\\\\n[:space:]]+%s\\)/%s(%s, %s)/g' "
-            "src/builtins/builtins-definitions.h\n",
-            KindNameOf(builtin), name(builtin), actual_count,
-            KindNameOf(builtin), name(builtin), expected_count);
-      }
-      return false;
-    }
+  if (!HasJSLinkage(builtin)) {
+    return true;
   }
-  return true;
+
+  // Some special builtins are allowed to be installed on functions with
+  // different parameter counts.
+  if (builtin == Builtin::kCompileLazy) {
+    return true;
+  }
+
+  int parameter_count = Builtins::GetFormalParameterCount(builtin);
+  return parameter_count == formal_parameter_count_with_receiver;
 }
 
 // static
@@ -378,12 +352,17 @@ Address Builtins::CppEntryOf(Builtin builtin) {
   return builtin_metadata[ToInt(builtin)].data.cpp_entry;
 }
 
+Address Builtins::EmbeddedEntryOf(Builtin builtin) {
+  static_assert(Builtins::kAllBuiltinsAreIsolateIndependent);
+  return EmbeddedData::FromBlob().InstructionStartOf(builtin);
+}
+
 // static
 bool Builtins::IsBuiltin(const Tagged<Code> code) {
   return Builtins::IsBuiltinId(code->builtin_id());
 }
 
-bool Builtins::IsBuiltinHandle(Handle<HeapObject> maybe_code,
+bool Builtins::IsBuiltinHandle(IndirectHandle<HeapObject> maybe_code,
                                Builtin* builtin) const {
   Address* handle_location = maybe_code.location();
   Address* builtins_table = isolate_->builtin_table();
@@ -431,16 +410,16 @@ void Builtins::EmitCodeCreateEvents(Isolate* isolate) {
   int i = 0;
   HandleScope scope(isolate);
   for (; i < ToInt(Builtin::kFirstBytecodeHandler); i++) {
-    Handle<Code> builtin_code(&builtins[i]);
-    Handle<AbstractCode> code = Cast<AbstractCode>(builtin_code);
+    auto builtin_code = DirectHandle<Code>::FromSlot(&builtins[i]);
+    DirectHandle<AbstractCode> code = Cast<AbstractCode>(builtin_code);
     PROFILE(isolate, CodeCreateEvent(LogEventListener::CodeTag::kBuiltin, code,
                                      Builtins::name(FromInt(i))));
   }
 
   static_assert(kLastBytecodeHandlerPlusOne == kBuiltinCount);
   for (; i < kBuiltinCount; i++) {
-    Handle<Code> builtin_code(&builtins[i]);
-    Handle<AbstractCode> code = Cast<AbstractCode>(builtin_code);
+    auto builtin_code = DirectHandle<Code>::FromSlot(&builtins[i]);
+    DirectHandle<AbstractCode> code = Cast<AbstractCode>(builtin_code);
     interpreter::Bytecode bytecode =
         builtin_metadata[i].data.bytecode_and_scale.bytecode;
     interpreter::OperandScale scale =
@@ -453,7 +432,7 @@ void Builtins::EmitCodeCreateEvents(Isolate* isolate) {
 }
 
 // static
-Handle<Code> Builtins::CreateInterpreterEntryTrampolineForProfiling(
+DirectHandle<Code> Builtins::CreateInterpreterEntryTrampolineForProfiling(
     Isolate* isolate) {
   DCHECK_NOT_NULL(isolate->embedded_blob_code());
   DCHECK_NE(0, isolate->embedded_blob_code_size());
@@ -484,7 +463,7 @@ Handle<Code> Builtins::CreateInterpreterEntryTrampolineForProfiling(
   desc.handler_table_offset = instruction_size;
   desc.constant_pool_offset = instruction_size;
   desc.code_comments_offset = instruction_size;
-  desc.builtin_jump_table_info_offset = instruction_size;
+  desc.jump_table_info_offset = instruction_size;
 
   CodeDesc::Verify(&desc);
 
@@ -557,12 +536,12 @@ CodeEntrypointTag Builtins::EntrypointTagFor(Builtin builtin) {
 }
 
 // static
-bool Builtins::AllowDynamicFunction(Isolate* isolate,
-                                    DirectHandle<JSFunction> target,
-                                    Handle<JSObject> target_global_proxy) {
+bool Builtins::AllowDynamicFunction(
+    Isolate* isolate, DirectHandle<JSFunction> target,
+    DirectHandle<JSObject> target_global_proxy) {
   if (v8_flags.allow_unsafe_function_constructor) return true;
   HandleScopeImplementer* impl = isolate->handle_scope_implementer();
-  Handle<NativeContext> responsible_context = impl->LastEnteredContext();
+  DirectHandle<NativeContext> responsible_context = impl->LastEnteredContext();
   // TODO(verwaest): Remove this.
   if (responsible_context.is_null()) {
     return true;

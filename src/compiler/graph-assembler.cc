@@ -17,6 +17,7 @@
 #include "src/compiler/linkage.h"
 #include "src/compiler/type-cache.h"
 // For TNode types.
+#include "src/compiler/allocation-builder-inl.h"
 #include "src/deoptimizer/deoptimize-reason.h"
 #include "src/objects/elements-kind.h"
 #include "src/objects/heap-number.h"
@@ -94,8 +95,9 @@ Node* GraphAssembler::UniqueIntPtrConstant(intptr_t value) {
           : common()->Int32Constant(static_cast<int32_t>(value))));
 }
 
-Node* JSGraphAssembler::SmiConstant(int32_t value) {
-  return AddClonedNode(jsgraph()->SmiConstant(value));
+TNode<Smi> JSGraphAssembler::SmiConstant(int32_t value) {
+  return TNode<Smi>::UncheckedCast(
+      AddClonedNode(jsgraph()->SmiConstant(value)));
 }
 
 Node* GraphAssembler::Float64Constant(double value) {
@@ -152,6 +154,16 @@ Node* GraphAssembler::SetStackPointer(Node* node) {
       graph()->NewNode(machine()->SetStackPointer(), node, effect()));
 }
 #endif
+
+TNode<HeapNumber> JSGraphAssembler::AllocateHeapNumber(Node* value) {
+  AllocationBuilder a(jsgraph(), broker(), effect(), control());
+  a.Allocate(sizeof(HeapNumber), AllocationType::kYoung, Type::OtherInternal());
+  a.Store(AccessBuilder::ForMap(), broker()->heap_number_map());
+  a.Store(AccessBuilder::ForHeapNumberValue(), value);
+  Node* new_heap_number = a.Finish();
+  UpdateEffectControlWith(new_heap_number);
+  return TNode<HeapNumber>::UncheckedCast(new_heap_number);
+}
 
 Node* GraphAssembler::LoadHeapNumberValue(Node* heap_number) {
   return Load(MachineType::Float64(), heap_number,
@@ -472,6 +484,27 @@ TNode<Boolean> JSGraphAssembler::ObjectIsUndetectable(TNode<Object> value) {
       graph()->NewNode(simplified()->ObjectIsUndetectable(), value));
 }
 
+Node* JSGraphAssembler::BooleanNot(Node* cond) {
+  return AddNode(graph()->NewNode(simplified()->BooleanNot(), cond));
+}
+
+Node* JSGraphAssembler::CheckSmi(Node* value, const FeedbackSource& feedback) {
+  return AddNode(graph()->NewNode(simplified()->CheckSmi(feedback), value,
+                                  effect(), control()));
+}
+
+Node* JSGraphAssembler::CheckNumberFitsInt32(Node* value,
+                                             const FeedbackSource& feedback) {
+  return AddNode(graph()->NewNode(simplified()->CheckNumberFitsInt32(feedback),
+                                  value, effect(), control()));
+}
+
+Node* JSGraphAssembler::CheckNumber(Node* value,
+                                    const FeedbackSource& feedback) {
+  return AddNode(graph()->NewNode(simplified()->CheckNumber(feedback), value,
+                                  effect(), control()));
+}
+
 Node* JSGraphAssembler::CheckIf(Node* cond, DeoptimizeReason reason,
                                 const FeedbackSource& feedback) {
   return AddNode(graph()->NewNode(simplified()->CheckIf(reason, feedback), cond,
@@ -490,6 +523,15 @@ void JSGraphAssembler::Assert(TNode<Word32T> cond, const char* condition_string,
   AddNode(graph()->NewNode(
       common()->Assert(BranchSemantics::kMachine, condition_string, file, line),
       cond, effect(), control()));
+}
+
+void JSGraphAssembler::DetachContextCell(TNode<Object> context,
+                                         TNode<Object> new_value, int index,
+                                         FrameState frame_state) {
+  AddNode<Object>(graph()->NewNode(javascript()->DetachContextCell(index),
+                                   context, new_value, NoContextConstant(),
+                                   static_cast<Node*>(frame_state), effect(),
+                                   control()));
 }
 
 TNode<Boolean> JSGraphAssembler::NumberIsFloat64Hole(TNode<Number> value) {
@@ -843,19 +885,15 @@ class ArrayBufferViewAccessBuilder {
         .Value();
   }
 
-  TNode<Word32T> BuildDetachedCheck(TNode<JSArrayBufferView> view) {
+  TNode<Word32T> BuildDetachedOrOutOfBoundsCheck(
+      TNode<JSArrayBufferView> view) {
     auto& a = *assembler_;
 
     // Load the underlying buffer and its bitfield.
     TNode<HeapObject> buffer = a.LoadField<HeapObject>(
         AccessBuilder::ForJSArrayBufferViewBuffer(), view);
-    TNode<Word32T> buffer_bit_field =
-        MachineLoadField<Word32T>(AccessBuilder::ForJSArrayBufferBitField(),
-                                  buffer, UseInfo::TruncatingWord32());
     // Mask the detached bit.
-    TNode<Word32T> detached_bit =
-        a.Word32And(buffer_bit_field,
-                    a.Uint32Constant(JSArrayBuffer::WasDetachedBit::kMask));
+    TNode<Word32T> detached_bit = a.ArrayBufferDetachedBit(buffer);
 
     // If we statically know we cannot have rab/gsab backed, we are done here.
     if (!maybe_rab_gsab()) {
@@ -937,6 +975,22 @@ TNode<Number> JSGraphAssembler::ArrayBufferViewByteLength(
       TypeCache::Get()->kJSArrayBufferByteLengthType);
 }
 
+TNode<Word32T> JSGraphAssembler::ArrayBufferDetachedBit(
+    TNode<HeapObject> buffer) {
+  TNode<Word32T> bitfield = EnterMachineGraph<Word32T>(
+      LoadField<Word32T>(AccessBuilder::ForJSArrayBufferBitField(), buffer),
+      UseInfo::TruncatingWord32());
+  return Word32And(bitfield,
+                   Uint32Constant(JSArrayBuffer::WasDetachedBit::kMask));
+}
+
+TNode<Word32T> JSGraphAssembler::ArrayBufferViewDetachedBit(
+    TNode<JSArrayBufferView> array_buffer_view) {
+  TNode<HeapObject> buffer = LoadField<HeapObject>(
+      AccessBuilder::ForJSArrayBufferViewBuffer(), array_buffer_view);
+  return ArrayBufferDetachedBit(buffer);
+}
+
 TNode<Number> JSGraphAssembler::TypedArrayLength(
     TNode<JSTypedArray> typed_array,
     std::set<ElementsKind> elements_kinds_candidates, TNode<Context> context) {
@@ -947,14 +1001,15 @@ TNode<Number> JSGraphAssembler::TypedArrayLength(
                                   TypeCache::Get()->kJSTypedArrayLengthType);
 }
 
-void JSGraphAssembler::CheckIfTypedArrayWasDetached(
+void JSGraphAssembler::CheckIfTypedArrayWasDetachedOrOutOfBounds(
     TNode<JSTypedArray> typed_array,
     std::set<ElementsKind> elements_kinds_candidates,
     const FeedbackSource& feedback) {
   ArrayBufferViewAccessBuilder builder(this, JS_TYPED_ARRAY_TYPE,
                                        std::move(elements_kinds_candidates));
 
-  TNode<Word32T> detached_check = builder.BuildDetachedCheck(typed_array);
+  TNode<Word32T> detached_check =
+      builder.BuildDetachedOrOutOfBoundsCheck(typed_array);
   TNode<Boolean> is_not_detached =
       ExitMachineGraph<Boolean>(Word32Equal(detached_check, Uint32Constant(0)),
                                 MachineRepresentation::kBit, Type::Boolean());
@@ -1229,6 +1284,10 @@ void GraphAssembler::BranchWithCriticalSafetyCheck(
   }
 
   BranchImpl(default_branch_semantics_, condition, if_true, if_false, hint);
+}
+
+void GraphAssembler::RuntimeAbort(AbortReason reason) {
+  AddNode(graph()->NewNode(simplified()->RuntimeAbort(reason)));
 }
 
 void GraphAssembler::ConnectUnreachableToEnd() {

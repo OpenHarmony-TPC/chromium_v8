@@ -8,10 +8,13 @@
 #include <atomic>
 #include <memory>
 
+#if V8_OS_DARWIN
+#include "pthread.h"
+#endif
+
 #include "src/base/logging.h"
 #include "src/base/macros.h"
 #include "src/base/platform/condition-variable.h"
-#include "src/base/platform/mutex.h"
 #include "src/common/assert-scope.h"
 #include "src/common/ptr-compr.h"
 #include "src/common/thread-local-storage.h"
@@ -74,10 +77,10 @@ class V8_EXPORT_PRIVATE LocalHeap {
     return persistent_handles_->NewHandle(object);
   }
 
-  template <typename T, template <typename> typename HandleType,
-            typename = std::enable_if_t<
-                std::is_convertible_v<HandleType<T>, DirectHandle<T>>>>
-  IndirectHandle<T> NewPersistentHandle(HandleType<T> object) {
+  template <typename T, template <typename> typename HandleType>
+  IndirectHandle<T> NewPersistentHandle(HandleType<T> object)
+    requires(std::is_convertible_v<HandleType<T>, DirectHandle<T>>)
+  {
     return NewPersistentHandle(*object);
   }
 
@@ -87,11 +90,11 @@ class V8_EXPORT_PRIVATE LocalHeap {
     return NewPersistentHandle(Tagged<T>(object));
   }
 
-  template <typename T, template <typename> typename MaybeHandleType,
-            typename = std::enable_if_t<std::is_convertible_v<
-                MaybeHandleType<T>, MaybeDirectHandle<T>>>>
+  template <typename T, template <typename> typename MaybeHandleType>
   MaybeIndirectHandle<T> NewPersistentMaybeHandle(
-      MaybeHandleType<T> maybe_handle) {
+      MaybeHandleType<T> maybe_handle)
+    requires(std::is_convertible_v<MaybeHandleType<T>, MaybeDirectHandle<T>>)
+  {
     DirectHandle<T> handle;
     if (maybe_handle.ToHandle(&handle)) {
       return NewPersistentHandle(handle);
@@ -168,21 +171,24 @@ class V8_EXPORT_PRIVATE LocalHeap {
   V8_WARN_UNUSED_RESULT inline AllocationResult AllocateRaw(
       int size_in_bytes, AllocationType allocation,
       AllocationOrigin origin = AllocationOrigin::kRuntime,
-      AllocationAlignment alignment = kTaggedAligned);
+      AllocationAlignment alignment = kTaggedAligned,
+      AllocationHint hint = AllocationHint());
 
   // Allocate an uninitialized object.
   template <HeapAllocator::AllocationRetryMode mode>
   Tagged<HeapObject> AllocateRawWith(
       int size_in_bytes, AllocationType allocation,
       AllocationOrigin origin = AllocationOrigin::kRuntime,
-      AllocationAlignment alignment = kTaggedAligned);
+      AllocationAlignment alignment = kTaggedAligned,
+      AllocationHint hint = AllocationHint());
 
   // Allocates an uninitialized object and crashes when object
   // cannot be allocated.
   V8_WARN_UNUSED_RESULT inline Address AllocateRawOrFail(
       int size_in_bytes, AllocationType allocation,
       AllocationOrigin origin = AllocationOrigin::kRuntime,
-      AllocationAlignment alignment = kTaggedAligned);
+      AllocationAlignment alignment = kTaggedAligned,
+      AllocationHint hint = AllocationHint());
 
   void NotifyObjectSizeChange(Tagged<HeapObject> object, int old_size,
                               int new_size,
@@ -227,6 +233,14 @@ class V8_EXPORT_PRIVATE LocalHeap {
   V8_INLINE void ExecuteMainThreadWhileParked(Callback callback);
   template <typename Callback>
   V8_INLINE void ExecuteBackgroundThreadWhileParked(Callback callback);
+
+#if V8_OS_DARWIN
+  pthread_t thread_handle() { return thread_handle_; }
+#endif
+
+  void Iterate(RootVisitor* visitor);
+
+  HeapAllocator* allocator() { return &heap_allocator_; }
 
  private:
   using ParkedBit = base::BitField8<bool, 0, 1>;
@@ -370,6 +384,10 @@ class V8_EXPORT_PRIVATE LocalHeap {
 
   AtomicThreadState state_;
 
+#if V8_OS_DARWIN
+  pthread_t thread_handle_;
+#endif
+
   bool allocation_failed_;
   int nested_parked_scopes_;
 
@@ -383,6 +401,7 @@ class V8_EXPORT_PRIVATE LocalHeap {
   std::unique_ptr<MarkingBarrier> marking_barrier_;
 
   GCCallbacksInSafepoint gc_epilogue_callbacks_;
+  base::SmallVector<GCRootsProvider*, 4> roots_providers_;
 
   HeapAllocator heap_allocator_;
 
@@ -399,6 +418,7 @@ class V8_EXPORT_PRIVATE LocalHeap {
   friend class IsolateSafepointScope;
   friend class ParkedScope;
   friend class UnparkedScope;
+  friend class GCRootsProviderScope;
 };
 
 }  // namespace internal

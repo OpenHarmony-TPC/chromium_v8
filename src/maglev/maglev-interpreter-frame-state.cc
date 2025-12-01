@@ -222,7 +222,7 @@ bool AspectIncludes(const As& as, const Bs& bs, const CompareFunction& Compare,
   typename As::const_iterator a = as.begin();
   typename Bs::const_iterator b = bs.begin();
   while (a != as.end()) {
-    if constexpr (!std::is_same<IsEmptyFunction, std::nullptr_t>::value) {
+    if constexpr (!std::is_same_v<IsEmptyFunction, std::nullptr_t>) {
       if (IsEmpty(a->second)) {
         ++a;
         continue;
@@ -250,6 +250,13 @@ bool MaybeEmptyAspectIncludes(const As& as, const Bs& bs,
                               const Function& Compare) {
   return AspectIncludes<As, Bs, Function>(as, bs, Compare,
                                           [](auto x) { return x.empty(); });
+}
+
+template <typename As, typename Bs, typename Function>
+bool MaybeNullAspectIncludes(const As& as, const Bs& bs,
+                             const Function& Compare) {
+  return AspectIncludes<As, Bs, Function>(as, bs, Compare,
+                                          [](auto x) { return x == nullptr; });
 }
 
 bool NodeInfoIncludes(const NodeInfo& before, const NodeInfo& after) {
@@ -332,8 +339,8 @@ bool KnownNodeAspects::IsCompatibleWithLoopHeader(
     return false;
   }
 
-  if (!AspectIncludes(loop_header.loaded_context_slots, loaded_context_slots,
-                      SameValue)) {
+  if (!MaybeNullAspectIncludes(loop_header.loaded_context_slots,
+                               loaded_context_slots, SameValue)) {
     if (V8_UNLIKELY(v8_flags.trace_maglev_loop_speeling)) {
       std::cout << "KNA after loop has incompatible loaded_context_slots\n";
     }
@@ -550,17 +557,14 @@ void MergePointInterpreterFrameState::MergePhis(
 }
 
 void MergePointInterpreterFrameState::MergeVirtualObject(
-    MaglevGraphBuilder* builder, const VirtualObject::List unmerged_vos,
+    MaglevGraphBuilder* builder, const VirtualObjectList unmerged_vos,
     const KnownNodeAspects& unmerged_aspects, VirtualObject* merged,
     VirtualObject* unmerged) {
   if (merged == unmerged) {
     // No need to merge.
     return;
   }
-  // Currently, the graph builder will never change the VO map.
-  DCHECK(unmerged->map().equals(merged->map()));
-  DCHECK_EQ(merged->slot_count(), unmerged->slot_count());
-  DCHECK_EQ(merged->allocation(), unmerged->allocation());
+  DCHECK(unmerged->compatible_for_merge(merged));
 
   if (v8_flags.trace_maglev_graph_building) {
     std::cout << " - Merging VOS: "
@@ -572,19 +576,15 @@ void MergePointInterpreterFrameState::MergeVirtualObject(
               << "(unmerged)" << std::endl;
   }
 
-  VirtualObject* result = builder->CreateVirtualObjectForMerge(
-      unmerged->map(), unmerged->slot_count());
-  for (uint32_t i = 0; i < merged->slot_count(); i++) {
-    std::optional<ValueNode*> merged_value_opt = MergeVirtualObjectValue(
-        builder, unmerged_aspects, merged->get_by_index(i),
-        unmerged->get_by_index(i));
-    if (!merged_value_opt.has_value()) {
-      // Merge failed, we should escape the allocation instead.
-      unmerged->allocation()->ForceEscaping();
-      return;
-    }
-    result->set_by_index(i, merged_value_opt.value());
+  auto maybe_result = merged->Merge(
+      unmerged, builder->NewObjectId(), builder->zone(),
+      [&](ValueNode* a, ValueNode* b) {
+        return MergeVirtualObjectValue(builder, unmerged_aspects, a, b);
+      });
+  if (!maybe_result) {
+    return unmerged->allocation()->ForceEscaping();
   }
+  VirtualObject* result = *maybe_result;
   result->set_allocation(unmerged->allocation());
   result->Snapshot();
   unmerged->allocation()->UpdateObject(result);
@@ -593,7 +593,7 @@ void MergePointInterpreterFrameState::MergeVirtualObject(
 
 void MergePointInterpreterFrameState::MergeVirtualObjects(
     MaglevGraphBuilder* builder, MaglevCompilationUnit& compilation_unit,
-    const VirtualObject::List unmerged_vos,
+    const VirtualObjectList unmerged_vos,
     const KnownNodeAspects& unmerged_aspects) {
   if (frame_state_.virtual_objects().is_empty()) return;
   if (unmerged_vos.is_empty()) return;
@@ -609,9 +609,9 @@ void MergePointInterpreterFrameState::MergeVirtualObjects(
 
   // We iterate both list in reversed order of ids collecting the umerged
   // objects into the map, until we find a common virtual object.
-  VirtualObject::List::WalkUntilCommon(
+  VirtualObjectList::WalkUntilCommon(
       frame_state_.virtual_objects(), unmerged_vos,
-      [&](VirtualObject* vo, VirtualObject::List vos) {
+      [&](VirtualObject* vo, VirtualObjectList vos) {
         // If we have a version in the map, it should be the most up-to-date,
         // since the list is in reverse order.
         auto& map = unmerged_vos == vos ? unmerged_map : merged_map;
@@ -855,7 +855,7 @@ const LoopEffects* MergePointInterpreterFrameState::loop_effects() {
 void MergePointInterpreterFrameState::MergeThrow(
     MaglevGraphBuilder* builder, const MaglevCompilationUnit* handler_unit,
     const KnownNodeAspects& known_node_aspects,
-    const VirtualObject::List virtual_objects) {
+    const VirtualObjectList virtual_objects) {
   // We don't count total predecessors on exception handlers, but we do want to
   // special case the first predecessor so we do count predecessors_so_far
   DCHECK_EQ(predecessor_count_, 0);
@@ -944,7 +944,7 @@ ValueNode* FromInt32ToTagged(const MaglevGraphBuilder* builder,
     tagged = Node::New<Int32ToNumber>(builder->zone(), {value});
   }
 
-  predecessor->nodes().Add(tagged);
+  predecessor->nodes().push_back(tagged);
   builder->compilation_unit()->RegisterNodeInGraphLabeller(tagged);
   return tagged;
 }
@@ -963,7 +963,21 @@ ValueNode* FromUint32ToTagged(const MaglevGraphBuilder* builder,
     tagged = Node::New<Uint32ToNumber>(builder->zone(), {value});
   }
 
-  predecessor->nodes().Add(tagged);
+  predecessor->nodes().push_back(tagged);
+  builder->compilation_unit()->RegisterNodeInGraphLabeller(tagged);
+  return tagged;
+}
+
+ValueNode* FromIntPtrToTagged(const MaglevGraphBuilder* builder,
+                              NodeType node_type, ValueNode* value,
+                              BasicBlock* predecessor) {
+  DCHECK_EQ(value->properties().value_representation(),
+            ValueRepresentation::kIntPtr);
+  DCHECK(!value->properties().is_conversion());
+
+  ValueNode* tagged = Node::New<IntPtrToNumber>(builder->zone(), {value});
+
+  predecessor->nodes().push_back(tagged);
   builder->compilation_unit()->RegisterNodeInGraphLabeller(tagged);
   return tagged;
 }
@@ -980,7 +994,7 @@ ValueNode* FromFloat64ToTagged(const MaglevGraphBuilder* builder,
       builder->zone(), {value},
       Float64ToTagged::ConversionMode::kCanonicalizeSmi);
 
-  predecessor->nodes().Add(tagged);
+  predecessor->nodes().push_back(tagged);
   builder->compilation_unit()->RegisterNodeInGraphLabeller(tagged);
   return tagged;
 }
@@ -997,7 +1011,7 @@ ValueNode* FromHoleyFloat64ToTagged(const MaglevGraphBuilder* builder,
       builder->zone(), {value},
       HoleyFloat64ToTagged::ConversionMode::kCanonicalizeSmi);
 
-  predecessor->nodes().Add(tagged);
+  predecessor->nodes().push_back(tagged);
   builder->compilation_unit()->RegisterNodeInGraphLabeller(tagged);
   return tagged;
 }
@@ -1006,13 +1020,14 @@ ValueNode* NonTaggedToTagged(const MaglevGraphBuilder* builder,
                              NodeType node_type, ValueNode* value,
                              BasicBlock* predecessor) {
   switch (value->properties().value_representation()) {
-    case ValueRepresentation::kIntPtr:
     case ValueRepresentation::kTagged:
       UNREACHABLE();
     case ValueRepresentation::kInt32:
       return FromInt32ToTagged(builder, node_type, value, predecessor);
     case ValueRepresentation::kUint32:
       return FromUint32ToTagged(builder, node_type, value, predecessor);
+    case ValueRepresentation::kIntPtr:
+      return FromIntPtrToTagged(builder, node_type, value, predecessor);
     case ValueRepresentation::kFloat64:
       return FromFloat64ToTagged(builder, node_type, value, predecessor);
     case ValueRepresentation::kHoleyFloat64:
@@ -1081,15 +1096,18 @@ ValueNode* MergePointInterpreterFrameState::MergeValue(
         // happened to be true before allowing the loop to conclude in
         // `TryMergeLoop`. Some types which are known to cause issues are
         // generalized here.
-        NodeType initial_optimistic_type =
-            (unmerged_type == NodeType::kInternalizedString) ? NodeType::kString
-                                                             : unmerged_type;
+        NodeType initial_optimistic_type = unmerged_type;
+        if (!IsEmptyNodeType(IntersectType(unmerged_type, NodeType::kString))) {
+          // Make sure we don't depend on something being an internalized string
+          // in particular, by making the type cover all String subtypes.
+          initial_optimistic_type = UnionType(unmerged_type, NodeType::kString);
+        }
         result->set_type(initial_optimistic_type);
       }
     } else {
       if (optimistic_loop_phis) {
         if (NodeInfo* node_info = known_node_aspects_->TryGetInfoFor(result)) {
-          node_info->IntersectType(unmerged_type);
+          node_info->UnionType(unmerged_type);
         }
         result->merge_type(unmerged_type);
       }
@@ -1178,7 +1196,7 @@ ValueNode* MergePointInterpreterFrameState::MergeValue(
 
   result = Node::New<Phi>(builder->zone(), predecessor_count_, this, owner);
   if (v8_flags.trace_maglev_graph_building) {
-    for (int i = 0; i < predecessor_count_; i++) {
+    for (uint32_t i = 0; i < predecessor_count_; i++) {
       result->initialize_input_null(i);
     }
   }
@@ -1200,9 +1218,9 @@ ValueNode* MergePointInterpreterFrameState::MergeValue(
                                  predecessors_[i]);
     }
     result->set_input(i, tagged);
-    type = IntersectType(type, merged_type != NodeType::kUnknown
-                                   ? merged_type
-                                   : AlternativeType(alt));
+    type = UnionType(type, merged_type != NodeType::kUnknown
+                               ? merged_type
+                               : AlternativeType(alt));
     i++;
   }
   DCHECK_EQ(i, predecessors_so_far_);
@@ -1220,7 +1238,7 @@ ValueNode* MergePointInterpreterFrameState::MergeValue(
     DCHECK(result->is_unmerged_loop_phi());
     UpdateLoopPhiType(result, type);
   } else {
-    result->set_type(IntersectType(type, unmerged_type));
+    result->set_type(UnionType(type, unmerged_type));
   }
 
   phis_.Add(result);
@@ -1241,7 +1259,7 @@ MergePointInterpreterFrameState::MergeVirtualObjectValue(
                     unmerged_aspects, unmerged);
     unmerged = EnsureTagged(builder, unmerged_aspects, unmerged,
                             predecessors_[predecessors_so_far_]);
-    for (int i = predecessors_so_far_; i < predecessor_count_; i++) {
+    for (uint32_t i = predecessors_so_far_; i < predecessor_count_; i++) {
       result->change_input(i, unmerged);
     }
     DCHECK_GT(predecessors_so_far_, 0);
@@ -1280,7 +1298,7 @@ MergePointInterpreterFrameState::MergeVirtualObjectValue(
   result = Node::New<Phi>(builder->zone(), predecessor_count_, this,
                           interpreter::Register::invalid_value());
   if (v8_flags.trace_maglev_graph_building) {
-    for (int i = 0; i < predecessor_count_; i++) {
+    for (uint32_t i = 0; i < predecessor_count_; i++) {
       result->initialize_input_null(i);
     }
   }
@@ -1290,7 +1308,7 @@ MergePointInterpreterFrameState::MergeVirtualObjectValue(
 
   // We must have seen the same value so far.
   DCHECK_NOT_NULL(known_node_aspects_);
-  for (int i = 0; i < predecessors_so_far_; i++) {
+  for (uint32_t i = 0; i < predecessors_so_far_; i++) {
     ValueNode* tagged_merged =
         EnsureTagged(builder, *known_node_aspects_, merged, predecessors_[i]);
     result->set_input(i, tagged_merged);
@@ -1300,11 +1318,11 @@ MergePointInterpreterFrameState::MergeVirtualObjectValue(
       builder->broker(), builder->local_isolate(), unmerged_aspects, unmerged);
   unmerged = EnsureTagged(builder, unmerged_aspects, unmerged,
                           predecessors_[predecessors_so_far_]);
-  for (int i = predecessors_so_far_; i < predecessor_count_; i++) {
+  for (uint32_t i = predecessors_so_far_; i < predecessor_count_; i++) {
     result->set_input(i, unmerged);
   }
 
-  result->set_type(IntersectType(merged_type, unmerged_type));
+  result->set_type(UnionType(merged_type, unmerged_type));
 
   phis_.Add(result);
   return result;
@@ -1352,7 +1370,7 @@ ValueNode* MergePointInterpreterFrameState::NewLoopPhi(
   Phi* result = Node::New<Phi>(zone, predecessor_count_, this, reg);
 
   if (v8_flags.trace_maglev_graph_building) {
-    for (int i = 0; i < predecessor_count_; i++) {
+    for (uint32_t i = 0; i < predecessor_count_; i++) {
       result->initialize_input_null(i);
     }
   }
@@ -1370,21 +1388,50 @@ void MergePointInterpreterFrameState::ReducePhiPredecessorCount(unsigned num) {
   }
 }
 
-bool MergePointInterpreterFrameState::IsUnreachable() const {
+bool MergePointInterpreterFrameState::IsUnreachableByForwardEdge() const {
   DCHECK_EQ(predecessors_so_far_, predecessor_count_);
-  if (predecessor_count_ > 1) {
-    return false;
+  DCHECK_IMPLIES(
+      is_loop(),
+      predecessor_at(predecessor_count_ - 1)->control_node()->Is<JumpLoop>());
+  switch (predecessor_count_) {
+    case 0:
+      // This happens after the back-edge of a resumable loop died at which
+      // point we mark it non-looping.
+      DCHECK(!is_loop());
+      return true;
+    case 1:
+      return is_loop();
+    default:
+      return false;
   }
-  // This should actually only support predecessor_count == 1, but we
-  // currently don't eliminate resumable loop headers (and subsequent code
-  // until the next resume) that end up being unreachable from JumpLoop.
-  if (predecessor_count_ == 0) {
-    DCHECK(is_resumable_loop());
-    return true;
+}
+
+void MergePointInterpreterFrameState::RemovePredecessorAt(int predecessor_id) {
+  // Only call this function if we have already process all merge points.
+  DCHECK_EQ(predecessors_so_far_, predecessor_count_);
+  DCHECK_GT(predecessor_count_, 0);
+  // Shift predecessors_ by 1.
+  for (uint32_t i = predecessor_id; i < predecessor_count_ - 1; i++) {
+    predecessors_[i] = predecessors_[i + 1];
+    // Update cache in unconditional control node.
+    ControlNode* control = predecessors_[i]->control_node();
+    if (auto unconditional_control =
+            control->TryCast<UnconditionalControlNode>()) {
+      DCHECK_EQ(unconditional_control->predecessor_id(), i + 1);
+      unconditional_control->set_predecessor_id(i);
+    }
   }
-  DCHECK_EQ(predecessor_count_, 1);
-  DCHECK_IMPLIES(is_loop(), predecessor_at(0)->control_node()->Is<JumpLoop>());
-  return is_loop();
+  // Remove Phi input of index predecessor_id.
+  for (Phi* phi : *phis()) {
+    DCHECK_EQ(phi->input_count(), predecessor_count_);
+    // Shift phi inputs by 1.
+    for (int i = predecessor_id; i < phi->input_count() - 1; i++) {
+      phi->change_input(i, phi->input(i + 1).node());
+    }
+    phi->reduce_input_count(1);
+  }
+  predecessor_count_--;
+  predecessors_so_far_--;
 }
 
 }  // namespace maglev

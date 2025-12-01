@@ -186,9 +186,10 @@ class SerializationDataQueue {
 
 class Worker : public std::enable_shared_from_this<Worker> {
  public:
-  static constexpr i::ExternalPointerTag kManagedTag = i::kGenericManagedTag;
+  static constexpr i::ExternalPointerTag kManagedTag = i::kD8WorkerTag;
 
-  explicit Worker(Isolate* parent_isolate, const char* script);
+  explicit Worker(Isolate* parent_isolate, const char* script,
+                  bool flush_denormals);
   ~Worker();
 
   // Post a message to the worker. The worker will take ownership of the
@@ -267,6 +268,7 @@ class Worker : public std::enable_shared_from_this<Worker> {
 
   base::Thread* thread_ = nullptr;
   char* script_;
+  bool flush_denormals_;
   std::atomic<State> state_;
   bool is_joined_ = false;
   // For signalling that the worker has started.
@@ -399,8 +401,7 @@ class ShellOptions {
   // repeated flags for identical boolean values. We allow exceptions for flags
   // with enum-like arguments since their conflicts can also be specified
   // completely.
-  template <class T,
-            bool kAllowIdenticalAssignment = std::is_same<T, bool>::value>
+  template <class T, bool kAllowIdenticalAssignment = std::is_same_v<T, bool>>
   class DisallowReassignment {
    public:
     DisallowReassignment(const char* name, T value)
@@ -512,6 +513,7 @@ class ShellOptions {
   DisallowReassignment<bool> wasm_trap_handler = {"wasm-trap-handler", true};
 #endif  // V8_ENABLE_WEBASSEMBLY
   DisallowReassignment<bool> expose_fast_api = {"expose-fast-api", false};
+  DisallowReassignment<bool> flush_denormals = {"flush-denormals", false};
   DisallowReassignment<size_t> max_serializer_memory = {"max-serializer-memory",
                                                         1 * i::MB};
 };
@@ -604,6 +606,8 @@ class Shell : public i::AllStatic {
   static void InstallConditionalFeatures(
       const v8::FunctionCallbackInfo<v8::Value>& info);
   static void EnableJSPI(const v8::FunctionCallbackInfo<v8::Value>& info);
+  static void SetFlushDenormals(
+      const v8::FunctionCallbackInfo<v8::Value>& info);
 
   static void AsyncHooksCreateHook(
       const v8::FunctionCallbackInfo<v8::Value>& info);
@@ -641,10 +645,14 @@ class Shell : public i::AllStatic {
   static void NotifyDone(const v8::FunctionCallbackInfo<v8::Value>& info);
   static void QuitOnce(v8::FunctionCallbackInfo<v8::Value>* info);
   static void Quit(const v8::FunctionCallbackInfo<v8::Value>& info);
-  static void Terminate(const v8::FunctionCallbackInfo<v8::Value>& info);
+  static void TerminateNow(const v8::FunctionCallbackInfo<v8::Value>& info);
+  static void ScheduleTermination(
+      const v8::FunctionCallbackInfo<v8::Value>& info);
   static void Version(const v8::FunctionCallbackInfo<v8::Value>& info);
   static void WriteFile(const v8::FunctionCallbackInfo<v8::Value>& info);
   static void ReadFile(const v8::FunctionCallbackInfo<v8::Value>& info);
+  static void CreateWasmMemoryMapDescriptor(
+      const v8::FunctionCallbackInfo<v8::Value>& info);
   static char* ReadChars(const char* name, int* size_out);
   static MaybeLocal<PrimitiveArray> ReadLines(Isolate* isolate,
                                               const char* name);
@@ -790,7 +798,7 @@ class Shell : public i::AllStatic {
 
   static const char* stringify_source_;
   static CounterMap* counter_map_;
-  static base::SharedMutex counter_mutex_;
+  static base::Mutex counter_mutex_;
   // We statically allocate a set of local counters to be used if we
   // don't want to store the stats in a memory-mapped file
   static CounterCollection local_counters_;

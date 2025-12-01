@@ -7,6 +7,7 @@
 #include "src/codegen/signature.h"
 #include "src/wasm/function-body-decoder.h"
 #include "src/wasm/leb-helper.h"
+#include "src/wasm/struct-types.h"
 #include "src/wasm/wasm-constants.h"
 #include "src/wasm/wasm-module.h"
 #include "src/zone/zone-containers.h"
@@ -124,7 +125,8 @@ void WriteInitializerExpressionWithoutEnd(ZoneBuffer* buffer,
       break;
     case WasmInitExpr::kRefNullConst:
       buffer->write_u8(kExprRefNull);
-      buffer->write_i32v(HeapType(init.immediate().heap_type).code());
+      if (init.heap_type().encoding_needs_exact()) buffer->write_u8(kExactCode);
+      buffer->write_i32v(init.heap_type().code());
       break;
     case WasmInitExpr::kRefFuncConst:
       buffer->write_u8(kExprRefFunc);
@@ -284,19 +286,24 @@ void WasmFunctionBuilder::EmitWithU32V(WasmOpcode opcode, uint32_t immediate) {
 }
 
 namespace {
+void WriteHeapType(ZoneBuffer* buffer, HeapType type) {
+  if (type.encoding_needs_exact()) buffer->write_u8(kExactCode);
+  buffer->write_i32v(type.code());
+}
 void WriteValueType(ZoneBuffer* buffer, const ValueType& type) {
   buffer->write_u8(type.value_type_code());
   if (type.encoding_needs_shared()) {
     buffer->write_u8(kSharedFlagCode);
   }
   if (type.encoding_needs_heap_type()) {
-    buffer->write_i32v(type.heap_type().code());
-  }
-  if (type.is_rtt()) {
-    buffer->write_u32v(type.ref_index());
+    WriteHeapType(buffer, type.heap_type());
   }
 }
 }  // namespace
+
+void WasmFunctionBuilder::EmitHeapType(HeapType type) {
+  WriteHeapType(&body_, type);
+}
 
 void WasmFunctionBuilder::EmitValueType(ValueType type) {
   WriteValueType(&body_, type);
@@ -518,7 +525,7 @@ uint32_t WasmModuleBuilder::IncreaseTableMinSize(uint32_t table_index,
                                                  uint32_t count) {
   DCHECK_LT(table_index, tables_.size());
   uint32_t old_min_size = tables_[table_index].min_size;
-  if (count > v8_flags.wasm_max_table_size - old_min_size) {
+  if (count > wasm::max_table_size() - old_min_size) {
     return std::numeric_limits<uint32_t>::max();
   }
   tables_[table_index].min_size = old_min_size + count;
@@ -662,20 +669,26 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer* buffer) const {
   // == Emit types =============================================================
   if (!types_.empty()) {
     size_t start = EmitSection(kTypeSectionCode, buffer);
-    size_t type_count = types_.size();
-    for (auto pair : recursive_groups_) {
-      // Every rec. group counts as one type entry.
-      type_count -= pair.second - 1;
+    // Every recursion group occupies one type entry.
+    size_t type_count = types_.size() + recursive_groups_.size();
+    // Types inside recursion groups occupy no additional type entry.
+    for (auto [first_index, size] : recursive_groups_) {
+      type_count -= size;
     }
 
     buffer->write_size(type_count);
 
-    for (uint32_t i = 0; i < types_.size(); i++) {
-      auto recursive_group = recursive_groups_.find(i);
+    const RecGroup* next_rec_group =
+        recursive_groups_.empty() ? nullptr : recursive_groups_.data();
 
-      if (recursive_group != recursive_groups_.end()) {
+    for (uint32_t i = 0; i < types_.size(); i++) {
+      // Note: while loop, because recgroups can be empty.
+      while (next_rec_group && i == next_rec_group->start_index) {
         buffer->write_u8(kWasmRecursiveTypeGroupCode);
-        buffer->write_u32v(recursive_group->second);
+        buffer->write_u32v(next_rec_group->size);
+        next_rec_group = next_rec_group == &recursive_groups_.back()
+                             ? nullptr
+                             : next_rec_group + 1;
       }
 
       const TypeDefinition& type = types_[i];
@@ -707,9 +720,9 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer* buffer) const {
           const StructType* struct_type = type.struct_type;
           buffer->write_u8(kWasmStructTypeCode);
           buffer->write_size(struct_type->field_count());
-          for (uint32_t i = 0; i < struct_type->field_count(); i++) {
-            WriteValueType(buffer, struct_type->field(i));
-            buffer->write_u8(struct_type->mutability(i) ? 1 : 0);
+          for (uint32_t j = 0; j < struct_type->field_count(); j++) {
+            WriteValueType(buffer, struct_type->field(j));
+            buffer->write_u8(struct_type->mutability(j) ? 1 : 0);
           }
           break;
         }
@@ -720,8 +733,25 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer* buffer) const {
           buffer->write_u8(array_type->mutability() ? 1 : 0);
           break;
         }
+        case TypeDefinition::kCont: {
+          const ContType* cont_type = type.cont_type;
+          buffer->write_u8(kWasmContTypeCode);
+          buffer->write_u32v(cont_type->contfun_typeindex());
+          break;
+        }
       }
     }
+
+    // Handle empty recursion groups defined after all types.
+    while (next_rec_group) {
+      DCHECK_EQ(types_.size(), next_rec_group->start_index);
+      DCHECK_EQ(0, next_rec_group->size);
+      buffer->write_u8(kWasmRecursiveTypeGroupCode);
+      buffer->write_u32v(0);
+      if (next_rec_group == &recursive_groups_.back()) break;
+      ++next_rec_group;
+    }
+
     FixupSection(buffer, start);
   }
 

@@ -35,7 +35,7 @@ class Typer::Decorator final : public GraphDecorator {
   Typer* const typer_;
 };
 
-Typer::Typer(JSHeapBroker* broker, Flags flags, Graph* graph,
+Typer::Typer(JSHeapBroker* broker, Flags flags, TFGraph* graph,
              TickCounter* tick_counter)
     : flags_(flags),
       graph_(graph),
@@ -216,8 +216,9 @@ class Typer::Visitor : public Reducer {
       DECLARE_IMPOSSIBLE_CASE(ChangeInt32ToInt64)
       DECLARE_IMPOSSIBLE_CASE(ChangeInt64ToFloat64)
       DECLARE_IMPOSSIBLE_CASE(ChangeUint32ToFloat64)
+      DECLARE_IMPOSSIBLE_CASE(ChangeFloat16RawBitsToFloat64)
       DECLARE_IMPOSSIBLE_CASE(TruncateFloat64ToFloat32)
-      DECLARE_IMPOSSIBLE_CASE(TruncateFloat64ToFloat16)
+      DECLARE_IMPOSSIBLE_CASE(TruncateFloat64ToFloat16RawBits)
       DECLARE_IMPOSSIBLE_CASE(TruncateInt64ToInt32)
       DECLARE_IMPOSSIBLE_CASE(RoundFloat64ToInt32)
       DECLARE_IMPOSSIBLE_CASE(RoundInt32ToFloat32)
@@ -307,7 +308,7 @@ class Typer::Visitor : public Reducer {
   Type Weaken(Node* node, Type current_type, Type previous_type);
 
   Zone* zone() { return typer_->zone(); }
-  Graph* graph() { return typer_->graph(); }
+  TFGraph* graph() { return typer_->graph(); }
   JSHeapBroker* broker() { return typer_->broker(); }
 
   void SetWeakened(NodeId node_id) { weakened_nodes_.insert(node_id); }
@@ -720,7 +721,10 @@ Type Typer::Visitor::ToString(Type type, Typer* t) {
 Type Typer::Visitor::ObjectIsArrayBufferView(Type type, Typer* t) {
   // TODO(turbofan): Introduce a Type::ArrayBufferView?
   CHECK(!type.IsNone());
-  if (!type.Maybe(Type::OtherObject())) return t->singleton_false_;
+  if (type.Is(Type::TypedArray())) return t->singleton_true_;
+  if (!type.Maybe(Type::TypedArray()) && !type.Maybe(Type::OtherObject())) {
+    return t->singleton_false_;
+  }
   return Type::Boolean();
 }
 
@@ -1117,8 +1121,10 @@ bool Typer::Visitor::InductionVariablePhiTypeIsPrefixedPoint(
       CASE(NumberSubtract)
       CASE(SpeculativeNumberAdd)
       CASE(SpeculativeNumberSubtract)
-      CASE(SpeculativeSafeIntegerAdd)
-      CASE(SpeculativeSafeIntegerSubtract)
+      CASE(SpeculativeAdditiveSafeIntegerAdd)
+      CASE(SpeculativeAdditiveSafeIntegerSubtract)
+      CASE(SpeculativeSmallIntegerAdd)
+      CASE(SpeculativeSmallIntegerSubtract)
 #undef CASE
       default:
         UNREACHABLE();
@@ -1148,6 +1154,10 @@ Type Typer::Visitor::TypeMaybeGrowFastElements(Node* node) {
 }
 
 Type Typer::Visitor::TypeTransitionElementsKind(Node* node) { UNREACHABLE(); }
+
+Type Typer::Visitor::TypeTransitionElementsKindOrCheckMap(Node* node) {
+  UNREACHABLE();
+}
 
 Type Typer::Visitor::TypeCheckpoint(Node* node) { UNREACHABLE(); }
 
@@ -1186,11 +1196,8 @@ Type Typer::Visitor::TypeCall(Node* node) { return Type::Any(); }
 
 Type Typer::Visitor::TypeFastApiCall(Node* node) {
   FastApiCallParameters const& op_params = FastApiCallParametersOf(node->op());
-  if (op_params.c_functions().empty()) {
-    return Type::Undefined();
-  }
 
-  const CFunctionInfo* c_signature = op_params.c_functions()[0].signature;
+  const CFunctionInfo* c_signature = op_params.c_function().signature;
   CTypeInfo return_type = c_signature->ReturnInfo();
 
   switch (return_type.GetType()) {
@@ -1541,7 +1548,7 @@ Type Typer::Visitor::TypeJSCreatePromise(Node* node) {
 }
 
 Type Typer::Visitor::TypeJSCreateTypedArray(Node* node) {
-  return Type::OtherObject();
+  return Type::TypedArray();
 }
 
 Type Typer::Visitor::TypeJSCreateLiteralArray(Node* node) {
@@ -1759,6 +1766,17 @@ Type Typer::Visitor::TypeJSHasContextExtension(Node* node) {
   return Type::Boolean();
 }
 
+Type Typer::Visitor::TypeJSLoadContextNoCell(Node* node) {
+  ContextAccess const& access = ContextAccessOf(node->op());
+  switch (access.index()) {
+    case Context::PREVIOUS_INDEX:
+    case Context::SCOPE_INFO_INDEX:
+      return Type::OtherInternal();
+    default:
+      return Type::Any();
+  }
+}
+
 Type Typer::Visitor::TypeJSLoadContext(Node* node) {
   ContextAccess const& access = ContextAccessOf(node->op());
   switch (access.index()) {
@@ -1770,21 +1788,9 @@ Type Typer::Visitor::TypeJSLoadContext(Node* node) {
   }
 }
 
-Type Typer::Visitor::TypeJSLoadScriptContext(Node* node) {
-  ContextAccess const& access = ContextAccessOf(node->op());
-  switch (access.index()) {
-    case Context::PREVIOUS_INDEX:
-    case Context::SCOPE_INFO_INDEX:
-    case Context::CONTEXT_SIDE_TABLE_PROPERTY_INDEX:
-      return Type::OtherInternal();
-    default:
-      return Type::Any();
-  }
-}
+Type Typer::Visitor::TypeJSStoreContextNoCell(Node* node) { UNREACHABLE(); }
 
 Type Typer::Visitor::TypeJSStoreContext(Node* node) { UNREACHABLE(); }
-
-Type Typer::Visitor::TypeJSStoreScriptContext(Node* node) { UNREACHABLE(); }
 
 Type Typer::Visitor::TypeJSCreateFunctionContext(Node* node) {
   return Type::OtherInternal();
@@ -2165,6 +2171,8 @@ Type Typer::Visitor::TypeJSCallRuntime(Node* node) {
   return Type::Any();
 }
 
+Type Typer::Visitor::TypeJSDetachContextCell(Node* node) { UNREACHABLE(); }
+
 Type Typer::Visitor::TypeJSForInEnumerate(Node* node) {
   return Type::OtherInternal();
 }
@@ -2198,7 +2206,7 @@ Type Typer::Visitor::TypeJSGeneratorRestoreContinuation(Node* node) {
   return Type::SignedSmall();
 }
 
-Type Typer::Visitor::TypeJSGeneratorRestoreContext(Node* node) {
+Type Typer::Visitor::TypeJSGeneratorRestoreContextNoCell(Node* node) {
   return Type::Any();
 }
 
@@ -2444,6 +2452,14 @@ Type Typer::Visitor::TypeCheckNumber(Node* node) {
   return typer_->operation_typer_.CheckNumber(Operand(node, 0));
 }
 
+Type Typer::Visitor::TypeCheckNumberOrUndefined(Node* node) {
+  return typer_->operation_typer_.CheckNumberOrUndefined(Operand(node, 0));
+}
+
+Type Typer::Visitor::TypeCheckNumberFitsInt32(Node* node) {
+  return typer_->operation_typer_.CheckNumberFitsInt32(Operand(node, 0));
+}
+
 Type Typer::Visitor::TypeCheckReceiver(Node* node) {
   Type arg = Operand(node, 0);
   return Type::Intersect(arg, Type::Receiver(), zone());
@@ -2480,6 +2496,15 @@ Type Typer::Visitor::TypeCheckFloat64Hole(Node* node) {
 
 Type Typer::Visitor::TypeChangeFloat64HoleToTagged(Node* node) {
   return typer_->operation_typer_.CheckFloat64Hole(Operand(node, 0));
+}
+
+Type Typer::Visitor::TypeChangeFloat64OrUndefinedOrHoleToTagged(Node* node) {
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+  Type arg = Operand(node, 0);
+  return Type::Intersect(arg, Type::NumberOrUndefinedOrHole(), zone());
+#else
+  UNREACHABLE();
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
 }
 
 Type Typer::Visitor::TypeCheckNotTaggedHole(Node* node) {
@@ -2684,6 +2709,10 @@ Type Typer::Visitor::TypeArgumentsLength(Node* node) {
 
 Type Typer::Visitor::TypeRestLength(Node* node) {
   return TypeCache::Get()->kArgumentsLengthType;
+}
+
+Type Typer::Visitor::TypeTypedArrayLength(Node* node) {
+  return typer_->cache_->kJSTypedArrayLengthType;
 }
 
 Type Typer::Visitor::TypeNewDoubleElements(Node* node) {

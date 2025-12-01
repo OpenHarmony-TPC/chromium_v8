@@ -33,14 +33,17 @@ class MaybeHandle final {
 
   // Constructor for handling automatic up casting from Handle.
   // Ex. Handle<JSArray> can be passed when MaybeHandle<Object> is expected.
-  template <typename S, typename = std::enable_if_t<is_subtype_v<S, T>>>
-  V8_INLINE MaybeHandle(Handle<S> handle) : location_(handle.location_) {}
+  template <typename S>
+  V8_INLINE MaybeHandle(Handle<S> handle)
+    requires(is_subtype_v<S, T>)
+      : location_(handle.location_) {}
 
   // Constructor for handling automatic up casting.
   // Ex. MaybeHandle<JSArray> can be passed when MaybeHandle<Object> is
   // expected.
-  template <typename S, typename = std::enable_if_t<is_subtype_v<S, T>>>
+  template <typename S>
   V8_INLINE MaybeHandle(MaybeHandle<S> maybe_handle)
+    requires(is_subtype_v<S, T>)
       : location_(maybe_handle.location_) {}
 
   V8_INLINE MaybeHandle(Tagged<T> object, Isolate* isolate);
@@ -97,11 +100,11 @@ class MaybeHandle final {
 #endif
   // Casts are allowed to access location_.
   template <typename To, typename From>
-  friend inline MaybeHandle<To> UncheckedCast(MaybeHandle<From> value);
+  friend inline MaybeIndirectHandle<To> UncheckedCast(MaybeHandle<From> value);
 };
 
 template <typename T>
-std::ostream& operator<<(std::ostream& os, MaybeHandle<T> handle);
+std::ostream& operator<<(std::ostream& os, MaybeIndirectHandle<T> handle);
 
 // A handle which contains a potentially weak pointer. Keeps it alive (strongly)
 // while the MaybeObjectHandle is alive.
@@ -122,10 +125,12 @@ class MaybeObjectHandle {
 
   inline Tagged<MaybeObject> operator*() const;
   inline Tagged<MaybeObject> operator->() const;
-  inline Handle<Object> object() const;
+  inline IndirectHandle<Object> object() const;
 
   inline bool is_identical_to(const MaybeObjectHandle& other) const;
   bool is_null() const { return handle_.is_null(); }
+
+  HeapObjectReferenceType reference_type() const { return reference_type_; }
 
  private:
   inline MaybeObjectHandle(Tagged<Object> object,
@@ -133,6 +138,8 @@ class MaybeObjectHandle {
                            Isolate* isolate);
   inline MaybeObjectHandle(Handle<Object> object,
                            HeapObjectReferenceType reference_type);
+
+  friend class MaybeObjectDirectHandle;
 
   HeapObjectReferenceType reference_type_;
   MaybeHandle<Object> handle_;
@@ -200,6 +207,11 @@ class MaybeDirectHandle final {
     }
   }
 
+  // Address equality.
+  bool equals(MaybeHandle<T> other) const {
+    return address() == other.address();
+  }
+
   // Returns the raw address where this direct handle is stored.
   V8_INLINE Address address() const { return location_; }
 
@@ -238,17 +250,25 @@ class MaybeDirectHandle {
   V8_INLINE MaybeDirectHandle(Tagged<T> object, LocalHeap* local_heap)
       : handle_(object, local_heap) {}
 
-  template <typename S, typename = std::enable_if_t<is_subtype_v<S, T>>>
+  template <typename S>
   V8_INLINE MaybeDirectHandle(DirectHandle<S> handle)
+    requires(is_subtype_v<S, T>)
       : handle_(handle.handle_) {}
-  template <typename S, typename = std::enable_if_t<is_subtype_v<S, T>>>
-  V8_INLINE MaybeDirectHandle(IndirectHandle<S> handle) : handle_(handle) {}
-  template <typename S, typename = std::enable_if_t<is_subtype_v<S, T>>>
-  V8_INLINE MaybeDirectHandle(MaybeDirectHandle<S> handle)
-      : handle_(handle.handle_) {}
-  template <typename S, typename = std::enable_if_t<is_subtype_v<S, T>>>
-  V8_INLINE MaybeDirectHandle(MaybeIndirectHandle<S> handle)
+  template <typename S>
+  V8_INLINE MaybeDirectHandle(IndirectHandle<S> handle)
+    requires(is_subtype_v<S, T>)
       : handle_(handle) {}
+  template <typename S>
+  V8_INLINE MaybeDirectHandle(MaybeDirectHandle<S> handle)
+    requires(is_subtype_v<S, T>)
+      : handle_(handle.handle_) {}
+  template <typename S>
+  V8_INLINE MaybeDirectHandle(MaybeIndirectHandle<S> handle)
+    requires(is_subtype_v<S, T>)
+      : handle_(handle) {}
+
+  V8_INLINE void Assert() const { handle_.Assert(); }
+  V8_INLINE void Check() const { handle_.Check(); }
 
   V8_INLINE DirectHandle<T> ToHandleChecked() const {
     return handle_.ToHandleChecked();
@@ -284,6 +304,9 @@ class MaybeDirectHandle {
 
 #endif  // V8_ENABLE_DIRECT_HANDLE
 
+template <typename T>
+std::ostream& operator<<(std::ostream& os, MaybeDirectHandle<T> handle);
+
 class MaybeObjectDirectHandle {
  public:
   inline MaybeObjectDirectHandle()
@@ -295,25 +318,36 @@ class MaybeObjectDirectHandle {
                                  LocalHeap* local_heap);
   inline MaybeObjectDirectHandle(Tagged<Object> object, LocalHeap* local_heap);
   inline MaybeObjectDirectHandle(Tagged<Smi> object, LocalHeap* local_heap);
-  inline explicit MaybeObjectDirectHandle(DirectHandle<Object> object);
+  inline explicit MaybeObjectDirectHandle(DirectHandle<Object> object)
+      : reference_type_(HeapObjectReferenceType::STRONG), handle_(object) {}
+
+  inline MaybeObjectDirectHandle(MaybeObjectHandle obj);
 
   static inline MaybeObjectDirectHandle Weak(Tagged<Object> object,
                                              Isolate* isolate);
-  static inline MaybeObjectDirectHandle Weak(DirectHandle<Object> object);
+  static inline MaybeObjectDirectHandle Weak(DirectHandle<Object> object) {
+    return MaybeObjectDirectHandle(object, HeapObjectReferenceType::WEAK);
+  }
 
   inline Tagged<MaybeObject> operator*() const;
   inline Tagged<MaybeObject> operator->() const;
-  inline DirectHandle<Object> object() const;
+  inline DirectHandle<Object> object() const {
+    return handle_.ToHandleChecked();
+  }
 
   inline bool is_identical_to(const MaybeObjectDirectHandle& other) const;
+  inline bool is_identical_to(const MaybeObjectHandle& other) const;
   bool is_null() const { return handle_.is_null(); }
+
+  HeapObjectReferenceType reference_type() const { return reference_type_; }
 
  private:
   inline MaybeObjectDirectHandle(Tagged<Object> object,
                                  HeapObjectReferenceType reference_type,
                                  Isolate* isolate);
   inline MaybeObjectDirectHandle(DirectHandle<Object> object,
-                                 HeapObjectReferenceType reference_type);
+                                 HeapObjectReferenceType reference_type)
+      : reference_type_(reference_type), handle_(object) {}
 
   HeapObjectReferenceType reference_type_;
   MaybeDirectHandle<Object> handle_;

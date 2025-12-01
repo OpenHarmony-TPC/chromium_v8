@@ -690,6 +690,26 @@ inline uint16_t ExtractPrefixedOpcodeBytes(WasmOpcode opcode) {
 #define WASM_SEQ(...) __VA_ARGS__
 
 //------------------------------------------------------------------------------
+// Stack switching opcodes.
+//------------------------------------------------------------------------------
+
+#define WASM_CONT_NEW(index) kExprContNew, static_cast<uint8_t>(index)
+#define WASM_CONT_BIND(src, tgt) \
+  kExprContBind, static_cast<uint8_t>(src), static_cast<uint8_t>(tgt)
+
+#define WASM_RESUME(index, count, ...) \
+  kExprResume, static_cast<uint8_t>(index), U32V_1(count), ##__VA_ARGS__
+#define WASM_RESUME_THROW(cont, exc, count, ...)                           \
+  kExprResumeThrow, static_cast<uint8_t>(cont), static_cast<uint8_t>(exc), \
+      U32V_1(count), ##__VA_ARGS__
+#define WASM_SUSPEND(index) kExprSuspend, static_cast<uint8_t>(index)
+#define WASM_SWITCH(cont, tag) \
+  kExprSwitch, static_cast<uint8_t>(cont), ToByte(tag)
+
+#define WASM_ON_TAG(tag, label) kOnSuspend, ToByte(tag), label
+#define WASM_SWITCH_TAG(tag) kSwitch, ToByte(tag)
+
+//------------------------------------------------------------------------------
 // Constructs that are composed of multiple bytecodes.
 //------------------------------------------------------------------------------
 #define WASM_WHILE(x, y)                                                      \
@@ -745,10 +765,20 @@ inline uint16_t ExtractPrefixedOpcodeBytes(WasmOpcode opcode) {
 //------------------------------------------------------------------------------
 // Asmjs Int32 operations
 //------------------------------------------------------------------------------
-#define WASM_I32_ASMJS_DIVS(x, y) x, y, kExprI32AsmjsDivS
-#define WASM_I32_ASMJS_REMS(x, y) x, y, kExprI32AsmjsRemS
-#define WASM_I32_ASMJS_DIVU(x, y) x, y, kExprI32AsmjsDivU
-#define WASM_I32_ASMJS_REMU(x, y) x, y, kExprI32AsmjsRemU
+#define WASM_ASMJS_OP(op) kAsmJsPrefix, static_cast<uint8_t>(op)
+
+#define WASM_I32_ASMJS_DIVS(x, y) x, y, WASM_ASMJS_OP(kExprI32AsmjsDivS)
+#define WASM_I32_ASMJS_REMS(x, y) x, y, WASM_ASMJS_OP(kExprI32AsmjsRemS)
+#define WASM_I32_ASMJS_DIVU(x, y) x, y, WASM_ASMJS_OP(kExprI32AsmjsDivU)
+#define WASM_I32_ASMJS_REMU(x, y) x, y, WASM_ASMJS_OP(kExprI32AsmjsRemU)
+#define WASM_I32_ASMJS_SCONVERTF32(x) x, WASM_ASMJS_OP(kExprI32AsmjsSConvertF32)
+#define WASM_I32_ASMJS_SCONVERTF64(x) x, WASM_ASMJS_OP(kExprI32AsmjsSConvertF64)
+#define WASM_I32_ASMJS_UCONVERTF32(x) x, WASM_ASMJS_OP(kExprI32AsmjsUConvertF32)
+#define WASM_I32_ASMJS_UCONVERTF64(x) x, WASM_ASMJS_OP(kExprI32AsmjsUConvertF64)
+#define WASM_I32_ASMJS_LOADMEM(x) x, WASM_ASMJS_OP(kExprI32AsmjsLoadMem)
+#define WASM_F32_ASMJS_LOADMEM(x) x, WASM_ASMJS_OP(kExprF32AsmjsLoadMem)
+#define WASM_F64_ASMJS_LOADMEM(x) x, WASM_ASMJS_OP(kExprF64AsmjsLoadMem)
+#define WASM_I32_ASMJS_STOREMEM(x, y) x, y, WASM_ASMJS_OP(kExprI32AsmjsStoreMem)
 
 //------------------------------------------------------------------------------
 // Int64 operations
@@ -927,6 +957,9 @@ inline uint16_t ExtractPrefixedOpcodeBytes(WasmOpcode opcode) {
 #define SIZEOF_SIG_ENTRY_xx_xx 7
 #define SIZEOF_SIG_ENTRY_x_xxx 7
 
+#define CONT_ENTRY(f) kWasmContTypeCode, f
+#define SIZEOF_CONT_ENTRY 2
+
 #define WASM_BRV(depth, ...) __VA_ARGS__, kExprBr, static_cast<uint8_t>(depth)
 #define WASM_BRV_IF(depth, val, cond) \
   val, cond, kExprBrIf, static_cast<uint8_t>(depth)
@@ -952,6 +985,67 @@ inline uint16_t ExtractPrefixedOpcodeBytes(WasmOpcode opcode) {
 #define WASM_ATOMICS_WAIT(op, index, value, timeout, alignment, offset) \
   index, value, timeout, WASM_ATOMICS_OP(op), alignment, offset
 #define WASM_ATOMICS_FENCE WASM_ATOMICS_OP(kExprAtomicFence), ZERO_OFFSET
+
+#define WASM_STRUCT_ATOMIC_GET(memory_order, typeidx, fieldidx, struct_obj) \
+  struct_obj, WASM_ATOMICS_OP(kExprStructAtomicGet), memory_order,          \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_GET_S(memory_order, typeidx, fieldidx, struct_obj) \
+  struct_obj, WASM_ATOMICS_OP(kExprStructAtomicGetS), memory_order,           \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_GET_U(memory_order, typeidx, fieldidx, struct_obj) \
+  struct_obj, WASM_ATOMICS_OP(kExprStructAtomicGetU), memory_order,           \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_SET(memory_order, typeidx, fieldidx, struct_obj, \
+                               value)                                       \
+  struct_obj, value, WASM_ATOMICS_OP(kExprStructAtomicSet), memory_order,   \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_ADD(memory_order, typeidx, fieldidx, struct_obj, \
+                               value)                                       \
+  struct_obj, value, WASM_ATOMICS_OP(kExprStructAtomicAdd), memory_order,   \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_SUB(memory_order, typeidx, fieldidx, struct_obj, \
+                               value)                                       \
+  struct_obj, value, WASM_ATOMICS_OP(kExprStructAtomicSub), memory_order,   \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_AND(memory_order, typeidx, fieldidx, struct_obj, \
+                               value)                                       \
+  struct_obj, value, WASM_ATOMICS_OP(kExprStructAtomicAnd), memory_order,   \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_OR(memory_order, typeidx, fieldidx, struct_obj, \
+                              value)                                       \
+  struct_obj, value, WASM_ATOMICS_OP(kExprStructAtomicOr), memory_order,   \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_STRUCT_ATOMIC_XOR(memory_order, typeidx, fieldidx, struct_obj, \
+                               value)                                       \
+  struct_obj, value, WASM_ATOMICS_OP(kExprStructAtomicXor), memory_order,   \
+      ToByte(typeidx), static_cast<uint8_t>(fieldidx)
+#define WASM_ARRAY_ATOMIC_GET(memory_order, typeidx, array_obj, index)  \
+  array_obj, index, WASM_ATOMICS_OP(kExprArrayAtomicGet), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_GET_S(memory_order, typeidx, array_obj, index) \
+  array_obj, index, WASM_ATOMICS_OP(kExprArrayAtomicGetS), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_GET_U(memory_order, typeidx, array_obj, index) \
+  array_obj, index, WASM_ATOMICS_OP(kExprArrayAtomicGetU), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_SET(memory_order, typeidx, array_obj, index, value)  \
+  array_obj, index, value, WASM_ATOMICS_OP(kExprArrayAtomicSet), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_ADD(memory_order, typeidx, array_obj, index, value)  \
+  array_obj, index, value, WASM_ATOMICS_OP(kExprArrayAtomicAdd), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_SUB(memory_order, typeidx, array_obj, index, value)  \
+  array_obj, index, value, WASM_ATOMICS_OP(kExprArrayAtomicSub), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_AND(memory_order, typeidx, array_obj, index, value)  \
+  array_obj, index, value, WASM_ATOMICS_OP(kExprArrayAtomicAnd), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_OR(memory_order, typeidx, array_obj, index, value)  \
+  array_obj, index, value, WASM_ATOMICS_OP(kExprArrayAtomicOr), memory_order, \
+      ToByte(typeidx)
+#define WASM_ARRAY_ATOMIC_XOR(memory_order, typeidx, array_obj, index, value)  \
+  array_obj, index, value, WASM_ATOMICS_OP(kExprArrayAtomicXor), memory_order, \
+      ToByte(typeidx)
 
 //------------------------------------------------------------------------------
 // Sign Extension Operations.

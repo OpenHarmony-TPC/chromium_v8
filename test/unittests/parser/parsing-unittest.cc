@@ -76,7 +76,7 @@ struct Input {
         (isolate), (info)->ast_value_factory());                              \
     (info)->pending_error_handler()->ReportErrors((isolate), (script));       \
                                                                               \
-    i::Handle<i::JSObject> exception_handle(                                  \
+    i::DirectHandle<i::JSObject> exception_handle(                            \
         i::Cast<i::JSObject>((isolate)->exception()), (isolate));             \
     i::DirectHandle<i::String> message_string = i::Cast<i::String>(           \
         i::JSReceiver::GetProperty((isolate), exception_handle, "message")    \
@@ -274,9 +274,9 @@ class ParsingTest : public TestWithContextAndZone {
     if (function == nullptr) {
       // Extract exception from the parser.
       CHECK(isolate->has_exception());
-      i::Handle<i::JSObject> exception_handle(
+      i::DirectHandle<i::JSObject> exception_handle(
           i::Cast<i::JSObject>(isolate->exception()), isolate);
-      i::Handle<i::String> message_string = i::Cast<i::String>(
+      i::DirectHandle<i::String> message_string = i::Cast<i::String>(
           i::JSReceiver::GetProperty(isolate, exception_handle, "message")
               .ToHandleChecked());
       isolate->clear_exception();
@@ -305,7 +305,7 @@ class ParsingTest : public TestWithContextAndZone {
       // cases where we do not track errors in the preparser.
       if (test_preparser && !ignore_error_msg &&
           !pending_error_handler.has_error_unidentifiable_by_preparser()) {
-        i::Handle<i::String> preparser_message =
+        i::DirectHandle<i::String> preparser_message =
             pending_error_handler.FormatErrorMessageForTest(i_isolate());
         if (!i::String::Equals(isolate, message_string, preparser_message)) {
           FATAL(
@@ -3825,14 +3825,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (let j of x) { var foo; foo = j }", top},
       {true, "for (let j of x) { var foo; [foo] = [j] }", top},
       {true, "for (let j of x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (let j of x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (let j of x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (let j of x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (let j of x) { let foo = j }", {0, 0, 0}},
-      {false, "for (let j of x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let j of x) { const foo = j }", {0, 0, 0}},
-      {false, "for (let j of x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let j of x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (let j of x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (let j of x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (let j of x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (let j of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (let j of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let j of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (let j of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let j of x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "for (let {j} of x) { foo = j }", top},
       {true, "for (let {j} of x) { [foo] = [j] }", top},
@@ -3843,14 +3843,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (let {j} of x) { var foo; foo = j }", top},
       {true, "for (let {j} of x) { var foo; [foo] = [j] }", top},
       {true, "for (let {j} of x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (let {j} of x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (let {j} of x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (let {j} of x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (let {j} of x) { let foo = j }", {0, 0, 0}},
-      {false, "for (let {j} of x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let {j} of x) { const foo = j }", {0, 0, 0}},
-      {false, "for (let {j} of x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let {j} of x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (let {j} of x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (let {j} of x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (let {j} of x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (let {j} of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (let {j} of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let {j} of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (let {j} of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let {j} of x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "for (const j of x) { foo = j }", top},
       {true, "for (const j of x) { [foo] = [j] }", top},
@@ -3861,14 +3861,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (const j of x) { var foo; foo = j }", top},
       {true, "for (const j of x) { var foo; [foo] = [j] }", top},
       {true, "for (const j of x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (const j of x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (const j of x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (const j of x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (const j of x) { let foo = j }", {0, 0, 0}},
-      {false, "for (const j of x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const j of x) { const foo = j }", {0, 0, 0}},
-      {false, "for (const j of x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const j of x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (const j of x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (const j of x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (const j of x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (const j of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (const j of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const j of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (const j of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const j of x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "for (const {j} of x) { foo = j }", top},
       {true, "for (const {j} of x) { [foo] = [j] }", top},
@@ -3879,14 +3879,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (const {j} of x) { var foo; foo = j }", top},
       {true, "for (const {j} of x) { var foo; [foo] = [j] }", top},
       {true, "for (const {j} of x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (const {j} of x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (const {j} of x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (const {j} of x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (const {j} of x) { let foo = j }", {0, 0, 0}},
-      {false, "for (const {j} of x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const {j} of x) { const foo = j }", {0, 0, 0}},
-      {false, "for (const {j} of x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const {j} of x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (const {j} of x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (const {j} of x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (const {j} of x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (const {j} of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (const {j} of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const {j} of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (const {j} of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const {j} of x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "for (j in x) { foo = j }", top},
       {true, "for (j in x) { [foo] = [j] }", top},
@@ -3969,14 +3969,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (let j in x) { var foo; foo = j }", top},
       {true, "for (let j in x) { var foo; [foo] = [j] }", top},
       {true, "for (let j in x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (let j in x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (let j in x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (let j in x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (let j in x) { let foo = j }", {0, 0, 0}},
-      {false, "for (let j in x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let j in x) { const foo = j }", {0, 0, 0}},
-      {false, "for (let j in x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let j in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (let j in x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (let j in x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (let j in x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (let j in x) { let foo = j }", {0, 1, 0}},
+      {false, "for (let j in x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let j in x) { const foo = j }", {0, 1, 0}},
+      {false, "for (let j in x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let j in x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "for (let {j} in x) { foo = j }", top},
       {true, "for (let {j} in x) { [foo] = [j] }", top},
@@ -3987,14 +3987,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (let {j} in x) { var foo; foo = j }", top},
       {true, "for (let {j} in x) { var foo; [foo] = [j] }", top},
       {true, "for (let {j} in x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (let {j} in x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (let {j} in x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (let {j} in x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (let {j} in x) { let foo = j }", {0, 0, 0}},
-      {false, "for (let {j} in x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let {j} in x) { const foo = j }", {0, 0, 0}},
-      {false, "for (let {j} in x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (let {j} in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (let {j} in x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (let {j} in x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (let {j} in x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (let {j} in x) { let foo = j }", {0, 1, 0}},
+      {false, "for (let {j} in x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let {j} in x) { const foo = j }", {0, 1, 0}},
+      {false, "for (let {j} in x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let {j} in x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "for (const j in x) { foo = j }", top},
       {true, "for (const j in x) { [foo] = [j] }", top},
@@ -4005,14 +4005,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (const j in x) { var foo; foo = j }", top},
       {true, "for (const j in x) { var foo; [foo] = [j] }", top},
       {true, "for (const j in x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (const j in x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (const j in x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (const j in x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (const j in x) { let foo = j }", {0, 0, 0}},
-      {false, "for (const j in x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const j in x) { const foo = j }", {0, 0, 0}},
-      {false, "for (const j in x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const j in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (const j in x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (const j in x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (const j in x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (const j in x) { let foo = j }", {0, 1, 0}},
+      {false, "for (const j in x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const j in x) { const foo = j }", {0, 1, 0}},
+      {false, "for (const j in x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const j in x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "for (const {j} in x) { foo = j }", top},
       {true, "for (const {j} in x) { [foo] = [j] }", top},
@@ -4023,14 +4023,14 @@ TEST_F(ParsingTest, MaybeAssignedInsideLoop) {
       {true, "for (const {j} in x) { var foo; foo = j }", top},
       {true, "for (const {j} in x) { var foo; [foo] = [j] }", top},
       {true, "for (const {j} in x) { var foo; [[foo]=[42]] = [] }", top},
-      {true, "for (const {j} in x) { let foo; foo = j }", {0, 0, 0}},
-      {true, "for (const {j} in x) { let foo; [foo] = [j] }", {0, 0, 0}},
-      {true, "for (const {j} in x) { let foo; [[foo]=[42]] = [] }", {0, 0, 0}},
-      {false, "for (const {j} in x) { let foo = j }", {0, 0, 0}},
-      {false, "for (const {j} in x) { let [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const {j} in x) { const foo = j }", {0, 0, 0}},
-      {false, "for (const {j} in x) { const [foo] = [j] }", {0, 0, 0}},
-      {false, "for (const {j} in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (const {j} in x) { let foo; foo = j }", {0, 1, 0}},
+      {true, "for (const {j} in x) { let foo; [foo] = [j] }", {0, 1, 0}},
+      {true, "for (const {j} in x) { let foo; [[foo]=[42]] = [] }", {0, 1, 0}},
+      {false, "for (const {j} in x) { let foo = j }", {0, 1, 0}},
+      {false, "for (const {j} in x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const {j} in x) { const foo = j }", {0, 1, 0}},
+      {false, "for (const {j} in x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const {j} in x) { function foo() {return j} }", {0, 1, 0}},
 
       {true, "while (j) { foo = j }", top},
       {true, "while (j) { [foo] = [j] }", top},
@@ -4188,7 +4188,8 @@ TEST_F(ParsingTest, MaybeAssignedTopLevel) {
 namespace {
 
 i::Scope* DeserializeFunctionScope(i::Isolate* isolate, i::Zone* zone,
-                                   i::Handle<i::JSObject> m, const char* name) {
+                                   i::DirectHandle<i::JSObject> m,
+                                   const char* name) {
   i::AstValueFactory avf(zone, isolate->ast_string_constants(),
                          HashSeed(isolate));
   i::DirectHandle<i::JSFunction> f = i::Cast<i::JSFunction>(
@@ -4216,8 +4217,8 @@ TEST_F(ParsingTest, AsmModuleFlag) {
       "m();";
 
   v8::Local<v8::Value> v = RunJS(src);
-  i::Handle<i::Object> o = v8::Utils::OpenHandle(*v);
-  i::Handle<i::JSObject> m = i::Cast<i::JSObject>(o);
+  i::DirectHandle<i::Object> o = v8::Utils::OpenDirectHandle(*v);
+  i::DirectHandle<i::JSObject> m = i::Cast<i::JSObject>(o);
 
   // The asm.js module should be marked as such.
   i::Scope* s = DeserializeFunctionScope(isolate, zone(), m, "f");
@@ -10179,7 +10180,7 @@ TEST_F(ParsingTest, DestructuringAssignmentNegativeTests) {
   {
     i::FlagScope<bool> f(&v8_flags.js_source_phase_imports, true);
     // clang-format off
-    const char* data[] = {
+    const char* statement_data[] = {
       "{ import.source }",
       "{ x: import.source }",
       "{ x: import.source = 1 }",
@@ -10187,7 +10188,7 @@ TEST_F(ParsingTest, DestructuringAssignmentNegativeTests) {
       "[import.source = 1]",
       nullptr};
     // clang-format on
-    RunParserSyncTest(context_data, data, kError);
+    RunParserSyncTest(context_data, statement_data, kError);
   }
 
   const char* empty_context_data[][2] = {
@@ -10802,7 +10803,7 @@ TEST_F(ParsingTest, LetSloppy) {
 TEST_F(ParsingTest, LanguageModeDirectivesNonSimpleParameterListErrors) {
   // TC39 deemed "use strict" directives to be an error when occurring in the
   // body of a function with non-simple parameter list, on 29/7/2015.
-  // https://goo.gl/ueA7Ln
+  // https://github.com/tc39/notes/blob/main/meetings/2015-07/july-29.md#conclusionresolution
   const char* context_data[][2] = {
       {"function f(", ") { 'use strict'; }"},
       {"function* g(", ") { 'use strict'; }"},

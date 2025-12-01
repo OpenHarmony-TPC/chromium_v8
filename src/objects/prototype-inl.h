@@ -6,6 +6,7 @@
 #define V8_OBJECTS_PROTOTYPE_INL_H_
 
 #include "src/objects/prototype.h"
+// Include the non-inl header before the rest of the headers.
 
 #include "src/handles/handles-inl.h"
 #include "src/objects/js-proxy.h"
@@ -15,11 +16,11 @@ namespace v8 {
 namespace internal {
 
 PrototypeIterator::PrototypeIterator(Isolate* isolate,
-                                     Handle<JSReceiver> receiver,
+                                     DirectHandle<JSReceiver> receiver,
                                      WhereToStart where_to_start,
                                      WhereToEnd where_to_end)
     : isolate_(isolate),
-      handle_(receiver),
+      handle_(indirect_handle(receiver, isolate)),
       where_to_end_(where_to_end),
       is_at_end_(false),
       seen_proxies_(0) {
@@ -133,9 +134,16 @@ PrototypeIterator::AdvanceFollowingProxiesIgnoringAccessChecks() {
     isolate_->StackOverflow();
     return false;
   }
-  MaybeHandle<JSPrototype> proto =
+  MaybeDirectHandle<JSPrototype> proto =
       JSProxy::GetPrototype(Cast<JSProxy>(handle_));
-  if (!proto.ToHandle(&handle_)) return false;
+
+  // TODO(372390038): This can be again simplified when handle_ migrates to a
+  // direct handle.
+  DirectHandle<JSPrototype> proto_direct_handle;
+  bool ok = proto.ToHandle(&proto_direct_handle);
+  handle_ = indirect_handle(proto_direct_handle, isolate_);
+  if (!ok) return false;
+
   is_at_end_ = where_to_end_ == END_AT_NON_HIDDEN || IsNull(*handle_, isolate_);
   return true;
 }

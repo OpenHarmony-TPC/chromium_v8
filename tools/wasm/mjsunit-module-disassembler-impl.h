@@ -6,6 +6,7 @@
 #define V8_TOOLS_WASM_MJSUNIT_MODULE_DISASSEMBLER_IMPL_H_
 
 #include <ctime>
+#include <string_view>
 
 #include "src/numbers/conversions.h"
 #include "src/wasm/function-body-decoder-impl.h"
@@ -177,7 +178,7 @@ class MjsunitNamesProvider {
     }
     WasmName name = wire_bytes_.GetNameOrNull(function_variable_names_[index]);
     if (name.size() > 0) {
-      out << name << index;
+      out << name;
     } else {
       out << "$func" << index;
     }
@@ -263,20 +264,30 @@ class MjsunitNamesProvider {
     PrintElementSegmentName(out, index);
   }
 
+  void PrintStringLiteralName(StringBuilder& out, uint32_t index) {
+    out << "$string" << index;
+  }
+  void PrintStringLiteralReference(StringBuilder& out, uint32_t index) {
+    MaybeLebScope leb_scope(out, index);
+    PrintStringLiteralName(out, index);
+  }
+
   // Format: HeapType::* enum value, JS global constant.
-#define ABSTRACT_TYPE_LIST(V)                                     \
-  V(kAny, kWasmAnyRef, kAnyRefCode)                               \
-  V(kArray, kWasmArrayRef, kArrayRefCode)                         \
-  V(kEq, kWasmEqRef, kEqRefCode)                                  \
-  V(kExn, kWasmExnRef, kExnRefCode)                               \
-  V(kExtern, kWasmExternRef, kExternRefCode)                      \
-  V(kFunc, kWasmFuncRef, kFuncRefCode)                            \
-  V(kI31, kWasmI31Ref, kI31RefCode)                               \
-  V(kNone, kWasmNullRef, kNullRefCode)                            \
-  V(kNoExn, kWasmNullExnRef, kNullExnRefCode)                     \
-  V(kNoExtern, kWasmNullExternRef, kNullExternRefCode)            \
-  V(kNoFunc, kWasmNullFuncRef, kNullFuncRefCode)                  \
-  V(kString, kWasmStringRef, kStringRefCode)                      \
+#define ABSTRACT_TYPE_LIST(V)                          \
+  V(kAny, kWasmAnyRef, kAnyRefCode)                    \
+  V(kArray, kWasmArrayRef, kArrayRefCode)              \
+  V(kCont, kWasmContRef, kContRefCode)                 \
+  V(kEq, kWasmEqRef, kEqRefCode)                       \
+  V(kExn, kWasmExnRef, kExnRefCode)                    \
+  V(kExtern, kWasmExternRef, kExternRefCode)           \
+  V(kFunc, kWasmFuncRef, kFuncRefCode)                 \
+  V(kI31, kWasmI31Ref, kI31RefCode)                    \
+  V(kNoCont, kWasmNullContRef, kNullContRefCode)       \
+  V(kNoExn, kWasmNullExnRef, kNullExnRefCode)          \
+  V(kNoExtern, kWasmNullExternRef, kNullExternRefCode) \
+  V(kNoFunc, kWasmNullFuncRef, kNullFuncRefCode)       \
+  V(kNone, kWasmNullRef, kNullRefCode)                 \
+  V(kString, kWasmStringRef, kStringRefCode)           \
   V(kStruct, kWasmStructRef, kStructRefCode)
 
 // Same, but for types where the shorthand is non-nullable.
@@ -287,9 +298,13 @@ class MjsunitNamesProvider {
 
   void PrintHeapType(StringBuilder& out, HeapType type, OutputContext mode) {
     switch (type.representation()) {
-#define CASE(kCpp, JS, JSCode)                       \
-  case HeapType::kCpp:                               \
-    out << (mode == kEmitWireBytes ? #JSCode : #JS); \
+#define CASE(kCpp, JS, JSCode)                                             \
+  case HeapType::kCpp:                                                     \
+    out << (mode == kEmitWireBytes ? #JSCode : #JS);                       \
+    return;                                                                \
+  case HeapType::kCpp##Shared:                                             \
+    out << (mode == kEmitWireBytes ? "kWasmSharedTypeForm, " #JSCode       \
+                                   : "wasmRefNullType(" #JS ").shared()"); \
     return;
       ABSTRACT_TYPE_LIST(CASE)
       ABSTRACT_NN_TYPE_LIST(CASE)
@@ -316,29 +331,44 @@ class MjsunitNamesProvider {
       // clang-format on
       case kRefNull:
         switch (type.heap_representation()) {
-#define CASE(kCpp, _, _2) case HeapType::kCpp:
-          ABSTRACT_TYPE_LIST(CASE)
-#undef CASE
-          return PrintHeapType(out, type.heap_type(), mode);
           case HeapType::kBottom:
           case HeapType::kTop:
             UNREACHABLE();
+#define CASE(kCpp, _, _2) case HeapType::kCpp:
+            ABSTRACT_TYPE_LIST(CASE)
+#undef CASE
+            if (!type.is_exact()) {
+              return PrintHeapType(out, type.heap_type(), mode);
+            }
+            [[fallthrough]];
           default:
-            out << (mode == kEmitObjects ? "wasmRefNullType("
-                                         : "kWasmRefNull, ");
+            if (mode == kEmitObjects) {
+              out << "wasmRefNullType(";
+            } else {
+              out << "kWasmRefNull, ";
+              if (type.is_exact()) out << "kWasmExact, ";
+            }
             break;
         }
         break;
       case kRef:
         switch (type.heap_representation()) {
+          case HeapType::kBottom:
+            UNREACHABLE();
 #define CASE(kCpp, _, _2) case HeapType::kCpp:
           ABSTRACT_NN_TYPE_LIST(CASE)
 #undef CASE
-          return PrintHeapType(out, type.heap_type(), mode);
-          case HeapType::kBottom:
-            UNREACHABLE();
+          if (!type.is_exact()) {
+            return PrintHeapType(out, type.heap_type(), mode);
+          }
+          [[fallthrough]];
           default:
-            out << (mode == kEmitObjects ? "wasmRefType(" : "kWasmRef, ");
+            if (mode == kEmitObjects) {
+              out << "wasmRefType(";
+            } else {
+              out << "kWasmRef, ";
+              if (type.is_exact()) out << "kWasmExact, ";
+            }
             break;
         }
         break;
@@ -346,12 +376,14 @@ class MjsunitNamesProvider {
         out << "/*<bot>*/";
         return;
       case kTop:
-      case kRtt:
       case kVoid:
         UNREACHABLE();
     }
     PrintHeapType(out, type.heap_type(), mode);
-    if (mode == kEmitObjects) out << ")";
+    if (mode == kEmitObjects) {
+      out << ")";
+      if (type.is_exact()) out << ".exact()";
+    }
   }
 
   void PrintMakeSignature(StringBuilder& out, const FunctionSig* sig) {
@@ -418,10 +450,10 @@ class MjsunitNamesProvider {
       char uc = c | 0x20;
       if (uc >= 'a' && uc <= 'z') continue;
       if (c == '$' || c == '_') continue;
-      if (c >= '0' && c <= '9') continue;
+      if (i > 0 && c >= '0' && c <= '9') continue;
       return false;
     }
-    // Check for clashes with auto-generated names.
+    // Check for clashes with auto-generated names and reserved words.
     // This isn't perfect: any collision with a function (e.g. "makeSig")
     // or constant (e.g. "kFooRefCode") would also break the generated test,
     // but it doesn't seem feasible to accurately guard against all of those.
@@ -442,6 +474,7 @@ class MjsunitNamesProvider {
       if (memcmp(name.begin(), "kExpr", 5) == 0) return false;
       if (memcmp(name.begin(), "kSig_", 5) == 0) return false;
       if (memcmp(name.begin(), "kWasm", 5) == 0) return false;
+      if (memcmp(name.begin(), "throw", 5) == 0) return false;
     }
     if (name.length() >= 4) {
       if (memcmp(name.begin(), "$mem", 4) == 0) return false;
@@ -689,8 +722,8 @@ void PrintF32Const(StringBuilder& out, ImmF32Immediate& imm) {
     return;
   }
   char buffer[100];
-  const char* str =
-      DoubleToCString(imm.value, base::VectorOf(buffer, sizeof(buffer)));
+  std::string_view str =
+      DoubleToStringView(imm.value, base::ArrayVector(buffer));
   out << "wasmF32Const(" << str << ")";
 }
 
@@ -711,8 +744,8 @@ void PrintF64Const(StringBuilder& out, ImmF64Immediate& imm) {
     return;
   }
   char buffer[100];
-  const char* str =
-      DoubleToCString(imm.value, base::VectorOf(buffer, sizeof(buffer)));
+  std::string_view str =
+      DoubleToStringView(imm.value, base::ArrayVector(buffer));
   out << "wasmF64Const(" << str << ")";
 }
 
@@ -804,27 +837,26 @@ class MjsunitImmediatesPrinter {
     }
   }
 
-  void HeapType(HeapTypeImmediate& imm) {
+  void HeapType(HeapType type) {
     out_ << " ";
-    names()->PrintHeapType(out_, imm.type, kEmitWireBytes);
+    names()->PrintHeapType(out_, type, kEmitWireBytes);
     out_ << ",";
   }
+  void HeapType(HeapTypeImmediate& imm) { HeapType(imm.type); }
 
-  void ValueType(HeapTypeImmediate& imm, bool is_nullable) {
+  void ValueType(ValueType type) {
     if (owner_->current_opcode_ == kExprBrOnCast ||
-        owner_->current_opcode_ == kExprBrOnCastFail) {
+        owner_->current_opcode_ == kExprBrOnCastFail ||
+        owner_->current_opcode_ == kExprBrOnCastDesc ||
+        owner_->current_opcode_ == kExprBrOnCastDescFail) {
       // We somewhat incorrectly use the {ValueType} callback rather than
-      // {HeapType()} for br_on_cast[_fail], because that's convenient
+      // {HeapType()} for br_on_cast[_desc][_fail], because that's convenient
       // for disassembling to the text format. For module builder output,
       // fix that hack here, by dispatching back to {HeapType()}.
-      return HeapType(imm);
+      return HeapType(type.heap_type());
     }
     out_ << " ";
-    names()->PrintValueType(
-        out_,
-        ValueType::RefMaybeNull(imm.type,
-                                is_nullable ? kNullable : kNonNullable),
-        kEmitWireBytes);
+    names()->PrintValueType(out_, type, kEmitWireBytes);
     out_ << ",";
   }
 
@@ -887,6 +919,36 @@ class MjsunitImmediatesPrinter {
     owner_->indentation_.decrease();
   }
 
+  void EffectHandlerTable(EffectHandlerTableImmediate& imm) {
+    const uint8_t* pc = imm.table;
+    owner_->indentation_.increase();
+    owner_->indentation_.increase();
+
+    for (uint32_t i = 0; i < imm.table_count; i++) {
+      out_ << "\n" << owner_->indentation_;
+
+      uint8_t kind = owner_->read_u8<ValidationTag>(pc);
+      pc += 1;
+      if (kind == kOnSuspend) {
+        out_ << "kOnSuspend, ";
+        auto [tag, taglength] = owner_->read_u32v<ValidationTag>(pc);
+        pc += taglength;
+        names()->PrintTagReferenceLeb(out_, tag);
+        out_ << ", ";
+        auto [target, label_length] = owner_->read_u32v<ValidationTag>(pc);
+        pc += label_length;
+        out_ << target << ",";
+      } else {
+        out_ << "kOnSwitch, ";
+        auto [tag, length] = owner_->read_u32v<ValidationTag>(pc);
+        names()->PrintTagReferenceLeb(out_, tag);
+        out_ << ", ";
+      }
+    }
+    owner_->indentation_.decrease();
+    owner_->indentation_.decrease();
+  }
+
   void CallIndirect(CallIndirectImmediate& imm) {
     PrintSignature(imm.sig_imm.index);
     TableIndex(imm.table_imm);
@@ -914,6 +976,18 @@ class MjsunitImmediatesPrinter {
       DCHECK_LE(imm.offset, std::numeric_limits<uint32_t>::max());
       WriteUnsignedLEB(static_cast<uint32_t>(imm.offset));
     }
+  }
+
+  void MemoryOrder(const MemoryOrderImmediate& memory_order) {
+    switch (memory_order.order) {
+      case AtomicMemoryOrder::kAcqRel:
+        out_ << " kAtomicAcqRel,";
+        return;
+      case AtomicMemoryOrder::kSeqCst:
+        out_ << " kAtomicSeqCst,";
+        return;
+    }
+    out_ << " /* INVALID */ " << static_cast<int>(memory_order.order) << ',';
   }
 
   void SimdLane(SimdLaneImmediate& imm) { out_ << " " << imm.lane << ","; }
@@ -1026,9 +1100,9 @@ class MjsunitImmediatesPrinter {
   }
 
   void StringConst(StringConstImmediate& imm) {
-    // TODO(jkummerow): Support for string constants is incomplete, we never
-    // emit a strings section.
-    WriteUnsignedLEB(imm.index);
+    out_ << " ";
+    names()->PrintStringLiteralReference(out_, imm.index);
+    out_ << ",";
   }
 
   void MemoryInit(MemoryInitImmediate& imm) {
@@ -1115,7 +1189,8 @@ class MjsunitModuleDis {
     offsets_.CollectOffsets(module, wire_bytes.module_bytes());
   }
 
-  void PrintModule() {
+  void PrintModule(std::string_view extra_flags = {},
+                   bool emit_call_main = true) {
     tzset();
     time_t current_time = time(nullptr);
     struct tm current_localtime;
@@ -1126,14 +1201,18 @@ class MjsunitModuleDis {
 #endif
     int year = 1900 + current_localtime.tm_year;
 
+    // TODO(jkummerow): It would be neat to dynamically detect additional
+    // necessary --experimental-wasm-foo feature flags and add them.
+    // That requires decoding/validating functions before getting here though.
     out_ << "// Copyright " << year
          << " the V8 project authors. All rights reserved.\n"
             "// Use of this source code is governed by a BSD-style license "
             "that can be\n"
             "// found in the LICENSE file.\n"
             "\n"
-            "// Flags: --wasm-staging --wasm-inlining-call-indirect\n"
-            "\n"
+            "// Flags: --wasm-staging --wasm-inlining-call-indirect"
+         << extra_flags
+         << "\n\n"
             "d8.file.execute('test/mjsunit/wasm/wasm-module-builder.js');\n"
             "\n"
             "const builder = new WasmModuleBuilder();";
@@ -1314,6 +1393,7 @@ class MjsunitModuleDis {
             out_ << "undefined, ";
           }
           names()->PrintValueType(out_, table.type, kEmitObjects);
+          out_ << ", /*shared*/ " << (table.shared ? "true" : "false");
           if (table.is_table64()) out_ << ", true";
           break;
         }
@@ -1463,12 +1543,23 @@ class MjsunitModuleDis {
       out_ << "[";
       uint32_t num_bytes = static_cast<uint32_t>(data.size());
       if (num_bytes > 0) out_ << uint32_t{data[0]};
-      for (uint32_t i = 1; i < num_bytes; i++) {
-        out_ << ", " << uint32_t{data[i]};
+      for (uint32_t j = 1; j < num_bytes; j++) {
+        out_ << ", " << uint32_t{data[j]};
       }
       out_ << "]";
       if (segment.shared) out_ << ", true";
       out_ << ");";
+      out_.NextLine(0);
+    }
+
+    // Stringref literals.
+    for (uint32_t i = 0; i < module_->stringref_literals.size(); i++) {
+      out_ << "let ";
+      names()->PrintStringLiteralName(out_, i);
+      out_ << " = builder.addLiteralStringRef(\"";
+      const WasmStringRefLiteral lit = module_->stringref_literals[i];
+      PrintStringAsJSON(out_, wire_bytes_.start(), lit.source);
+      out_ << "\");";
       out_.NextLine(0);
     }
 
@@ -1675,19 +1766,21 @@ class MjsunitModuleDis {
 
     // Instantiate and invoke.
     if (added_any_export) out_.NextLine(0);
+    out_ << "let kBuiltins = { builtins: ['js-string', 'text-decoder', "
+            "'text-encoder'] };\n";
     bool compiles = !has_error_;
     if (compiles) {
-      out_ << "let kBuiltins = { builtins: ['js-string', 'text-decoder', "
-              "'text-encoder'] };\n"
-              "const instance = builder.instantiate({}, kBuiltins);\n"
-              "try {\n"
-              "  print(instance.exports.main(1, 2, 3));\n"
-              "} catch (e) {\n"
-              "  print('caught exception', e);\n"
-              "}";
+      out_ << "const instance = builder.instantiate({}, kBuiltins);\n";
+      if (emit_call_main) {
+        out_ << "try {\n"
+                "  print(instance.exports.main(1, 2, 3));\n"
+                "} catch (e) {\n"
+                "  print('caught exception', e);\n"
+                "}";
+      }
       out_.NextLine(0);
     } else {
-      out_ << "assertThrows(() => builder.instantiate(), "
+      out_ << "assertThrows(() => builder.instantiate({}, kBuiltins), "
               "WebAssembly.CompileError);";
       out_.NextLine(0);
     }
@@ -1711,22 +1804,22 @@ class MjsunitModuleDis {
 
   void DecodeAndAppendInitExpr(ConstantExpression init, ValueType expected) {
     switch (init.kind()) {
-      case ConstantExpression::kEmpty:
+      case ConstantExpression::Kind::kEmpty:
         UNREACHABLE();
-      case ConstantExpression::kI32Const:
+      case ConstantExpression::Kind::kI32Const:
         out_ << "wasmI32Const(" << init.i32_value() << ")";
         break;
-      case ConstantExpression::kRefNull:
+      case ConstantExpression::Kind::kRefNull:
         out_ << "[kExprRefNull, ";
-        names()->PrintHeapType(out_, HeapType(init.repr()), kEmitWireBytes);
+        names()->PrintHeapType(out_, init.type(), kEmitWireBytes);
         out_ << "]";
         break;
-      case ConstantExpression::kRefFunc:
+      case ConstantExpression::Kind::kRefFunc:
         out_ << "[kExprRefFunc, ";
         names()->PrintFunctionReferenceLeb(out_, init.index());
         out_ << "]";
         break;
-      case ConstantExpression::kWireBytesRef: {
+      case ConstantExpression::Kind::kWireBytesRef: {
         WireBytesRef ref = init.wire_bytes_ref();
         const uint8_t* start = wire_bytes_.start() + ref.offset();
         const uint8_t* end = start + ref.length();

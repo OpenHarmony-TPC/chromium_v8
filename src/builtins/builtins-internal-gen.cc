@@ -73,7 +73,7 @@ TF_BUILTIN(GrowFastSmiOrObjectElements, CodeStubAssembler) {
 }
 
 TF_BUILTIN(ReturnReceiver, CodeStubAssembler) {
-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+  auto receiver = Parameter<JSAny>(Descriptor::kReceiver);
   Return(receiver);
 }
 
@@ -83,7 +83,7 @@ TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
   auto new_target = Parameter<Object>(Descriptor::kJSNewTarget);
   auto arg_count =
       UncheckedParameter<Int32T>(Descriptor::kJSActualArgumentsCount);
-#ifdef V8_ENABLE_LEAPTIERING
+#ifdef V8_JS_LINKAGE_INCLUDES_DISPATCH_HANDLE
   auto dispatch_handle =
       UncheckedParameter<JSDispatchHandleT>(Descriptor::kJSDispatchHandle);
 #else
@@ -109,6 +109,9 @@ TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
 
   BIND(&tailcall_to_shared);
   // Tail call into code object on the SharedFunctionInfo.
+  // TODO(https://crbug.com/451355210, ishell): consider removing this
+  // duplicate implementation in favour of returning code object from above
+  // runtime calls once non-leaptering code is removed.
   // TODO(saelo): this is not safe. We either need to validate the parameter
   // count here or obtain the code from the dispatch table.
   TNode<Code> code = GetSharedFunctionInfoCode(shared);
@@ -166,9 +169,14 @@ class WriteBarrierCodeStubAssembler : public CodeStubAssembler {
     // Load address of SlotSet
     TNode<IntPtrT> slot_set = LoadSlotSet(page, &slow_path);
     TNode<IntPtrT> slot_offset = IntPtrSub(slot, chunk);
+    TNode<IntPtrT> num_buckets_address =
+        IntPtrSub(slot_set, IntPtrConstant(SlotSet::kNumBucketsSize));
+    TNode<IntPtrT> num_buckets = UncheckedCast<IntPtrT>(
+        Load(MachineType::Pointer(), num_buckets_address, IntPtrConstant(0)));
 
     // Load bucket
-    TNode<IntPtrT> bucket = LoadBucket(slot_set, slot_offset, &slow_path);
+    TNode<IntPtrT> bucket =
+        LoadBucket(slot_set, slot_offset, num_buckets, &slow_path);
 
     // Update cell
     SetBitInCell(bucket, slot_offset);
@@ -191,15 +199,17 @@ class WriteBarrierCodeStubAssembler : public CodeStubAssembler {
   TNode<IntPtrT> LoadSlotSet(TNode<IntPtrT> page, Label* slow_path) {
     TNode<IntPtrT> slot_set = UncheckedCast<IntPtrT>(
         Load(MachineType::Pointer(), page,
-             IntPtrConstant(MutablePageMetadata::kOldToNewSlotSetOffset)));
+             IntPtrConstant(MutablePageMetadata::SlotSetOffset(
+                 RememberedSetType::OLD_TO_NEW))));
     GotoIf(WordEqual(slot_set, IntPtrConstant(0)), slow_path);
     return slot_set;
   }
 
   TNode<IntPtrT> LoadBucket(TNode<IntPtrT> slot_set, TNode<WordT> slot_offset,
-                            Label* slow_path) {
+                            TNode<IntPtrT> num_buckets, Label* slow_path) {
     TNode<WordT> bucket_index =
         WordShr(slot_offset, SlotSet::kBitsPerBucketLog2 + kTaggedSizeLog2);
+    CSA_CHECK(this, IntPtrLessThan(bucket_index, num_buckets));
     TNode<IntPtrT> bucket = UncheckedCast<IntPtrT>(
         Load(MachineType::Pointer(), slot_set,
              WordShl(bucket_index, kSystemPointerSizeLog2)));
@@ -977,8 +987,8 @@ class SetOrCopyDataPropertiesAssembler : public CodeStubAssembler {
  protected:
   TNode<JSObject> AllocateJsObjectTarget(TNode<Context> context) {
     const TNode<NativeContext> native_context = LoadNativeContext(context);
-    const TNode<JSFunction> object_function = Cast(
-        LoadContextElement(native_context, Context::OBJECT_FUNCTION_INDEX));
+    const TNode<JSFunction> object_function = Cast(LoadContextElementNoCell(
+        native_context, Context::OBJECT_FUNCTION_INDEX));
     const TNode<Map> map =
         Cast(LoadJSFunctionPrototypeOrInitialMap(object_function));
     const TNode<JSObject> target = AllocateJSObjectFromMap(map);
@@ -1124,7 +1134,7 @@ TF_BUILTIN(CopyDataPropertiesWithExcludedProperties,
       ReinterpretCast<IntPtrT>(arguments.AtIndexPtr(
           IntPtrSub(excluded_property_count, IntPtrConstant(2))));
 
-  arguments.PopAndReturn(CallBuiltin(
+  arguments.PopAndReturn(CallBuiltin<JSAny>(
       Builtin::kCopyDataPropertiesWithExcludedPropertiesOnStack, context,
       source, excluded_property_count, excluded_properties));
 }
@@ -1192,7 +1202,7 @@ TF_BUILTIN(ForInPrepare, CodeStubAssembler) {
 
 TF_BUILTIN(ForInFilter, CodeStubAssembler) {
   auto key = Parameter<String>(Descriptor::kKey);
-  auto object = Parameter<HeapObject>(Descriptor::kObject);
+  auto object = Parameter<JSAnyNotSmi>(Descriptor::kObject);
   auto context = Parameter<Context>(Descriptor::kContext);
 
   Label if_true(this), if_false(this);
@@ -1340,8 +1350,7 @@ TF_BUILTIN(AllocateInYoungGeneration, CodeStubAssembler) {
   auto requested_size = UncheckedParameter<IntPtrT>(Descriptor::kRequestedSize);
   CSA_CHECK(this, IsValidPositiveSmi(requested_size));
 
-  TNode<Smi> allocation_flags =
-      SmiConstant(Smi::FromInt(AllocateDoubleAlignFlag::encode(false)));
+  TNode<Smi> allocation_flags = SmiConstant(Smi::FromInt(kTaggedAligned));
   TailCallRuntime(Runtime::kAllocateInYoungGeneration, NoContextConstant(),
                   SmiFromIntPtr(requested_size), allocation_flags);
 }
@@ -1350,8 +1359,7 @@ TF_BUILTIN(AllocateInOldGeneration, CodeStubAssembler) {
   auto requested_size = UncheckedParameter<IntPtrT>(Descriptor::kRequestedSize);
   CSA_CHECK(this, IsValidPositiveSmi(requested_size));
 
-  TNode<Smi> runtime_flags =
-      SmiConstant(Smi::FromInt(AllocateDoubleAlignFlag::encode(false)));
+  TNode<Smi> runtime_flags = SmiConstant(Smi::FromInt(kTaggedAligned));
   TailCallRuntime(Runtime::kAllocateInOldGeneration, NoContextConstant(),
                   SmiFromIntPtr(requested_size), runtime_flags);
 }
@@ -1361,8 +1369,7 @@ TF_BUILTIN(WasmAllocateInYoungGeneration, CodeStubAssembler) {
   auto requested_size = UncheckedParameter<IntPtrT>(Descriptor::kRequestedSize);
   CSA_CHECK(this, IsValidPositiveSmi(requested_size));
 
-  TNode<Smi> allocation_flags =
-      SmiConstant(Smi::FromInt(AllocateDoubleAlignFlag::encode(false)));
+  TNode<Smi> allocation_flags = SmiConstant(Smi::FromInt(kTaggedAligned));
   TailCallRuntime(Runtime::kAllocateInYoungGeneration, NoContextConstant(),
                   SmiFromIntPtr(requested_size), allocation_flags);
 }
@@ -1371,10 +1378,17 @@ TF_BUILTIN(WasmAllocateInOldGeneration, CodeStubAssembler) {
   auto requested_size = UncheckedParameter<IntPtrT>(Descriptor::kRequestedSize);
   CSA_CHECK(this, IsValidPositiveSmi(requested_size));
 
-  TNode<Smi> runtime_flags =
-      SmiConstant(Smi::FromInt(AllocateDoubleAlignFlag::encode(false)));
+  TNode<Smi> runtime_flags = SmiConstant(Smi::FromInt(kTaggedAligned));
   TailCallRuntime(Runtime::kAllocateInOldGeneration, NoContextConstant(),
                   SmiFromIntPtr(requested_size), runtime_flags);
+}
+
+TF_BUILTIN(WasmAllocateInSharedHeap, CodeStubAssembler) {
+  auto requested_size = UncheckedParameter<IntPtrT>(Descriptor::kRequestedSize);
+  auto alignment = Parameter<Smi>(Descriptor::kAlignment);
+  CSA_CHECK(this, IsValidPositiveSmi(requested_size));
+  TailCallRuntime(Runtime::kAllocateInSharedHeap, NoContextConstant(),
+                  SmiFromIntPtr(requested_size), alignment);
 }
 #endif
 
@@ -1442,18 +1456,7 @@ void Builtins::Generate_BaselineLeaveFrame(MacroAssembler* masm) {
 #endif  // V8_ENABLE_SPARKPLUG
 }
 
-// TODO(v8:11421): Remove #if once the Maglev compiler is ported to other
-// architectures.
-#ifndef V8_TARGET_ARCH_X64
-void Builtins::Generate_MaglevOnStackReplacement(MacroAssembler* masm) {
-  using D =
-      i::CallInterfaceDescriptorFor<Builtin::kMaglevOnStackReplacement>::type;
-  static_assert(D::kParameterCount == 1);
-  masm->Trap();
-}
-#endif  // V8_TARGET_ARCH_X64
-
-#ifdef V8_ENABLE_MAGLEV
+#if defined(V8_ENABLE_MAGLEV) && !defined(V8_ENABLE_LEAPTIERING)
 void Builtins::Generate_MaglevOptimizeCodeOrTailCallOptimizedCodeSlot(
     MacroAssembler* masm) {
   using D = MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor;
@@ -1465,16 +1468,19 @@ void Builtins::Generate_MaglevOptimizeCodeOrTailCallOptimizedCodeSlot(
   masm->Trap();
 }
 #else
+void Builtins::Generate_MaglevOptimizeCodeOrTailCallOptimizedCodeSlot(
+    MacroAssembler* masm) {
+  masm->Trap();
+}
+#endif  // V8_ENABLE_MAGLEV && !V8_ENABLE_LEAPTIERING
+
+#ifndef V8_ENABLE_MAGLEV
 // static
 void Builtins::Generate_MaglevFunctionEntryStackCheck(MacroAssembler* masm,
                                                       bool save_new_target) {
   masm->Trap();
 }
-void Builtins::Generate_MaglevOptimizeCodeOrTailCallOptimizedCodeSlot(
-    MacroAssembler* masm) {
-  masm->Trap();
-}
-#endif  // V8_ENABLE_MAGLEV
+#endif  // !V8_ENABLE_MAGLEV
 
 void Builtins::Generate_MaglevFunctionEntryStackCheck_WithoutNewTarget(
     MacroAssembler* masm) {
@@ -1488,7 +1494,7 @@ void Builtins::Generate_MaglevFunctionEntryStackCheck_WithNewTarget(
 
 // ES6 [[Get]] operation.
 TF_BUILTIN(GetProperty, CodeStubAssembler) {
-  auto object = Parameter<Object>(Descriptor::kObject);
+  auto object = Parameter<JSAny>(Descriptor::kObject);
   auto key = Parameter<Object>(Descriptor::kKey);
   auto context = Parameter<Context>(Descriptor::kContext);
   // TODO(duongn): consider tailcalling to GetPropertyWithReceiver(object,
@@ -1497,7 +1503,7 @@ TF_BUILTIN(GetProperty, CodeStubAssembler) {
       if_slow(this, Label::kDeferred);
 
   CodeStubAssembler::LookupPropertyInHolder lookup_property_in_holder =
-      [=, this](TNode<HeapObject> receiver, TNode<HeapObject> holder,
+      [=, this](TNode<JSAnyNotSmi> receiver, TNode<JSAnyNotSmi> holder,
                 TNode<Map> holder_map, TNode<Int32T> holder_instance_type,
                 TNode<Name> unique_name, Label* next_holder,
                 Label* if_bailout) {
@@ -1514,7 +1520,7 @@ TF_BUILTIN(GetProperty, CodeStubAssembler) {
       };
 
   CodeStubAssembler::LookupElementInHolder lookup_element_in_holder =
-      [=, this](TNode<HeapObject> receiver, TNode<HeapObject> holder,
+      [=, this](TNode<JSAnyNotSmi> receiver, TNode<JSAnyNotSmi> holder,
                 TNode<Map> holder_map, TNode<Int32T> holder_instance_type,
                 TNode<IntPtrT> index, Label* next_holder, Label* if_bailout) {
         // Not supported yet.
@@ -1547,16 +1553,16 @@ TF_BUILTIN(GetProperty, CodeStubAssembler) {
 
 // ES6 [[Get]] operation with Receiver.
 TF_BUILTIN(GetPropertyWithReceiver, CodeStubAssembler) {
-  auto object = Parameter<Object>(Descriptor::kObject);
+  auto object = Parameter<JSAny>(Descriptor::kObject);
   auto key = Parameter<Object>(Descriptor::kKey);
   auto context = Parameter<Context>(Descriptor::kContext);
-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+  auto receiver = Parameter<JSAny>(Descriptor::kReceiver);
   auto on_non_existent = Parameter<Object>(Descriptor::kOnNonExistent);
   Label if_notfound(this), if_proxy(this, Label::kDeferred),
       if_slow(this, Label::kDeferred);
 
   CodeStubAssembler::LookupPropertyInHolder lookup_property_in_holder =
-      [=, this](TNode<HeapObject> receiver, TNode<HeapObject> holder,
+      [=, this](TNode<JSAnyNotSmi> receiver, TNode<JSAnyNotSmi> holder,
                 TNode<Map> holder_map, TNode<Int32T> holder_instance_type,
                 TNode<Name> unique_name, Label* next_holder,
                 Label* if_bailout) {
@@ -1571,7 +1577,7 @@ TF_BUILTIN(GetPropertyWithReceiver, CodeStubAssembler) {
       };
 
   CodeStubAssembler::LookupElementInHolder lookup_element_in_holder =
-      [=, this](TNode<HeapObject> receiver, TNode<HeapObject> holder,
+      [=, this](TNode<JSAnyNotSmi> receiver, TNode<JSAnyNotSmi> holder,
                 TNode<Map> holder_map, TNode<Int32T> holder_instance_type,
                 TNode<IntPtrT> index, Label* next_holder, Label* if_bailout) {
         // Not supported yet.
@@ -1618,7 +1624,7 @@ TF_BUILTIN(GetPropertyWithReceiver, CodeStubAssembler) {
 // ES6 [[Set]] operation.
 TF_BUILTIN(SetProperty, CodeStubAssembler) {
   auto context = Parameter<Context>(Descriptor::kContext);
-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+  auto receiver = Parameter<JSAny>(Descriptor::kReceiver);
   auto key = Parameter<Object>(Descriptor::kKey);
   auto value = Parameter<Object>(Descriptor::kValue);
 
@@ -1647,9 +1653,12 @@ TF_BUILTIN(InstantiateAsmJs, CodeStubAssembler) {
   auto new_target = Parameter<Object>(Descriptor::kNewTarget);
   auto arg_count =
       UncheckedParameter<Int32T>(Descriptor::kActualArgumentsCount);
-#ifdef V8_ENABLE_LEAPTIERING
+#ifdef V8_JS_LINKAGE_INCLUDES_DISPATCH_HANDLE
   auto dispatch_handle =
       UncheckedParameter<JSDispatchHandleT>(Descriptor::kDispatchHandle);
+#elif defined(V8_ENABLE_LEAPTIERING)
+  TNode<JSDispatchHandleT> dispatch_handle = ReinterpretCast<JSDispatchHandleT>(
+      LoadJSFunctionDispatchHandle(function));
 #else
   auto dispatch_handle = InvalidDispatchHandleConstant();
 #endif
@@ -1666,7 +1675,7 @@ TF_BUILTIN(InstantiateAsmJs, CodeStubAssembler) {
 
   // Call runtime, on success just pass the result to the caller and pop all
   // arguments. A smi 0 is returned on failure, an object on success.
-  TNode<Object> maybe_result_or_smi_zero = CallRuntime(
+  TNode<JSAny> maybe_result_or_smi_zero = CallRuntime<JSAny>(
       Runtime::kInstantiateAsmJs, context, function, stdlib, foreign, heap);
   GotoIf(TaggedIsSmi(maybe_result_or_smi_zero), &tailcall_to_function);
   args.PopAndReturn(maybe_result_or_smi_zero);

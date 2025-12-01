@@ -5,19 +5,22 @@
 #ifndef V8_OBJECTS_FEEDBACK_VECTOR_INL_H_
 #define V8_OBJECTS_FEEDBACK_VECTOR_INL_H_
 
+#include "src/objects/feedback-vector.h"
+// Include the non-inl header before the rest of the headers.
+
 #include <optional>
 
 #include "src/common/globals.h"
 #include "src/heap/heap-write-barrier-inl.h"
 #include "src/objects/code-inl.h"
 #include "src/objects/feedback-cell-inl.h"
-#include "src/objects/feedback-vector.h"
 #include "src/objects/maybe-object-inl.h"
 #include "src/objects/shared-function-info.h"
 #include "src/objects/smi.h"
 #include "src/objects/tagged.h"
 #include "src/roots/roots-inl.h"
 #include "src/torque/runtime-macro-shims.h"
+#include "src/torque/runtime-support.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -28,9 +31,6 @@ namespace v8::internal {
 
 TQ_OBJECT_CONSTRUCTORS_IMPL(FeedbackVector)
 OBJECT_CONSTRUCTORS_IMPL(FeedbackMetadata, HeapObject)
-
-NEVER_READ_ONLY_SPACE_IMPL(FeedbackVector)
-NEVER_READ_ONLY_SPACE_IMPL(ClosureFeedbackCellArray)
 
 INT32_ACCESSORS(FeedbackMetadata, slot_count, kSlotCountOffset)
 
@@ -57,24 +57,20 @@ void FeedbackMetadata::set(int index, int32_t value) {
   WriteField<int32_t>(offset, value);
 }
 
+#ifndef V8_ENABLE_LEAPTIERING
 // static
 constexpr uint32_t FeedbackVector::FlagMaskForNeedsProcessingCheckFrom(
     CodeKind code_kind) {
   DCHECK(CodeKindCanTierUp(code_kind));
-  // TODO(olivf): investigate whether we can drop
-  // kFlagsTieringStateIsAnyRequested here as well when leaptiering is enabled.
   uint32_t flag_mask = FeedbackVector::kFlagsTieringStateIsAnyRequested |
-                       FeedbackVector::kFlagsLogNextExecution;
-  // When leaptiering is enabled, we don't load optimized code from the
-  // FeedbackVector, so we don't check for these flags.
-#ifndef V8_ENABLE_LEAPTIERING
-  flag_mask |= FeedbackVector::kFlagsMaybeHasTurbofanCode;
+                       FeedbackVector::kFlagsLogNextExecution |
+                       FeedbackVector::kFlagsMaybeHasTurbofanCode;
   if (code_kind != CodeKind::MAGLEV) {
     flag_mask |= FeedbackVector::kFlagsMaybeHasMaglevCode;
   }
-#endif  // !V8_ENABLE_LEAPTIERING
   return flag_mask;
 }
+#endif  // !V8_ENABLE_LEAPTIERING
 
 bool FeedbackMetadata::is_empty() const {
   DCHECK_IMPLIES(slot_count() == 0, create_closure_slot_count() == 0);
@@ -118,6 +114,7 @@ int FeedbackMetadata::GetSlotSize(FeedbackSlotKind kind) {
     case FeedbackSlotKind::kSetKeyedStrict:
     case FeedbackSlotKind::kStoreInArrayLiteral:
     case FeedbackSlotKind::kDefineKeyedOwnPropertyInLiteral:
+    case FeedbackSlotKind::kStringAddAndInternalize:
       return 2;
 
     case FeedbackSlotKind::kInvalid:
@@ -188,18 +185,6 @@ void FeedbackVector::set_maybe_has_optimized_osr_code(bool value,
   }
 }
 
-TieringState FeedbackVector::tiering_state() const {
-  return TieringStateBits::decode(flags());
-}
-
-bool FeedbackVector::log_next_execution() const {
-  return LogNextExecutionBit::decode(flags());
-}
-
-void FeedbackVector::set_log_next_execution(bool value) {
-  set_flags(LogNextExecutionBit::update(flags(), value));
-}
-
 bool FeedbackVector::interrupt_budget_reset_by_ic_change() const {
   return InterruptBudgetResetByIcChangeBit::decode(flags());
 }
@@ -218,10 +203,32 @@ void FeedbackVector::set_was_once_deoptimized() {
                                      kRelaxedStore);
 }
 
-#ifndef V8_ENABLE_LEAPTIERING
+#ifdef V8_ENABLE_LEAPTIERING
+
+bool FeedbackVector::tiering_in_progress() const {
+  return TieringInProgressBit::decode(flags());
+}
+
+#else
+
+TieringState FeedbackVector::tiering_state() const {
+  return TieringStateBits::decode(flags());
+}
+
+void FeedbackVector::reset_tiering_state() {
+  set_tiering_state(TieringState::kNone);
+}
+
+bool FeedbackVector::log_next_execution() const {
+  return LogNextExecutionBit::decode(flags());
+}
+
+void FeedbackVector::set_log_next_execution(bool value) {
+  set_flags(LogNextExecutionBit::update(flags(), value));
+}
 
 Tagged<Code> FeedbackVector::optimized_code(IsolateForSandbox isolate) const {
-  Tagged<MaybeObject> slot = maybe_optimized_code();
+  Tagged<MaybeWeak<HeapObject>> slot = maybe_optimized_code();
   DCHECK(slot.IsWeakOrCleared());
   Tagged<HeapObject> heap_object;
   Tagged<Code> code;
@@ -263,10 +270,10 @@ void FeedbackVector::set_maybe_has_turbofan_code(bool value) {
   set_flags(MaybeHasTurbofanCodeBit::update(flags(), value));
 }
 
-#endif  // !V8_ENABLE_LEAPTIERING
+#endif  // V8_ENABLE_LEAPTIERING
 
 std::optional<Tagged<Code>> FeedbackVector::GetOptimizedOsrCode(
-    Isolate* isolate, FeedbackSlot slot) {
+    Isolate* isolate, Handle<BytecodeArray> bytecode, FeedbackSlot slot) {
   Tagged<MaybeObject> maybe_code = Get(isolate, slot);
   if (maybe_code.IsCleared()) return {};
 
@@ -276,10 +283,34 @@ std::optional<Tagged<Code>> FeedbackVector::GetOptimizedOsrCode(
     // Clear the cached Code object if deoptimized.
     // TODO(jgruber): Add tracing.
     Set(slot, ClearedValue(isolate));
+    if (!bytecode.is_null()) {
+      RecomputeOptimizedOsrCodeFlags(isolate, bytecode);
+    }
     return {};
   }
 
   return code;
+}
+
+void FeedbackVector::RecomputeOptimizedOsrCodeFlags(
+    Isolate* isolate, Handle<BytecodeArray> bytecode_array) {
+  bool turbofan = false;
+  bool maglev = false;
+  interpreter::BytecodeArrayIterator it(bytecode_array);
+  for (; !it.done(); it.Advance()) {
+    if (it.current_bytecode() != interpreter::Bytecode::kJumpLoop) continue;
+    if (auto code = GetOptimizedOsrCode(isolate, {}, it.GetSlotOperand(2))) {
+      if ((*code)->marked_for_deoptimization()) continue;
+      turbofan |= (*code)->is_turbofanned();
+      maglev |= (*code)->is_maglevved();
+    }
+  }
+  if (!maglev && maybe_has_maglev_osr_code()) {
+    set_maybe_has_optimized_osr_code(false, CodeKind::MAGLEV);
+  }
+  if (!turbofan && maybe_has_turbofan_osr_code()) {
+    set_maybe_has_optimized_osr_code(false, CodeKind::TURBOFAN_JS);
+  }
 }
 
 // Conversion from an integer index to either a slot or an ic slot.
@@ -319,10 +350,10 @@ Tagged<MaybeObject> FeedbackVector::Get(PtrComprCageBase cage_base,
   return value;
 }
 
-Handle<FeedbackCell> FeedbackVector::GetClosureFeedbackCell(Isolate* isolate,
-                                                            int index) const {
+DirectHandle<FeedbackCell> FeedbackVector::GetClosureFeedbackCell(
+    Isolate* isolate, int index) const {
   DCHECK_GE(index, 0);
-  return handle(closure_feedback_cell_array()->get(index), isolate);
+  return direct_handle(closure_feedback_cell_array()->get(index), isolate);
 }
 
 Tagged<FeedbackCell> FeedbackVector::closure_feedback_cell(int index) const {
@@ -370,6 +401,8 @@ BinaryOperationHint BinaryOperationHintFromFeedback(int type_feedback) {
       return BinaryOperationHint::kSignedSmall;
     case BinaryOperationFeedback::kSignedSmallInputs:
       return BinaryOperationHint::kSignedSmallInputs;
+    case BinaryOperationFeedback::kAdditiveSafeInteger:
+      return BinaryOperationHint::kAdditiveSafeInteger;
     case BinaryOperationFeedback::kNumber:
       return BinaryOperationHint::kNumber;
     case BinaryOperationFeedback::kNumberOrOddball:
@@ -405,6 +438,8 @@ CompareOperationHint CompareOperationHintFromFeedback(int type_feedback) {
     return CompareOperationHint::kNumber;
   } else if (Is<CompareOperationFeedback::kNumberOrBoolean>(type_feedback)) {
     return CompareOperationHint::kNumberOrBoolean;
+  } else if (Is<CompareOperationFeedback::kNumberOrOddball>(type_feedback)) {
+    return CompareOperationHint::kNumberOrOddball;
   }
 
   if (Is<CompareOperationFeedback::kInternalizedString>(type_feedback)) {
@@ -449,16 +484,16 @@ ForInHint ForInHintFromFeedback(ForInFeedback type_feedback) {
   UNREACHABLE();
 }
 
-Handle<Symbol> FeedbackVector::UninitializedSentinel(Isolate* isolate) {
-  return ReadOnlyRoots(isolate).uninitialized_symbol_handle();
+DirectHandle<Symbol> FeedbackVector::UninitializedSentinel(Isolate* isolate) {
+  return isolate->factory()->uninitialized_symbol();
 }
 
 Handle<Symbol> FeedbackVector::MegamorphicSentinel(Isolate* isolate) {
-  return ReadOnlyRoots(isolate).megamorphic_symbol_handle();
+  return isolate->factory()->megamorphic_symbol();
 }
 
-Handle<Symbol> FeedbackVector::MegaDOMSentinel(Isolate* isolate) {
-  return ReadOnlyRoots(isolate).mega_dom_symbol_handle();
+DirectHandle<Symbol> FeedbackVector::MegaDOMSentinel(Isolate* isolate) {
+  return isolate->factory()->mega_dom_symbol();
 }
 
 Tagged<Symbol> FeedbackVector::RawUninitializedSentinel(Isolate* isolate) {
@@ -514,7 +549,8 @@ Tagged<MaybeObject> FeedbackNexus::MegaDOMSentinel() const {
   return *FeedbackVector::MegaDOMSentinel(config()->isolate());
 }
 
-Tagged<MaybeObject> FeedbackNexus::FromHandle(MaybeObjectHandle slot) const {
+Tagged<MaybeObject> FeedbackNexus::FromHandle(
+    MaybeObjectDirectHandle slot) const {
   return slot.is_null() ? ClearedValue(config()->isolate()) : *slot;
 }
 
@@ -576,7 +612,7 @@ void FeedbackNexus::IterateMapsWithUnclearedHandler(F function) const {
   // TODO(370727490): Make the FeedbackIterator GC safe (e.g. look up
   // map/handler in the feedback array on-demand).
   for (FeedbackIterator it(this); !it.done(); it.Advance()) {
-    Handle<Map> map = config()->NewHandle(it.map());
+    DirectHandle<Map> map = config()->NewHandle(it.map());
     if (!it.handler().IsCleared()) {
       function(map);
     }

@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_WASM_TURBOSHAFT_GRAPH_INTERFACE_H_
+#define V8_WASM_TURBOSHAFT_GRAPH_INTERFACE_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
-
-#ifndef V8_WASM_TURBOSHAFT_GRAPH_INTERFACE_H_
-#define V8_WASM_TURBOSHAFT_GRAPH_INTERFACE_H_
 
 #include "src/base/macros.h"
 #include "src/compiler/turboshaft/assembler.h"
@@ -45,7 +45,8 @@ V8_EXPORT_PRIVATE void BuildTSGraph(
     compiler::turboshaft::PipelineData* data, AccountingAllocator* allocator,
     CompilationEnv* env, WasmDetectedFeatures* detected,
     compiler::turboshaft::Graph& graph, const FunctionBody& func_body,
-    const WireBytesStorage* wire_bytes, AssumptionsJournal* assumptions,
+    const WireBytesStorage* wire_bytes,
+    std::unique_ptr<AssumptionsJournal>* assumptions,
     ZoneVector<WasmInliningPosition>* inlining_positions, int func_index);
 
 void BuildWasmWrapper(compiler::turboshaft::PipelineData* data,
@@ -83,7 +84,6 @@ class V8_EXPORT_PRIVATE WasmGraphBuilderBase {
 
   using RegisterRepresentation = compiler::turboshaft::RegisterRepresentation;
   using TSCallDescriptor = compiler::turboshaft::TSCallDescriptor;
-  using WasmCodePtr = compiler::turboshaft::WasmCodePtr;
   using Word32 = compiler::turboshaft::Word32;
   using Word64 = compiler::turboshaft::Word64;
   using WordPtr = compiler::turboshaft::WordPtr;
@@ -104,18 +104,14 @@ class V8_EXPORT_PRIVATE WasmGraphBuilderBase {
   V<WordPtr> GetTargetForBuiltinCall(Builtin builtin, StubCallMode stub_mode);
   V<BigInt> BuildChangeInt64ToBigInt(V<Word64> input, StubCallMode stub_mode);
 
-  std::pair<V<WasmCodePtr>, V<HeapObject>>
-  BuildImportedFunctionTargetAndImplicitArg(
+  std::pair<V<Word32>, V<HeapObject>> BuildImportedFunctionTargetAndImplicitArg(
       ConstOrV<Word32> func_index,
       V<WasmTrustedInstanceData> trusted_instance_data);
 
-  std::pair<V<WasmCodePtr>, V<ExposedTrustedObject>>
-  BuildFunctionTargetAndImplicitArg(V<WasmInternalFunction> internal_function,
-                                    uint64_t expected_sig_hash);
+  std::pair<V<Word32>, V<ExposedTrustedObject>>
+  BuildFunctionTargetAndImplicitArg(V<WasmInternalFunction> internal_function);
 
   RegisterRepresentation RepresentationFor(ValueTypeBase type);
-  V<WasmTrustedInstanceData> LoadTrustedDataFromInstanceObject(
-      V<HeapObject> instance_object);
 
   OpIndex CallC(const MachineSignature* sig, ExternalReference ref,
                 std::initializer_list<OpIndex> args);
@@ -125,6 +121,11 @@ class V8_EXPORT_PRIVATE WasmGraphBuilderBase {
                 OpIndex arg) {
     return CallC(sig, ref, {arg});
   }
+
+  void BuildSetNewStackLimit(V<WordPtr> old_limit, V<WordPtr> new_limit);
+  V<WordPtr> BuildSwitchToTheCentralStack(V<WordPtr> old_limit);
+  std::pair<V<WordPtr>, V<WordPtr>> BuildSwitchToTheCentralStackIfNeeded();
+  void BuildSwitchBackFromCentralStack(V<WordPtr> old_sp, V<WordPtr> old_limit);
 
   Assembler& Asm() { return asm_; }
 

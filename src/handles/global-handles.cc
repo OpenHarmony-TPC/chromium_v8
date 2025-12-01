@@ -304,7 +304,7 @@ class NodeBase {
     DCHECK_EQ(offsetof(NodeBase, flags_), Internals::kNodeFlagsOffset);
   }
 
-#ifdef ENABLE_HANDLE_ZAPPING
+#ifdef ENABLE_GLOBAL_HANDLE_ZAPPING
   ~NodeBase() {
     ClearFields();
     data_.next_free = nullptr;
@@ -743,14 +743,14 @@ void GlobalHandles::ProcessWeakYoungObjects(
 }
 
 void GlobalHandles::InvokeSecondPassPhantomCallbacks() {
-  AllowJavascriptExecution js(isolate());
+  DCHECK(!AllowJavascriptExecution::IsAllowed(isolate()));
   DCHECK(AllowGarbageCollection::IsAllowed());
 
   if (second_pass_callbacks_.empty()) return;
 
-  // The callbacks may execute JS, which in turn may lead to another GC run.
-  // If we are already processing the callbacks, we do not want to start over
-  // from within the inner GC. Newly added callbacks will always be run by the
+  // The callbacks may allocate, which in turn may lead to another GC run. If we
+  // are already processing the callbacks, we do not want to start over from
+  // within the inner GC. Newly added callbacks will always be run by the
   // outermost GC run only.
   GCCallbacksScope scope(isolate()->heap());
   if (scope.CheckReenter()) {
@@ -876,7 +876,7 @@ void GlobalHandles::PostGarbageCollectionProcessing(
   if (second_pass_callbacks_.empty()) return;
 
   const bool synchronous_second_pass =
-      v8_flags.optimize_for_size || v8_flags.predictable ||
+      isolate_->MemorySaverModeEnabled() || v8_flags.predictable ||
       isolate_->heap()->IsTearingDown() ||
       (gc_callback_flags &
        (kGCCallbackFlagForced | kGCCallbackFlagCollectAllAvailableGarbage |
@@ -893,6 +893,7 @@ void GlobalHandles::PostGarbageCollectionProcessing(
         ->PostTask(MakeCancelableTask(isolate(), [this] {
           DCHECK(second_pass_callbacks_task_posted_);
           second_pass_callbacks_task_posted_ = false;
+          DisallowJavascriptExecution no_js(isolate());
           InvokeSecondPassPhantomCallbacks();
         }));
   }
@@ -939,7 +940,7 @@ void GlobalHandles::IterateAllYoungRoots(RootVisitor* v) {
 DISABLE_CFI_PERF
 void GlobalHandles::ApplyPersistentHandleVisitor(
     v8::PersistentHandleVisitor* visitor, GlobalHandles::Node* node) {
-  v8::Value* value = ToApi<v8::Value>(node->handle());
+  Address* value = node->handle().location();
   visitor->VisitPersistentHandle(
       reinterpret_cast<v8::Persistent<v8::Value>*>(&value),
       node->wrapper_class_id());
@@ -955,19 +956,19 @@ void GlobalHandles::IterateAllRootsForTesting(
 }
 
 void GlobalHandles::RecordStats(HeapStats* stats) {
-  *stats->global_handle_count = 0;
-  *stats->weak_global_handle_count = 0;
-  *stats->pending_global_handle_count = 0;
-  *stats->near_death_global_handle_count = 0;
-  *stats->free_global_handle_count = 0;
+  stats->global_handle_count = 0;
+  stats->weak_global_handle_count = 0;
+  stats->pending_global_handle_count = 0;
+  stats->near_death_global_handle_count = 0;
+  stats->free_global_handle_count = 0;
   for (Node* node : *regular_nodes_) {
-    *stats->global_handle_count += 1;
+    stats->global_handle_count += 1;
     if (node->state() == Node::WEAK) {
-      *stats->weak_global_handle_count += 1;
+      stats->weak_global_handle_count += 1;
     } else if (node->state() == Node::NEAR_DEATH) {
-      *stats->near_death_global_handle_count += 1;
+      stats->near_death_global_handle_count += 1;
     } else if (node->state() == Node::FREE) {
-      *stats->free_global_handle_count += 1;
+      stats->free_global_handle_count += 1;
     }
   }
 }

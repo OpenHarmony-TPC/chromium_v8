@@ -6,7 +6,7 @@
 
 #include <optional>
 
-#include "src/base/functional.h"
+#include "src/base/hashing.h"
 #include "src/codegen/callable.h"
 #include "src/compiler/js-graph.h"
 #include "src/compiler/node.h"
@@ -32,10 +32,45 @@ std::ostream& operator<<(std::ostream& os, OutputFrameStateCombine const& sc) {
   return os << "PokeAt(" << sc.parameter_ << ")";
 }
 
+bool operator==(FrameStateFunctionInfo const& lhs,
+                FrameStateFunctionInfo const& rhs) {
+#if V8_HOST_ARCH_X64
+// If this static_assert fails, then you've probably added a new field to
+// FrameStateFunctionInfo. Make sure to take it into account in this equality
+// function, and update the static_assert.
+#if V8_ENABLE_WEBASSEMBLY
+  static_assert(sizeof(FrameStateFunctionInfo) == 40);
+#else
+  static_assert(sizeof(FrameStateFunctionInfo) == 32);
+#endif
+#endif
+
+#if V8_ENABLE_WEBASSEMBLY
+  if (lhs.wasm_liftoff_frame_size() != rhs.wasm_liftoff_frame_size() ||
+      lhs.wasm_function_index() != rhs.wasm_function_index()) {
+    return false;
+  }
+#endif
+
+  return lhs.type() == rhs.type() &&
+         lhs.parameter_count() == rhs.parameter_count() &&
+         lhs.max_arguments() == rhs.max_arguments() &&
+         lhs.local_count() == rhs.local_count() &&
+         lhs.shared_info().equals(rhs.shared_info()) &&
+         lhs.bytecode_array().equals(rhs.bytecode_array());
+}
+
 bool operator==(FrameStateInfo const& lhs, FrameStateInfo const& rhs) {
+#if V8_HOST_ARCH_X64
+  // If this static_assert fails, then you've probably added a new field to
+  // FrameStateInfo. Make sure to take it into account in this equality
+  // function, and update the static_assert.
+  static_assert(sizeof(FrameStateInfo) == 24);
+#endif
+
   return lhs.type() == rhs.type() && lhs.bailout_id() == rhs.bailout_id() &&
          lhs.state_combine() == rhs.state_combine() &&
-         lhs.function_info() == rhs.function_info();
+         *lhs.function_info() == *rhs.function_info();
 }
 
 bool operator!=(FrameStateInfo const& lhs, FrameStateInfo const& rhs) {
@@ -88,7 +123,7 @@ std::ostream& operator<<(std::ostream& os, FrameStateType type) {
 std::ostream& operator<<(std::ostream& os, FrameStateInfo const& info) {
   os << info.type() << ", " << info.bailout_id() << ", "
      << info.state_combine();
-  Handle<SharedFunctionInfo> shared_info;
+  DirectHandle<SharedFunctionInfo> shared_info;
   if (info.shared_info().ToHandle(&shared_info)) {
     os << ", " << Brief(*shared_info);
   }
@@ -121,7 +156,7 @@ FrameState CreateBuiltinContinuationFrameStateCommon(
     Node* outer_frame_state,
     Handle<SharedFunctionInfo> shared = Handle<SharedFunctionInfo>(),
     const wasm::CanonicalSig* signature = nullptr) {
-  Graph* const graph = jsgraph->graph();
+  TFGraph* const graph = jsgraph->graph();
   CommonOperatorBuilder* const common = jsgraph->common();
 
   const Operator* op_param =
@@ -163,6 +198,11 @@ FrameState CreateStubBuiltinContinuationFrameState(
   // by the deoptimizer and aren't explicitly passed in the frame state.
   int stack_parameter_count =
       descriptor.GetStackParameterCount() - DeoptimizerParameterCountFor(mode);
+
+  // Deopt should just cause a crash, no need for parameter count validation.
+  if (name == Builtin::kAbort) {
+    stack_parameter_count = 0;
+  }
 
   // Ensure the parameters added by the deoptimizer are passed on the stack.
   // This check prevents using TFS builtins as continuations while doing the
@@ -238,13 +278,13 @@ FrameState CreateJavaScriptBuiltinContinuationFrameState(
   // instruction selector during FrameState translation.
   DCHECK_EQ(
       Builtins::CallInterfaceDescriptorFor(name).GetRegisterParameterCount(),
-      V8_ENABLE_LEAPTIERING_BOOL ? 4 : 3);
+      V8_JS_LINKAGE_INCLUDES_DISPATCH_HANDLE_BOOL ? 4 : 3);
   actual_parameters.push_back(target);      // kJavaScriptCallTargetRegister
   actual_parameters.push_back(new_target);  // kJavaScriptCallNewTargetRegister
   actual_parameters.push_back(argc);        // kJavaScriptCallArgCountRegister
-#ifdef V8_ENABLE_LEAPTIERING
+#ifdef V8_JS_LINKAGE_INCLUDES_DISPATCH_HANDLE
   // The dispatch handle isn't used by the continuation builtins.
-  Node* handle = jsgraph->ConstantNoHole(kInvalidDispatchHandle);
+  Node* handle = jsgraph->ConstantNoHole(kInvalidDispatchHandle.value());
   actual_parameters.push_back(handle);  // kJavaScriptDispatchHandleRegister
 #endif
 
@@ -279,7 +319,7 @@ Node* CreateInlinedApiFunctionFrameState(JSGraph* graph,
 
 FrameState CloneFrameState(JSGraph* jsgraph, FrameState frame_state,
                            OutputFrameStateCombine changed_state_combine) {
-  Graph* graph = jsgraph->graph();
+  TFGraph* graph = jsgraph->graph();
   CommonOperatorBuilder* common = jsgraph->common();
 
   DCHECK_EQ(IrOpcode::kFrameState, frame_state->op()->opcode());

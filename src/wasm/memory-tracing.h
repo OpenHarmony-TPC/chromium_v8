@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_WASM_MEMORY_TRACING_H_
+#define V8_WASM_MEMORY_TRACING_H_
+
 #if !V8_ENABLE_WEBASSEMBLY
 #error This header should only be included if WebAssembly is enabled.
 #endif  // !V8_ENABLE_WEBASSEMBLY
-
-#ifndef V8_WASM_MEMORY_TRACING_H_
-#define V8_WASM_MEMORY_TRACING_H_
 
 #include <cstdint>
 
@@ -21,10 +21,9 @@ struct MemoryTracingInfo {
   uintptr_t offset;
   uint8_t is_store;  // 0 or 1
   uint8_t mem_rep;
-  static_assert(
-      std::is_same<decltype(mem_rep),
-                   std::underlying_type<MachineRepresentation>::type>::value,
-      "MachineRepresentation uses uint8_t");
+  static_assert(std::is_same_v<decltype(mem_rep),
+                               std::underlying_type_t<MachineRepresentation>>,
+                "MachineRepresentation uses uint8_t");
 
   MemoryTracingInfo(uintptr_t offset, bool is_store, MachineRepresentation rep)
       : offset(offset),

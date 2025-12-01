@@ -5,10 +5,12 @@
 #ifndef V8_CODEGEN_INTERFACE_DESCRIPTORS_INL_H_
 #define V8_CODEGEN_INTERFACE_DESCRIPTORS_INL_H_
 
+#include "src/codegen/interface-descriptors.h"
+// Include the non-inl header before the rest of the headers.
+
 #include <utility>
 
 #include "src/base/logging.h"
-#include "src/codegen/interface-descriptors.h"
 #include "src/codegen/register.h"
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/wasm/wasm-linkage.h"
@@ -272,7 +274,8 @@ constexpr DoubleRegister
 StaticCallInterfaceDescriptor<DerivedDescriptor>::GetDoubleRegisterParameter(
     int i) {
   DCHECK(IsFloatingPoint(GetParameterType(i).representation()));
-  return DoubleRegister::from_code(DerivedDescriptor::registers()[i].code());
+  return DoubleRegister::from_code(
+      DerivedDescriptor::double_registers()[i].code());
 }
 
 // static
@@ -523,6 +526,12 @@ constexpr Register OnStackReplacementDescriptor::MaybeTargetCodeRegister() {
 }
 
 // static
+constexpr Register
+OnStackReplacementDescriptor::ExpectedParameterCountRegister() {
+  return registers()[1];
+}
+
+// static
 constexpr auto VoidDescriptor::registers() { return RegisterArray(); }
 
 // static
@@ -698,14 +707,14 @@ constexpr auto DefineKeyedOwnWithVectorDescriptor::registers() {
 constexpr auto CallApiCallbackOptimizedDescriptor::registers() {
   return RegisterArray(ApiFunctionAddressRegister(),
                        ActualArgumentsCountRegister(),
-                       FunctionTemplateInfoRegister(), HolderRegister());
+                       FunctionTemplateInfoRegister());
 }
 
 // static
 constexpr auto CallApiCallbackGenericDescriptor::registers() {
   return RegisterArray(ActualArgumentsCountRegister(),
                        TopmostScriptHavingContextRegister(),
-                       FunctionTemplateInfoRegister(), HolderRegister());
+                       FunctionTemplateInfoRegister());
 }
 
 // static

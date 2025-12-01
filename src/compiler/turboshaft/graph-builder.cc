@@ -11,11 +11,12 @@
 
 #include "src/base/container-utils.h"
 #include "src/base/logging.h"
-#include "src/base/safe_conversions.h"
+#include "src/base/numerics/safe_conversions.h"
 #include "src/base/small-vector.h"
 #include "src/base/vector.h"
 #include "src/codegen/bailout-reason.h"
 #include "src/codegen/machine-type.h"
+#include "src/common/globals.h"
 #include "src/compiler/common-operator.h"
 #include "src/compiler/compiler-source-position-table.h"
 #include "src/compiler/fast-api-calls.h"
@@ -35,6 +36,7 @@
 #include "src/compiler/turboshaft/explicit-truncation-reducer.h"
 #include "src/compiler/turboshaft/graph.h"
 #include "src/compiler/turboshaft/operations.h"
+#include "src/compiler/turboshaft/opmasks.h"
 #include "src/compiler/turboshaft/phase.h"
 #include "src/compiler/turboshaft/representations.h"
 #include "src/compiler/turboshaft/variable-reducer.h"
@@ -49,6 +51,13 @@ namespace v8::internal::compiler::turboshaft {
 #include "src/compiler/turboshaft/define-assembler-macros.inc"
 
 namespace {
+
+bool IsValidSmi(intptr_t c) {
+  Tagged<Object> as_obj = Tagged<Object>(c);
+  if (!IsSmi(as_obj)) return false;
+
+  return Smi::FromInt(Smi::ToInt(as_obj)).ptr() == static_cast<uintptr_t>(c);
+}
 
 struct GraphBuilder {
   Zone* phase_zone;
@@ -296,7 +305,7 @@ std::optional<BailoutReason> GraphBuilder::Run() {
         dominating_frame_state;
   }
 
-  if (source_positions->IsEnabled()) {
+  if (source_positions && source_positions->IsEnabled()) {
     for (OpIndex index : __ output_graph().AllOperationIndices()) {
       compiler::NodeId origin =
           __ output_graph().operation_origins()[index].DecodeTurbofanNodeId();
@@ -677,7 +686,45 @@ OpIndex GraphBuilder::Process(
 
       UNARY_CASE(Float64ExtractLowWord32, Float64ExtractLowWord32)
       UNARY_CASE(Float64ExtractHighWord32, Float64ExtractHighWord32)
+
+      UNARY_CASE(TruncateFloat64ToFloat16RawBits,
+                 TruncateFloat64ToFloat16RawBits)
+      UNARY_CASE(ChangeFloat16RawBitsToFloat64, ChangeFloat16RawBitsToFloat64)
 #undef UNARY_CASE
+
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+    case IrOpcode::kNumberSilenceNaN: {
+      DCHECK_EQ(SilenceNanModeOf(node->op()),
+                SilenceNanMode::kPreserveUndefined);
+      V<Float64> input = Map(node->InputAt(0));
+      Operation& input_op = __ output_graph().Get(input);
+      // TODO(nicohartmann): Could do this earlier (e.g.
+      // SimplifiedOperatorReducer).
+      if (const ConstantOp* constant =
+              input_op.TryCast<Opmask::kFloat64Constant>()) {
+        if (constant->float64().is_nan() &&
+            !constant->float64().is_undefined_nan()) {
+          return __ Float64Constant(std::numeric_limits<double>::quiet_NaN());
+        }
+        return __ Float64Constant(constant->float64().get_scalar());
+      }
+      ConvertJSPrimitiveToUntaggedOp* convert_op =
+          input_op.TryCast<ConvertJSPrimitiveToUntaggedOp>();
+      CHECK_NOT_NULL(convert_op);
+      CHECK_EQ(
+          convert_op->kind,
+          ConvertJSPrimitiveToUntaggedOp::UntaggedKind::kFloat64OrUndefined);
+      CHECK_EQ(
+          convert_op->input_assumptions,
+          ConvertJSPrimitiveToUntaggedOp::InputAssumptions::kNumberOrOddball);
+      CHECK_EQ(node->InputAt(0)->UseCount(), 1);
+      // Mutate in-place.
+      convert_op->kind = ConvertJSPrimitiveToUntaggedOp::UntaggedKind::
+          kFloat64WithSilencedNaNOrUndefined;
+      return input;
+    }
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+
     case IrOpcode::kTruncateInt64ToInt32:
       return __ TruncateWord64ToWord32(Map(node->InputAt(0)));
     case IrOpcode::kTruncateFloat32ToInt32:
@@ -822,6 +869,10 @@ OpIndex GraphBuilder::Process(
                            HeapObject, WrongInstanceType, {})
       CHECK_OBJECT_IS_CASE(CheckNumber, Number, None, NotANumber,
                            CheckParametersOf(op).feedback())
+      CHECK_OBJECT_IS_CASE(CheckNumberOrUndefined, NumberOrUndefined, None,
+                           NotANumber, CheckParametersOf(op).feedback())
+      CHECK_OBJECT_IS_CASE(CheckNumberFitsInt32, NumberFitsInt32, None,
+                           NotInt32, CheckParametersOf(op).feedback())
       CHECK_OBJECT_IS_CASE(CheckReceiver, Receiver, HeapObject,
                            NotAJavaScriptObject, {})
       CHECK_OBJECT_IS_CASE(CheckReceiverOrNullOrUndefined,
@@ -914,7 +965,7 @@ OpIndex GraphBuilder::Process(
       CONVERT_PRIMITIVE_TO_OBJECT_CASE(ChangeUint64ToTagged, Number, Word64,
                                        Unsigned)
       CONVERT_PRIMITIVE_TO_OBJECT_CASE(ChangeFloat64ToTaggedPointer, HeapNumber,
-                                       Float64, Signed)
+                                       Float64, Double)
       CONVERT_PRIMITIVE_TO_OBJECT_CASE(ChangeInt64ToBigInt, BigInt, Word64,
                                        Signed)
       CONVERT_PRIMITIVE_TO_OBJECT_CASE(ChangeUint64ToBigInt, BigInt, Word64,
@@ -928,14 +979,27 @@ OpIndex GraphBuilder::Process(
       CONVERT_PRIMITIVE_TO_OBJECT_CASE(StringFromSingleCodePoint, String,
                                        Word32, CodePoint)
       CONVERT_PRIMITIVE_TO_OBJECT_CASE(ChangeFloat64HoleToTagged,
-                                       HeapNumberOrUndefined, Float64, Signed)
+                                       HeapNumberOrUndefined, Float64,
+                                       DoubleOrHole)
+      CONVERT_PRIMITIVE_TO_OBJECT_CASE(ChangeFloat64OrUndefinedOrHoleToTagged,
+                                       HeapNumberOrUndefined, Float64,
+                                       DoubleOrUndefinedOrHole)
 
     case IrOpcode::kChangeFloat64ToTagged:
       return __ ConvertUntaggedToJSPrimitive(
           Map(node->InputAt(0)),
           ConvertUntaggedToJSPrimitiveOp::JSPrimitiveKind::kNumber,
           RegisterRepresentation::Float64(),
-          ConvertUntaggedToJSPrimitiveOp::InputInterpretation::kSigned,
+          ConvertUntaggedToJSPrimitiveOp::InputInterpretation::kDouble,
+          CheckMinusZeroModeOf(node->op()));
+    case IrOpcode::kChangeFloat64OrUndefinedToTagged:
+      return __ ConvertUntaggedToJSPrimitive(
+          Map(node->InputAt(0)),
+          ConvertUntaggedToJSPrimitiveOp::JSPrimitiveKind::
+              kHeapNumberOrUndefined,
+          RegisterRepresentation::Float64(),
+          ConvertUntaggedToJSPrimitiveOp::InputInterpretation::
+              kDoubleOrUndefined,
           CheckMinusZeroModeOf(node->op()));
 #undef CONVERT_PRIMITIVE_TO_OBJECT_CASE
 
@@ -982,6 +1046,10 @@ OpIndex GraphBuilder::Process(
                                        NumberOrOddball)
       CONVERT_OBJECT_TO_PRIMITIVE_CASE(TruncateTaggedToFloat64, Float64,
                                        NumberOrOddball)
+#ifdef V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
+      CONVERT_OBJECT_TO_PRIMITIVE_CASE(TruncateTaggedToFloat64PreserveUndefined,
+                                       Float64OrUndefined, NumberOrOddball)
+#endif  // V8_ENABLE_EXPERIMENTAL_UNDEFINED_DOUBLE
 #undef CONVERT_OBJECT_TO_PRIMITIVE_CASE
 
 #define TRUNCATE_OBJECT_TO_PRIMITIVE_CASE(name, kind, input_assumptions) \
@@ -1004,6 +1072,9 @@ OpIndex GraphBuilder::Process(
       using IR = TruncateJSPrimitiveToUntaggedOrDeoptOp::InputRequirement;
       IR input_requirement;
       switch (CheckTaggedInputParametersOf(node->op()).mode()) {
+        case CheckTaggedInputMode::kAdditiveSafeInteger:
+          input_requirement = IR::kAdditiveSafeInteger;
+          break;
         case CheckTaggedInputMode::kNumber:
           input_requirement = IR::kNumber;
           break;
@@ -1044,6 +1115,16 @@ OpIndex GraphBuilder::Process(
                               params.mode(), params.feedback());
     }
 
+    case IrOpcode::kCheckedFloat64ToAdditiveSafeInteger: {
+      DCHECK(dominating_frame_state.valid());
+      const CheckMinusZeroParameters& params =
+          CheckMinusZeroParametersOf(node->op());
+      return __ ChangeOrDeopt(
+          Map(node->InputAt(0)), dominating_frame_state,
+          ChangeOrDeoptOp::Kind::kFloat64ToAdditiveSafeInteger, params.mode(),
+          params.feedback());
+    }
+
     case IrOpcode::kCheckedFloat64ToInt64: {
       DCHECK(dominating_frame_state.valid());
       const CheckMinusZeroParameters& params =
@@ -1061,6 +1142,18 @@ OpIndex GraphBuilder::Process(
           Map(node->InputAt(0)), dominating_frame_state,
           ConvertJSPrimitiveToUntaggedOrDeoptOp::JSPrimitiveKind::kNumber,
           ConvertJSPrimitiveToUntaggedOrDeoptOp::UntaggedKind::kInt32,
+          params.mode(), params.feedback());
+    }
+
+    case IrOpcode::kCheckedTaggedToAdditiveSafeInteger: {
+      DCHECK(dominating_frame_state.valid());
+      const CheckMinusZeroParameters& params =
+          CheckMinusZeroParametersOf(node->op());
+      return __ ConvertJSPrimitiveToUntaggedOrDeopt(
+          Map(node->InputAt(0)), dominating_frame_state,
+          ConvertJSPrimitiveToUntaggedOrDeoptOp::JSPrimitiveKind::kNumber,
+          ConvertJSPrimitiveToUntaggedOrDeoptOp::UntaggedKind::
+              kAdditiveSafeInteger,
           params.mode(), params.feedback());
     }
 
@@ -1086,6 +1179,7 @@ OpIndex GraphBuilder::Process(
     from_kind =                                                          \
         ConvertJSPrimitiveToUntaggedOrDeoptOp::JSPrimitiveKind::k##mode; \
     break;
+        CASE(AdditiveSafeInteger)
         CASE(Number)
         CASE(NumberOrBoolean)
         CASE(NumberOrOddball)
@@ -1137,6 +1231,11 @@ OpIndex GraphBuilder::Process(
       return __ Select(
           Map<Word32>(node->InputAt(0)), Map<Word64>(node->InputAt(1)),
           Map<Word64>(node->InputAt(2)), RegisterRepresentation::Word64(),
+          BranchHint::kNone, SelectOp::Implementation::kCMove);
+    case IrOpcode::kFloat32Select:
+      return __ Select(
+          Map<Word32>(node->InputAt(0)), Map<Float32>(node->InputAt(1)),
+          Map<Float32>(node->InputAt(2)), RegisterRepresentation::Float32(),
           BranchHint::kNone, SelectOp::Implementation::kCMove);
 
     case IrOpcode::kLoad:
@@ -1284,7 +1383,7 @@ OpIndex GraphBuilder::Process(
       auto call_descriptor = CallDescriptorOf(op);
       const JSWasmCallParameters* wasm_call_parameters = nullptr;
 #if V8_ENABLE_WEBASSEMBLY
-      if (call_descriptor->kind() == CallDescriptor::kCallWasmFunction &&
+      if (call_descriptor->IsAnyWasmFunctionCall() &&
           v8_flags.turboshaft_wasm_in_js_inlining) {
         // A JS-to-Wasm call where the wrapper got inlined in TurboFan but the
         // actual Wasm body inlining was either not possible or is going to
@@ -1313,7 +1412,7 @@ OpIndex GraphBuilder::Process(
         arguments.emplace_back(Map(node->InputAt(i)));
       }
 
-      OpIndex frame_state_idx = OpIndex::Invalid();
+      OptionalV<FrameState> frame_state_idx = OptionalV<FrameState>::Nullopt();
       if (call_descriptor->NeedsFrameState()) {
         compiler::FrameState frame_state{
             node->InputAt(static_cast<int>(call_descriptor->InputCount()))};
@@ -1453,14 +1552,14 @@ OpIndex GraphBuilder::Process(
     case IrOpcode::kAllocate: {
       AllocationType allocation = AllocationTypeOf(node->op());
       return __ FinishInitialization(
-          __ Allocate(Map(node->InputAt(0)), allocation));
+          __ Allocate(Map(node->InputAt(0)), allocation, kTaggedAligned));
     }
     // TODO(nicohartmann@): We might not see AllocateRaw here anymore.
     case IrOpcode::kAllocateRaw: {
       Node* size = node->InputAt(0);
       const AllocateParameters& params = AllocateParametersOf(node->op());
       return __ FinishInitialization(
-          __ Allocate(Map(size), params.allocation_type()));
+          __ Allocate(Map(size), params.allocation_type(), kTaggedAligned));
     }
     case IrOpcode::kStoreToObject: {
       Node* object = node->InputAt(0);
@@ -1526,6 +1625,18 @@ OpIndex GraphBuilder::Process(
 
       MemoryRepresentation rep =
           MemoryRepresentation::FromMachineType(machine_type);
+
+      if (const ConstantOp* value_cst =
+              __ Get(value).TryCast<Opmask::kWord64Constant>()) {
+        if (rep.value() == any_of(MemoryRepresentation::Enum::kAnyTagged,
+                                  MemoryRepresentation::Enum::kTaggedSigned)) {
+          // This is storing a Smi as a raw Word64. Instead, we'll convert the
+          // raw Word64 to a proper Smi.
+          if (IsValidSmi(value_cst->signed_integral())) {
+            value = __ SmiConstant(Tagged<Smi>(value_cst->signed_integral()));
+          }
+        }
+      }
 
       __ Store(object, value, kind, rep, access.write_barrier_kind,
                access.offset, initializing_transitioning,
@@ -1634,6 +1745,30 @@ OpIndex GraphBuilder::Process(
     case IrOpcode::kLoadFieldByIndex:
       return __ LoadFieldByIndex(Map(node->InputAt(0)), Map(node->InputAt(1)));
 
+    case IrOpcode::kCheckedAdditiveSafeIntegerAdd: {
+      DCHECK(Is64());
+      DCHECK(dominating_frame_state.valid());
+      auto shifted_lhs =
+          __ Word64ShiftLeft(Map(node->InputAt(0)), kAdditiveSafeIntegerShift);
+      auto shifted_rhs =
+          __ Word64ShiftLeft(Map(node->InputAt(1)), kAdditiveSafeIntegerShift);
+      auto shifted_result = __ Word64SignedAddDeoptOnOverflow(
+          shifted_lhs, shifted_rhs, dominating_frame_state, FeedbackSource{});
+      return __ Word64ShiftRightArithmetic(shifted_result,
+                                           kAdditiveSafeIntegerShift);
+    }
+    case IrOpcode::kCheckedAdditiveSafeIntegerSub: {
+      DCHECK(Is64());
+      DCHECK(dominating_frame_state.valid());
+      auto shifted_lhs =
+          __ Word64ShiftLeft(Map(node->InputAt(0)), kAdditiveSafeIntegerShift);
+      auto shifted_rhs =
+          __ Word64ShiftLeft(Map(node->InputAt(1)), kAdditiveSafeIntegerShift);
+      auto shifted_result = __ Word64SignedSubDeoptOnOverflow(
+          shifted_lhs, shifted_rhs, dominating_frame_state, FeedbackSource{});
+      return __ Word64ShiftRightArithmetic(shifted_result,
+                                           kAdditiveSafeIntegerShift);
+    }
     case IrOpcode::kCheckedInt64Add:
       DCHECK(Is64());
       DCHECK(dominating_frame_state.valid());
@@ -1773,6 +1908,11 @@ OpIndex GraphBuilder::Process(
       return __ StringLength(str);
     }
 
+    case IrOpcode::kTypedArrayLength: {
+      ElementsKind elements_kind = OpParameter<ElementsKind>(node->op());
+      return __ TypedArrayLength(Map(node->InputAt(0)), elements_kind);
+    }
+
     case IrOpcode::kStringIndexOf:
       return __ StringIndexOf(Map(node->InputAt(0)), Map(node->InputAt(1)),
                               Map(node->InputAt(2)));
@@ -1786,8 +1926,8 @@ OpIndex GraphBuilder::Process(
                                 Map(node->InputAt(2)));
 
     case IrOpcode::kStringConcat:
-      // We don't need node->InputAt(0) here.
-      return __ StringConcat(Map(node->InputAt(1)), Map(node->InputAt(2)));
+      return __ StringConcat(Map(node->InputAt(0)), Map(node->InputAt(1)),
+                             Map(node->InputAt(2)));
 
     case IrOpcode::kStringEqual:
       return __ StringEqual(Map(node->InputAt(0)), Map(node->InputAt(1)));
@@ -1869,13 +2009,13 @@ OpIndex GraphBuilder::Process(
     case IrOpcode::kCompareMaps: {
       const ZoneRefSet<v8::internal::Map>& maps =
           CompareMapsParametersOf(node->op());
-      return __ CompareMaps(Map(node->InputAt(0)), maps);
+      return __ CompareMaps(Map(node->InputAt(0)), {}, maps);
     }
 
     case IrOpcode::kCheckMaps: {
       DCHECK(dominating_frame_state.valid());
       const auto& p = CheckMapsParametersOf(node->op());
-      __ CheckMaps(Map(node->InputAt(0)), dominating_frame_state, p.maps(),
+      __ CheckMaps(Map(node->InputAt(0)), dominating_frame_state, {}, p.maps(),
                    p.flags(), p.feedback());
       return OpIndex{};
     }
@@ -1972,7 +2112,7 @@ OpIndex GraphBuilder::Process(
       DCHECK(dominating_frame_state.valid());
       FastApiCallNode n(node);
       const auto& params = n.Parameters();
-      const FastApiCallFunctionVector& c_functions = params.c_functions();
+      FastApiCallFunction c_function = params.c_function();
       const int c_arg_count = params.argument_count();
 
       base::SmallVector<OpIndex, 16> slow_call_arguments;
@@ -1983,6 +2123,7 @@ OpIndex GraphBuilder::Process(
       for (int i = 1; i < n.SlowCallArgumentCount(); ++i) {
         slow_call_arguments.push_back(Map(n.SlowCallArgument(i)));
       }
+      OpIndex frame_state = slow_call_arguments.back();
 
       auto convert_fallback_return = [this](Variable value,
                                             CFunctionInfo::Int64Representation
@@ -2139,40 +2280,6 @@ OpIndex GraphBuilder::Process(
         Block* catch_block = Map(block->SuccessorAt(1));
         catch_scope.emplace(assembler, catch_block);
       }
-      // Overload resolution.
-      auto resolution_result =
-          fast_api_call::OverloadsResolutionResult::Invalid();
-      if (c_functions.size() != 1) {
-        DCHECK_EQ(c_functions.size(), 2);
-        resolution_result =
-            fast_api_call::ResolveOverloads(c_functions, c_arg_count);
-        if (!resolution_result.is_valid()) {
-          V<Object> fallback_result = V<Object>::Cast(__ Call(
-              slow_call_callee, dominating_frame_state,
-              base::VectorOf(slow_call_arguments),
-              TSCallDescriptor::Create(params.descriptor(), CanThrow::kYes,
-                                       LazyDeoptOnThrow::kNo,
-                                       __ graph_zone())));
-          Variable result =
-              __ NewVariable(RegisterRepresentation::FromCTypeInfo(
-                  c_functions[0].signature->ReturnInfo(),
-                  c_functions[0].signature->GetInt64Representation()));
-          convert_fallback_return(
-              result, c_functions[0].signature->GetInt64Representation(),
-              c_functions[0].signature->ReturnInfo().GetType(),
-              fallback_result);
-          V<Any> value = __ GetVariable(result);
-          if (is_final_control) {
-            // The `__ Call()` before has already created exceptional
-            // control flow and bound a new block for the success case. So we
-            // can just `Goto` the block that Turbofan designated as the
-            // `IfSuccess` successor.
-            __ Goto(Map(block->SuccessorAt(0)));
-          }
-          return value;
-        }
-      }
-
       // Prepare FastCallApiOp parameters.
       base::SmallVector<OpIndex, 16> arguments;
       for (int i = 0; i < c_arg_count; ++i) {
@@ -2182,8 +2289,8 @@ OpIndex GraphBuilder::Process(
 
       V<Context> context = Map(n.Context());
 
-      const FastApiCallParameters* parameters = FastApiCallParameters::Create(
-          c_functions, resolution_result, __ graph_zone());
+      const FastApiCallParameters* parameters =
+          FastApiCallParameters::Create(c_function, __ graph_zone());
 
       // There is one return in addition to the return value of the C function,
       // which indicates if a fast API call actually happened.
@@ -2199,7 +2306,7 @@ OpIndex GraphBuilder::Process(
           return_type, parameters->c_signature()->GetInt64Representation());
 
       V<Tuple<Word32, Any>> fast_call_result =
-          __ FastApiCall(dominating_frame_state, data_argument, context,
+          __ FastApiCall(frame_state, data_argument, context,
                          base::VectorOf(arguments), parameters, out_reps);
 
       V<Word32> result_state = __ template Projection<0>(fast_call_result);
@@ -2217,8 +2324,7 @@ OpIndex GraphBuilder::Process(
         // primitive types only, so we avoid generating an extra branch here.
 
         V<Object> fallback_result = V<Object>::Cast(__ Call(
-            slow_call_callee, dominating_frame_state,
-            base::VectorOf(slow_call_arguments),
+            slow_call_callee, frame_state, base::VectorOf(slow_call_arguments),
             TSCallDescriptor::Create(params.descriptor(), CanThrow::kYes,
                                      LazyDeoptOnThrow::kNo, __ graph_zone())));
 
@@ -2262,7 +2368,15 @@ OpIndex GraphBuilder::Process(
       __ TransitionElementsKind(Map(node->InputAt(0)),
                                 ElementsTransitionOf(node->op()));
       return OpIndex::Invalid();
-
+    case IrOpcode::kTransitionElementsKindOrCheckMap: {
+      DCHECK(dominating_frame_state.valid());
+      V<HeapObject> receiver = Map(node->InputAt(0));
+      V<i::Map> map = __ LoadMapField(receiver);
+      __ TransitionElementsKindOrCheckMap(
+          receiver, map, dominating_frame_state,
+          ElementsTransitionWithMultipleSourcesOf(node->op()));
+      return OpIndex::Invalid();
+    }
     case IrOpcode::kAssertType: {
       compiler::Type type = OpParameter<compiler::Type>(node->op());
       CHECK(type.CanBeAsserted());
@@ -2291,12 +2405,6 @@ OpIndex GraphBuilder::Process(
     case IrOpcode::kFindOrderedHashMapEntryForInt32Key:
       return __ FindOrderedHashMapEntryForInt32Key(Map(node->InputAt(0)),
                                                    Map(node->InputAt(1)));
-
-    case IrOpcode::kSpeculativeSafeIntegerAdd:
-      DCHECK(dominating_frame_state.valid());
-      return __ SpeculativeNumberBinop(
-          Map(node->InputAt(0)), Map(node->InputAt(1)), dominating_frame_state,
-          SpeculativeNumberBinopOp::Kind::kSafeIntegerAdd);
 
     case IrOpcode::kBeginRegion:
       inside_region = true;
@@ -2348,16 +2456,32 @@ OpIndex GraphBuilder::Process(
           break;
         case MemoryAccessKind::kUnaligned:
           UNREACHABLE();
-        case MemoryAccessKind::kProtected:
+        case MemoryAccessKind::kProtectedByTrapHandler:
           kind = LoadOp::Kind::RawAligned().Atomic().Protected();
           break;
       }
+      RegisterRepresentation result_rep =
+          RegisterRepresentation::FromMachineType(p.representation());
+      if (result_rep == RegisterRepresentation::Tagged()) {
+        // TODO(nicohartmann): Tagged loads are currently not supported by the
+        // instruction selectors, but are emitted by some tests.. We work around
+        // this using bitcasts, which is safe because atomic loads are not
+        // load-eliminated. We still should try to properly support tagged
+        // atomic loads eventually and remove this workaround.
+        result_rep = node->opcode() == IrOpcode::kWord32AtomicLoad
+                         ? RegisterRepresentation::Word32()
+                         : RegisterRepresentation::Word64();
+        return __ TaggedBitcast(
+            __ Load(base, offset, kind,
+                    MemoryRepresentation::FromRegisterRepresentation(result_rep,
+                                                                     true),
+                    result_rep, 0, 0),
+            result_rep, RegisterRepresentation::Tagged(),
+            TaggedBitcastOp::Kind::kAny);
+      }
       return __ Load(base, offset, kind,
                      MemoryRepresentation::FromMachineType(p.representation()),
-                     node->opcode() == IrOpcode::kWord32AtomicLoad
-                         ? RegisterRepresentation::Word32()
-                         : RegisterRepresentation::Word64(),
-                     0, 0);
+                     result_rep, 0, 0);
     }
 
     case IrOpcode::kWord32AtomicStore:
@@ -2375,7 +2499,7 @@ OpIndex GraphBuilder::Process(
           break;
         case MemoryAccessKind::kUnaligned:
           UNREACHABLE();
-        case MemoryAccessKind::kProtected:
+        case MemoryAccessKind::kProtectedByTrapHandler:
           kind = StoreOp::Kind::RawAligned().Atomic().Protected();
           break;
       }
@@ -2559,11 +2683,29 @@ OpIndex GraphBuilder::Process(
 #endif  // V8_ENABLE_WEBASSEMBLY
 
     case IrOpcode::kJSStackCheck: {
-      DCHECK_EQ(OpParameter<StackCheckKind>(node->op()),
-                StackCheckKind::kJSFunctionEntry);
+      JSStackCheckOp::Kind kind;
+      switch (OpParameter<StackCheckKind>(node->op())) {
+        case StackCheckKind::kJSFunctionEntry:
+          kind = JSStackCheckOp::Kind::kFunctionEntry;
+          break;
+        case StackCheckKind::kJSIterationBody:
+          kind = JSStackCheckOp::Kind::kLoop;
+          break;
+        case StackCheckKind::kCodeStubAssembler:
+          kind = JSStackCheckOp::Kind::kBuiltinEntry;
+          break;
+        case StackCheckKind::kWasm:
+          UNREACHABLE();
+      }
       V<Context> context = Map(node->InputAt(0));
       V<FrameState> frame_state = Map(node->InputAt(1));
-      __ JSFunctionEntryStackCheck(context, frame_state);
+      __ JSStackCheck(context, frame_state, kind);
+      if (NodeProperties::IsExceptionalCall(node)) {
+        // JSStackCheck in Turbofan have control projections (even though they
+        // can't throw, but I think that this is just to have uniform handling
+        // with other JS nodes).
+        __ Goto(Map(block->SuccessorAt(0)));
+      }
       return OpIndex::Invalid();
     }
 
@@ -2628,6 +2770,7 @@ std::optional<BailoutReason> BuildGraph(
                        js_wasm_calls_sidetable};
 #if DEBUG
   data->graph().SetCreatedFromTurbofan();
+  data->graph().set_broker(data->broker());
 #endif
   return builder.Run();
 }

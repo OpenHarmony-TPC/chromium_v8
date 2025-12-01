@@ -53,10 +53,9 @@ enum class TestExecutionTier : int8_t {
   kTurbofan = static_cast<int8_t>(ExecutionTier::kTurbofan),
   kLiftoffForFuzzing
 };
-static_assert(
-    std::is_same<std::underlying_type<ExecutionTier>::type,
-                 std::underlying_type<TestExecutionTier>::type>::value,
-    "enum types match");
+static_assert(std::is_same_v<std::underlying_type_t<ExecutionTier>,
+                             std::underlying_type_t<TestExecutionTier>>,
+              "enum types match");
 
 using base::ReadLittleEndianValue;
 using base::WriteLittleEndianValue;
@@ -93,7 +92,7 @@ using compiler::Node;
 // For tests that must manually import a JSFunction with source code.
 struct ManuallyImportedJSFunction {
   const FunctionSig* sig;
-  Handle<JSFunction> js_function;
+  DirectHandle<JSFunction> js_function;
 };
 
 // Helper Functions.
@@ -128,6 +127,8 @@ class TestingModuleBuilder {
     const WasmGlobal* global = AddGlobal(type);
     return reinterpret_cast<T*>(globals_data_ + global->offset);
   }
+
+  Zone& SignatureZone() { return test_module_->signature_zone; }
 
   // TODO(14034): Allow selecting type finality.
   ModuleTypeIndex AddSignature(const FunctionSig* sig) {
@@ -211,7 +212,7 @@ class TestingModuleBuilder {
   void InitializeWrapperCache();
 
   // Wrap the code so it can be called as a JS function.
-  Handle<JSFunction> WrapCode(uint32_t index);
+  DirectHandle<JSFunction> WrapCode(uint32_t index);
 
   // If function_indexes is {nullptr}, the contents of the table will be
   // initialized with null functions.
@@ -230,10 +231,10 @@ class TestingModuleBuilder {
   }
 
   Isolate* isolate() const { return isolate_; }
-  Handle<WasmInstanceObject> instance_object() const {
+  DirectHandle<WasmInstanceObject> instance_object() const {
     return instance_object_;
   }
-  Handle<WasmTrustedInstanceData> trusted_instance_data() const {
+  DirectHandle<WasmTrustedInstanceData> trusted_instance_data() const {
     return trusted_instance_data_;
   }
   WasmCode* GetFunctionCode(uint32_t index) const {
@@ -274,8 +275,6 @@ class TestingModuleBuilder {
 
   void set_max_steps(int n) { max_steps_ = n; }
   int* max_steps_ptr() { return &max_steps_; }
-  int32_t nondeterminism() { return nondeterminism_; }
-  int32_t* non_determinism_ptr() { return &nondeterminism_; }
 
   void EnableFeature(WasmEnabledFeature feature) {
     enabled_features_.Add(feature);
@@ -291,11 +290,10 @@ class TestingModuleBuilder {
   uint32_t mem0_size_ = 0;
   uint8_t* globals_data_ = nullptr;
   TestExecutionTier execution_tier_;
-  Handle<WasmInstanceObject> instance_object_;
-  Handle<WasmTrustedInstanceData> trusted_instance_data_;
+  DirectHandle<WasmInstanceObject> instance_object_;
+  DirectHandle<WasmTrustedInstanceData> trusted_instance_data_;
   NativeModule* native_module_ = nullptr;
   int32_t max_steps_ = kMaxNumSteps;
-  int32_t nondeterminism_ = 0;
 
   // Data segment arrays that are normally allocated on the instance.
   std::vector<uint8_t> data_segment_data_;
@@ -304,7 +302,7 @@ class TestingModuleBuilder {
 
   const WasmGlobal* AddGlobal(ValueType type);
 
-  Handle<WasmInstanceObject> InitInstanceObject();
+  DirectHandle<WasmInstanceObject> InitInstanceObject();
 };
 
 // A helper for compiling wasm functions for testing.
@@ -402,11 +400,6 @@ class WasmRunnerBase : public InitializedHandleScope {
 
   void SwitchToDebug() { builder_.SwitchToDebug(); }
 
-  template <typename ReturnType, typename... ParamTypes>
-  const FunctionSig* CreateSig() {
-    return WasmRunnerBase::CreateSig<ReturnType, ParamTypes...>(&zone_);
-  }
-
   static const CanonicalSig* CanonicalizeSig(const FunctionSig* sig) {
     // TODO(clemensb): Make this a single function call.
     CanonicalTypeIndex sig_id = GetTypeCanonicalizer()->AddRecursiveGroup(sig);
@@ -414,19 +407,18 @@ class WasmRunnerBase : public InitializedHandleScope {
   }
 
   template <typename ReturnType, typename... ParamTypes>
-  static FunctionSig* CreateSig(Zone* zone) {
+  FunctionSig* CreateSig() {
     std::array<MachineType, sizeof...(ParamTypes)> param_machine_types{
         {MachineTypeForC<ParamTypes>()...}};
     base::Vector<MachineType> param_vec(param_machine_types.data(),
                                         param_machine_types.size());
-    return CreateSig(zone, MachineTypeForC<ReturnType>(), param_vec);
+    return CreateSig(MachineTypeForC<ReturnType>(), param_vec);
   }
 
   // TODO(clemensb): Remove, use {CallViaJS} directly.
   void CheckCallApplyViaJS(double expected, uint32_t function_index,
-                           Handle<Object>* buffer, int count) {
-    MaybeHandle<Object> retval =
-        CallViaJS(function_index, base::VectorOf(buffer, count));
+                           base::Vector<const DirectHandle<Object>> args) {
+    MaybeDirectHandle<Object> retval = CallViaJS(function_index, args);
 
     if (retval.is_null()) {
       CHECK_EQ(expected, static_cast<double>(0xDEADBEEF));
@@ -441,33 +433,36 @@ class WasmRunnerBase : public InitializedHandleScope {
     }
   }
 
-  MaybeHandle<Object> CallViaJS(uint32_t function_index,
-                                base::Vector<Handle<Object>> parameters) {
+  MaybeDirectHandle<Object> CallViaJS(
+      uint32_t function_index,
+      base::Vector<const DirectHandle<Object>> parameters) {
     Isolate* isolate = main_isolate();
     // Save the original context, because CEntry (for runtime calls) will
     // reset / invalidate it when returning.
     SaveContext save_context(isolate);
 
-    if (jsfuncs_.size() <= function_index) {
-      jsfuncs_.resize(function_index + 1);
+    if (!jsfuncs_.has_value()) {
+      jsfuncs_.emplace(isolate);
     }
-    if (jsfuncs_[function_index].is_null()) {
-      jsfuncs_[function_index] = builder_.WrapCode(function_index);
+    if (jsfuncs_->size() <= function_index) {
+      jsfuncs_->resize(function_index + 1);
     }
-    Handle<JSFunction> jsfunc = jsfuncs_[function_index];
-    Handle<Object> global(isolate->context()->global_object(), isolate);
-    return Execution::TryCall(
-        isolate, jsfunc, global, static_cast<int>(parameters.size()),
-        parameters.data(), Execution::MessageHandling::kReport, nullptr);
+    if ((*jsfuncs_)[function_index].is_null()) {
+      (*jsfuncs_)[function_index] = builder_.WrapCode(function_index);
+    }
+    DirectHandle<JSFunction> jsfunc = (*jsfuncs_)[function_index];
+    DirectHandle<Object> global(isolate->context()->global_object(), isolate);
+    return Execution::TryCall(isolate, jsfunc, global, parameters,
+                              Execution::MessageHandling::kReport, nullptr);
   }
 
  private:
-  static FunctionSig* CreateSig(Zone* zone, MachineType return_type,
-                                base::Vector<MachineType> param_types);
+  FunctionSig* CreateSig(MachineType return_type,
+                         base::Vector<MachineType> param_types);
 
  protected:
   wasm::WasmCodeRefScope code_ref_scope_;
-  std::vector<Handle<JSFunction>> jsfuncs_;
+  std::optional<DirectHandleVector<JSFunction>> jsfuncs_;
 
   v8::internal::AccountingAllocator allocator_;
   Zone zone_;
@@ -518,7 +513,7 @@ class WasmRunner : public WasmRunnerBase {
   }
 
   template <typename T>
-  Handle<Object> MakeParam(T t) {
+  DirectHandle<Object> MakeParam(T t) {
     Factory* factory = builder_.isolate()->factory();
     if constexpr (std::is_integral_v<T> && std::is_signed_v<T> &&
                   sizeof(T) <= sizeof(int)) {
@@ -544,9 +539,14 @@ class WasmRunner : public WasmRunnerBase {
   }
 
   ReturnType Call(ParamTypes... p) {
-    std::array<Handle<Object>, sizeof...(p)> param_objs = {MakeParam(p)...};
-    MaybeHandle<Object> retval =
+    std::array<DirectHandle<Object>, sizeof...(p)> param_objs = {
+        MakeParam(p)...};
+    MaybeDirectHandle<Object> retval =
         CallViaJS(function()->func_index, base::VectorOf(param_objs));
+
+    if constexpr (std::is_void_v<ReturnType>) {
+      return;
+    }
 
     if (retval.is_null()) {
       return static_cast<ReturnType>(0xDEADBEEFDEADBEEF);
@@ -554,10 +554,11 @@ class WasmRunner : public WasmRunnerBase {
 
     DirectHandle<Object> result = retval.ToHandleChecked();
     // For int64_t and uint64_t returns we will get a BigInt.
-    if constexpr (std::is_integral_v<ReturnType> &&
-                  sizeof(ReturnType) == sizeof(int64_t)) {
-      CHECK(IsBigInt(*result));
-      return Cast<BigInt>(*result)->AsInt64();
+    if constexpr (std::is_integral_v<ReturnType>) {
+      if constexpr (sizeof(ReturnType) == sizeof(int64_t)) {
+        CHECK(IsBigInt(*result));
+        return Cast<BigInt>(*result)->AsInt64();
+      }
     }
 
     // Otherwise it must be a number (Smi or HeapNumber).
@@ -586,14 +587,14 @@ class WasmRunner : public WasmRunnerBase {
   }
 
   void CheckCallViaJSTraps(ParamTypes... p) {
-    std::array<Handle<Object>, sizeof...(p)> param_objs = {MakeParam(p)...};
-    MaybeHandle<Object> retval =
+    std::array<DirectHandle<Object>, sizeof...(p)> param_objs = {
+        MakeParam(p)...};
+    MaybeDirectHandle<Object> retval =
         CallViaJS(function()->func_index, base::VectorOf(param_objs));
     CHECK(retval.is_null());
   }
 
   void SetMaxSteps(int n) { builder_.set_max_steps(n); }
-  bool HasNondeterminism() { return builder_.nondeterminism(); }
 };
 
 // A macro to define tests that run in different engine configurations.

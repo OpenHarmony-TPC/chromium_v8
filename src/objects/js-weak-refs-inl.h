@@ -5,10 +5,12 @@
 #ifndef V8_OBJECTS_JS_WEAK_REFS_INL_H_
 #define V8_OBJECTS_JS_WEAK_REFS_INL_H_
 
+#include "src/objects/js-weak-refs.h"
+// Include the non-inl header before the rest of the headers.
+
 #include "src/api/api-inl.h"
 #include "src/heap/heap-layout-inl.h"
 #include "src/heap/heap-write-barrier-inl.h"
-#include "src/objects/js-weak-refs.h"
 #include "src/objects/smi-inl.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -28,7 +30,7 @@ BIT_FIELD_ACCESSORS(JSFinalizationRegistry, flags, scheduled_for_cleanup,
 
 void JSFinalizationRegistry::RegisterWeakCellWithUnregisterToken(
     DirectHandle<JSFinalizationRegistry> finalization_registry,
-    Handle<WeakCell> weak_cell, Isolate* isolate) {
+    DirectHandle<WeakCell> weak_cell, Isolate* isolate) {
   Handle<SimpleNumberDictionary> key_map;
   if (IsUndefined(finalization_registry->key_map(), isolate)) {
     key_map = SimpleNumberDictionary::New(isolate, 1);
