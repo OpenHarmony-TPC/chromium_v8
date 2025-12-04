@@ -665,7 +665,7 @@ void WasmTableObject::UpdateDispatchTables(
 
 void WasmTableObject::ClearDispatchTables(int index) {
   DisallowGarbageCollection no_gc;
-  Isolate* isolate = GetIsolate();
+  Isolate* isolate = Isolate::Current();
   Tagged<FixedArray> uses = this->uses();
   DCHECK_EQ(0, uses->length() % TableUses::kNumElements);
   for (int i = 0, e = uses->length(); i < e; i += TableUses::kNumElements) {
@@ -809,7 +809,7 @@ void SetInstanceMemory(Tagged<WasmTrustedInstanceData> trusted_instance_data,
   if (v8_flags.wasm_jitless &&
       trusted_instance_data->has_interpreter_object()) {
     AllowHeapAllocation allow_heap;
-    Isolate* isolate = trusted_instance_data->instance_object()->GetIsolate();
+    Isolate* isolate = Isolate::Current();
     HandleScope scope(isolate);
     wasm::WasmInterpreterRuntime::UpdateMemoryAddress(
         handle(trusted_instance_data->instance_object(), isolate));
@@ -937,7 +937,7 @@ void WasmMemoryObject::SetNewBuffer(Tagged<JSArrayBuffer> new_buffer) {
   DisallowGarbageCollection no_gc;
   set_array_buffer(new_buffer);
   Tagged<WeakArrayList> instances = this->instances();
-  Isolate* isolate = GetIsolate();
+  Isolate* isolate = Isolate::Current();
   for (int i = 0, len = instances->length(); i < len; ++i) {
     Tagged<MaybeObject> elem = instances->Get(i);
     if (elem.IsCleared()) continue;
@@ -1347,7 +1347,7 @@ void WasmTrustedInstanceData::SetRawMemory(int memory_index, uint8_t* mem_start,
 Handle<Tuple2> WasmTrustedInstanceData::GetOrCreateInterpreterObject(
     Handle<WasmInstanceObject> instance) {
   DCHECK(v8_flags.wasm_jitless);
-  Isolate* isolate = instance->GetIsolate();
+  Isolate* isolate = Isolate::Current();
   Handle<WasmTrustedInstanceData> trusted_data =
       handle(instance->trusted_data(isolate), isolate);
   if (trusted_data->has_interpreter_object()) {
@@ -1361,7 +1361,7 @@ Handle<Tuple2> WasmTrustedInstanceData::GetOrCreateInterpreterObject(
 Handle<Tuple2> WasmTrustedInstanceData::GetInterpreterObject(
     Handle<WasmInstanceObject> instance) {
   DCHECK(v8_flags.wasm_jitless);
-  Isolate* isolate = instance->GetIsolate();
+  Isolate* isolate = Isolate::Current();
   Handle<WasmTrustedInstanceData> trusted_data =
       handle(instance->trusted_data(isolate), isolate);
   CHECK(trusted_data->has_interpreter_object());
@@ -1772,7 +1772,7 @@ bool WasmInternalFunction::try_get_external(Tagged<JSFunction>* result) {
 // static
 Handle<JSFunction> WasmInternalFunction::GetOrCreateExternal(
     DirectHandle<WasmInternalFunction> internal) {
-  Isolate* isolate = GetIsolateFromWritableObject(*internal);
+  Isolate* isolate = Isolate::Current();
 
   Tagged<JSFunction> existing_external;
   if (internal->try_get_external(&existing_external)) {
@@ -2538,6 +2538,7 @@ uint32_t WasmExceptionPackage::GetEncodedSize(const wasm::WasmTagSig* sig) {
 bool WasmExportedFunction::IsWasmExportedFunction(Tagged<Object> object) {
   if (!IsJSFunction(object)) return false;
   Tagged<JSFunction> js_function = Cast<JSFunction>(object);
+  // TODO(396607238): Avoid GetIsolateForSandbox.
   Tagged<Code> code = js_function->code(GetIsolateForSandbox(js_function));
   if (CodeKind::JS_TO_WASM_FUNCTION != code->kind() &&
 #if V8_ENABLE_DRUMBRAKE
