@@ -23,6 +23,10 @@
 #include "src/sandbox/hardware-support.h"
 #include "src/utils/allocation.h"
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -264,6 +268,9 @@ void MemoryAllocator::PartialFreeMemory(MemoryChunkMetadata* chunk,
                                         Address start_free,
                                         size_t bytes_to_free,
                                         Address new_area_end) {
+#ifdef OH_ENABLE_RESTRACE
+  OH_RESTRACE_FREE_REGION(reinterpret_cast<void*>(start_free), bytes_to_free);
+#endif
   VirtualMemory* reservation = chunk->reserved_memory();
   DCHECK(reservation->IsReserved());
   chunk->set_size(chunk->size() - bytes_to_free);
@@ -337,6 +344,10 @@ void MemoryAllocator::UnregisterReadOnlyPage(ReadOnlyPageMetadata* page) {
 void MemoryAllocator::FreeReadOnlyPage(ReadOnlyPageMetadata* chunk) {
   DCHECK(!chunk->Chunk()->IsFlagSet(MemoryChunk::PRE_FREED));
   LOG(isolate_, DeleteEvent("MemoryChunk", chunk));
+#ifdef OH_ENABLE_RESTRACE
+  OH_RESTRACE_FREE_REGION(reinterpret_cast<void*>(chunk->GetAreaStart()),
+                          chunk->area_size());
+#endif
 
   UnregisterSharedMemoryChunk(chunk);
 
@@ -378,6 +389,10 @@ void MemoryAllocator::PerformFreeMemory(MutablePageMetadata* chunk_metadata) {
 
 void MemoryAllocator::Free(MemoryAllocator::FreeMode mode,
                            MutablePageMetadata* chunk_metadata) {
+#if OH_ENABLE_RESTRACE
+  OH_RESTRACE_FREE_REGION(reinterpret_cast<void*>(chunk_metadata->area_start()),
+                          chunk_metadata->area_size());
+#endif
   MemoryChunk* chunk = chunk_metadata->Chunk();
   RecordMemoryChunkDestroyed(chunk);
 

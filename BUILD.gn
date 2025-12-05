@@ -427,6 +427,8 @@ declare_args() {
 
   v8_enable_ohos_perf_jit = is_ohos && v8_component_build
 
+  v8_enable_restrace = is_ohos && !v8_component_build
+
   # Enable Sparkplug
   # Sets -DV8_ENABLE_SPARKPLUG.
   v8_enable_sparkplug = ""
@@ -1418,6 +1420,9 @@ config("features") {
   }
   if (v8_enable_ohos_perf_jit) {
     defines += [ "V8_ENABLE_OHOS_PERF_JIT" ]
+  }
+  if (v8_enable_restrace) {
+    defines += [ "OH_ENABLE_RESTRACE" ]
   }
 }
 
@@ -4438,6 +4443,9 @@ v8_header_set("v8_internal_headers") {
     ]
   }
 
+  if (v8_enable_restrace) {
+    sources += [ "//arkweb/chromium_ext/v8/restrace.h" ]
+  }
 
   if (v8_enable_snapshot_compression) {
     sources += [ "src/snapshot/snapshot-compression.h" ]

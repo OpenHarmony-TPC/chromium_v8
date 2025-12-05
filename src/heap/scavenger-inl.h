@@ -21,6 +21,10 @@
 #include "src/objects/objects-inl.h"
 #include "src/objects/slots-inl.h"
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -109,6 +113,12 @@ bool Scavenger::MigrateObject(Tagged<Map> map, Tagged<HeapObject> source,
   if (V8_UNLIKELY(is_logging_)) {
     heap()->OnMoveEvent(source, target, size);
   }
+#ifdef OH_ENABLE_RESTRACE
+  else {
+    OH_RESTRACE_MOVE(reinterpret_cast<void*>(source.address()),
+                     reinterpret_cast<void*>(target.address()), size);
+  }
+#endif
 
   if (is_incremental_marking_ &&
       (promotion_heap_choice != kPromoteIntoSharedHeap || mark_shared_heap_)) {
