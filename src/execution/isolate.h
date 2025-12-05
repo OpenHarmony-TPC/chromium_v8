@@ -3003,6 +3003,21 @@ class V8_NODISCARD SharedMutexGuardIfOffThread<Isolate, kIsShared> final {
       delete;
 };
 
+// Set the current isolate for the thread *without* entering the isolate. Used
+// e.g. by background GC threads to be able to access pointer tables.
+class V8_NODISCARD SetCurrentIsolateScope {
+ public:
+  explicit SetCurrentIsolateScope(Isolate* isolate)
+      : previous_isolate_(Isolate::TryGetCurrent()) {
+    Isolate::SetCurrent(isolate);
+  }
+
+  ~SetCurrentIsolateScope() { Isolate::SetCurrent(previous_isolate_); }
+
+ private:
+  Isolate* const previous_isolate_;
+};
+
 }  // namespace internal
 }  // namespace v8
 
