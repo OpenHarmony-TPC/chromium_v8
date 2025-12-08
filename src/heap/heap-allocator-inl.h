@@ -17,6 +17,10 @@
 #include "src/heap/read-only-spaces.h"
 #include "src/heap/zapping.h"
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -156,6 +160,9 @@ V8_WARN_UNUSED_RESULT V8_INLINE AllocationResult HeapAllocator::AllocateRaw(
     }
 
     if (local_heap_->is_main_thread()) {
+#ifdef OH_ENABLE_RESTRACE
+      OH_RESTRACE(reinterpret_cast<void*>(object.address()), size_in_bytes);
+#endif
       for (auto& tracker : heap_->allocation_trackers_) {
         tracker->AllocationEvent(object.address(), size_in_bytes);
       }
