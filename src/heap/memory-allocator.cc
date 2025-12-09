@@ -27,6 +27,14 @@
 #include "../../../arkweb/chromium_ext/v8/restrace.h"
 #endif
 
+#if V8_OS_LINUX
+#include <sys/prctl.h>  // for prctl
+#endif
+
+#ifdef USING_OHOS_WEB
+#include "../../../arkweb/chromium_ext/v8/ohlog.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -253,6 +261,13 @@ MemoryAllocator::AllocateUninitializedChunkAt(BaseSpace* space,
 
   LOG(isolate_,
       NewEvent("MemoryChunk", reinterpret_cast<void*>(base), chunk_size));
+
+#ifdef USING_OHOS_WEB
+  int ret = prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, reinterpret_cast<void*>(base), chunk_size, "JS_V8_HEAP");
+  if (ret == -1) {
+    StreamHilog("PR set name JS_V8_HEAP failed!");
+  }
+#endif
 
   Address area_start = base + MemoryChunkLayout::ObjectStartOffsetInMemoryChunk(
                                   space->identity());
