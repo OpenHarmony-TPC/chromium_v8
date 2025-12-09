@@ -1633,7 +1633,10 @@ config("toolchain") {
     ldflags += [ "-flto" ]
     include_dirs = [ "../ohos_sdk/openharmony/native/sysroot/usr/include/hilog" ]
     defines += [ "USING_OHOS" ]
-    libs = ["hitrace_ndk.z"]
+    libs = [
+      "hitrace_ndk.z",
+      "hilog_ndk.z",
+    ]
   }
 
   if (is_clang) {
@@ -8204,7 +8207,6 @@ v8_shared_library("v8_shared") {
   if (is_ohos) {
     deps = [":build_v8_script"]
   }
-  libs = [ "hilog_ndk.z" ]
 
   public_configs = [ ":external_config" ]
 }
