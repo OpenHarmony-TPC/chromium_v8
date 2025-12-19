@@ -345,6 +345,10 @@ bool OS::RemapPages(const void* address, size_t size, void* new_address,
     UNREACHABLE();
   }
 
+#ifdef USING_OHOS_WEB
+  prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, mapped_address, size, "V8_RemapPages");
+#endif
+
   return true;
 }
 
