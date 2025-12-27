@@ -594,7 +594,7 @@ class Counters : public std::enable_shared_from_this<Counters> {
   STATS_COUNTER_NATIVE_CODE_LIST(SC)
 #undef SC
 
-#ifdef V8_RUNTIME_CALL_STATS
+#if defined(V8_RUNTIME_CALL_STATS) || defined(HITRACE_RUNTIME_CALL_STATS)
   RuntimeCallStats* runtime_call_stats() { return &runtime_call_stats_; }
 
   WorkerThreadRuntimeCallStats* worker_thread_runtime_call_stats() {

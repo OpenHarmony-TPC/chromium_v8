@@ -162,7 +162,14 @@ void WriteHeader(Writer* writer, WasmEnabledFeatures enabled_features,
   const std::string& constants_module = compile_imports.constants_module();
   writer->Write(static_cast<uint32_t>(constants_module.size()));
   writer->WriteVector(base::VectorOf(constants_module));
+  writer->Write(static_cast<uint32_t>(0)); // placeholder for cache length.
   DCHECK_EQ(MeasureHeader(compile_imports), writer->bytes_written());
+}
+
+void WriteCacheLength(base::Vector<uint8_t> buffer, size_t size) {
+  Writer code_cache_write(buffer);
+  code_cache_write.Skip(WasmSerializer::kCacheLengthOffset);
+  code_cache_write.Write(static_cast<uint32_t>(size));
 }
 
 // On Intel, call sites are encoded as a displacement. For linking and for
@@ -680,7 +687,7 @@ bool WasmSerializer::SerializeNativeModule(base::Vector<uint8_t> buffer) const {
   WriteHeader(&writer, native_module_->enabled_features(),
               native_module_->compile_imports());
 
-  if (!serializer.Write(&writer)) return false;
+  if (!serializer.Write(&writer, buffer)) return false;
   DCHECK_EQ(measured_size, writer.bytes_written());
   return true;
 }
@@ -1120,6 +1127,8 @@ bool HeaderMatches(base::Vector<const uint8_t> data,
   base::SmallVector<uint8_t, 32> current_header(header_size);
   Writer writer(base::VectorOf(current_header));
   WriteHeader(&writer, enabled_features, compile_imports);
+  WriteCacheLength({current_header.data(), WasmSerializer::kHeaderSize},
+                   data.size());
   DCHECK_EQ(header_size, writer.bytes_written());
   return base::VectorOf(current_header) == data.SubVector(0, header_size);
 }

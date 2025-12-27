@@ -239,7 +239,7 @@ class V8_PLATFORM_EXPORT JSVM_PLATFORM_EXPORT TraceConfig {
  * Will become obsolete in Perfetto build
  * (v8_use_perfetto_json_export = true).
  */
-class V8_PLATFORM_EXPORT TracingController
+class V8_PLATFORM_EXPORT JSVM_PLATFORM_EXPORT TracingController
     : public V8_PLATFORM_NON_EXPORTED_BASE(v8::TracingController) {
  public:
   TracingController();

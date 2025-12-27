@@ -237,7 +237,7 @@ void* Allocate(void* hint, size_t size, OS::MemoryPermission access,
 #else
   int fd = FileDescriptorFromSharedMemoryHandle(handle);
 #endif
-  void* result = mmap(hint, size, prot, flags, fd, kMmapFdOffset);
+  void* result = InlineMmap(hint, size, prot, flags, fd, kMmapFdOffset);
   if (result == MAP_FAILED) return nullptr;
 
 #if V8_OS_LINUX && V8_ENABLE_PRIVATE_MAPPING_FORK_OPTIMIZATION

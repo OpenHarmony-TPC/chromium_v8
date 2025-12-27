@@ -40,7 +40,7 @@ struct OwnedBuffer {
  * Wrapper around a compiled WebAssembly module, which is potentially shared by
  * different WasmModuleObjects.
  */
-class V8_EXPORT CompiledWasmModule {
+class V8_EXPORT JSVM_EXPORT CompiledWasmModule {
  public:
   /**
    * Serialize the compiled module. The serialized data does not include the

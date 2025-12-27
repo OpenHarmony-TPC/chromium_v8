@@ -514,7 +514,19 @@ declare_args() {
   v8_riscv_enable_deprecated_riscv32 = false
 }
 
+declare_args() {
+  v8_enable_hitrace_runtime_call_stats = v8_enable_ohos_js_engine
+}
+
 # Derived defaults.
+pgo_exists_flag = exec_script("tools/builtins-pgo/check_pgo.py", ["--pgo_path", "profiles/ohos.profile"], "value")
+if (pgo_exists_flag) {
+  v8_builtins_profiling_log_file = "tools/builtins-pgo/profiles/ohos.profile"
+} else {
+  v8_builtins_profiling_log_file = "default"
+}
+print("Using v8_builtins_profiling from: ")
+print(v8_builtins_profiling_log_file)
 if (cppgc_enable_verify_heap == "") {
   cppgc_enable_verify_heap =
       v8_enable_verification_features || v8_dcheck_always_on
@@ -7569,6 +7581,11 @@ v8_source_set("cppgc_base") {
       "src/tracing/trace-categories.cc",
       "src/tracing/trace-categories.h",
     ]
+  }
+
+  if (is_arkweb) {
+    include_dirs = [ "../ohos_nweb/src" ]
+    deps = [ "../ohos_nweb:nweb_hilog" ]
   }
 }
 

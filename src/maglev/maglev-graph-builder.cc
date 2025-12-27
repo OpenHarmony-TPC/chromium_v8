@@ -4500,7 +4500,13 @@ ReduceResult MaglevGraphBuilder::ConvertForField(
         // if needed.
         return BuildInlinedAllocation(CreateHeapNumber(value), allocation_type);
       }
-      return GetTaggedValue(value);
+      ValueNode* new_node = GetTaggedValue(value);
+      if (new_node != value && new_node->properties().can_allocate()) {
+        // TODO(olivf): Remove this and instead always clear when we
+        // emit an allocating instruction.
+        ClearCurrentAllocationBlock();
+      }
+      return new_node;
     }
     case vobj::FieldType::kTrustedPointer:
       DCHECK(value->Is<TrustedConstant>());
