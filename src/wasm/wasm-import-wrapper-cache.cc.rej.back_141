@@ -1,0 +1,14 @@
+--- wasm-import-wrapper-cache.cc	2025-10-20 19:53:31.548556948 +0800
++++ wasm-import-wrapper-cache.cc	2025-10-16 15:56:12.946650197 +0800
+@@ -214,10 +214,11 @@
+   base::MutexGuard lock(&mutex_);
+ 
+   auto it = entry_map_.find({kind, type_index, expected_arity, suspend});
+   if (it == entry_map_.end()) return nullptr;
+   WasmCodeRefScope::AddRef(it->second);
++  if (it->second->is_dying()) return nullptr;
+   return it->second;
+ }
+ 
+ WasmCode* WasmImportWrapperCache::Lookup(Address pc) const {
+   // This can be called from the disassembler via `code->MaybePrint()` in

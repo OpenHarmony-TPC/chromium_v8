@@ -1,0 +1,15 @@
+--- src/v8/include/v8-promise.h
++++ src/v8/include/v8-promise.h
+@@ -19,11 +19,11 @@ class Context;
+ #endif
+ 
+ /**
+  * An instance of the built-in Promise constructor (ES6 draft).
+  */
+-class V8_EXPORT Promise : public Object {
++class V8_EXPORT JSVM_EXPORT Promise : public Object {
+  public:
+   /**
+    * State of the promise. Each value corresponds to one of the possible values
+    * of the [[PromiseState]] field.
+    */

@@ -1,0 +1,15 @@
+--- src/v8/src/logging/counters.h
++++ src/v8/src/logging/counters.h
+@@ -623,11 +623,11 @@ class Counters : public std::enable_shared_from_this<Counters> {
+ #undef COUNTER_ID
+     stats_counter_count
+   };
+   // clang-format on
+ 
+-#ifdef V8_RUNTIME_CALL_STATS
++#if defined(V8_RUNTIME_CALL_STATS) || defined(HITRACE_RUNTIME_CALL_STATS)
+   RuntimeCallStats* runtime_call_stats() { return &runtime_call_stats_; }
+ 
+   WorkerThreadRuntimeCallStats* worker_thread_runtime_call_stats() {
+     return &worker_thread_runtime_call_stats_;
+   }

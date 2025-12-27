@@ -1,0 +1,49 @@
+--- src/v8/src/wasm/wasm-serialization.cc
++++ src/v8/src/wasm/wasm-serialization.cc
+@@ -129,13 +129,20 @@ void WriteHeader(Writer* writer, WasmEnabledFeatures enabled_features) {
+   writer->Write(SerializedData::kMagicNumber);
+   writer->Write(Version::Hash());
+   writer->Write(static_cast<uint32_t>(CpuFeatures::SupportedFeatures()));
+   writer->Write(FlagList::Hash());
+   writer->Write(enabled_features.ToIntegral());
++  writer->Write(static_cast<uint32_t>(0)); // placeholder for cache length.
+   DCHECK_EQ(WasmSerializer::kHeaderSize, writer->bytes_written());
+ }
+ 
++void WriteCacheLength(base::Vector<uint8_t> buffer, size_t size) {
++  Writer code_cache_write(buffer);
++  code_cache_write.Skip(WasmSerializer::kCacheLengthOffset);
++  code_cache_write.Write(static_cast<uint32_t>(size));
++}
++
+ // On Intel, call sites are encoded as a displacement. For linking and for
+ // serialization/deserialization, we want to store/retrieve a tag (the function
+ // index). On Intel, that means accessing the raw displacement.
+ // On ARM64, call sites are encoded as either a literal load or a direct branch.
+ // Other platforms simply require accessing the target address.
+@@ -645,11 +654,11 @@ bool WasmSerializer::SerializeNativeModule(base::Vector<uint8_t> buffer) const {
+   if (buffer.size() < measured_size) return false;
+ 
+   Writer writer(buffer);
+   WriteHeader(&writer, native_module_->enabled_features());
+ 
+-  if (!serializer.Write(&writer)) return false;
++  if (!serializer.Write(&writer, buffer)) return false;
+   DCHECK_EQ(measured_size, writer.bytes_written());
+   return true;
+ }
+ 
+ struct DeserializationUnit {
+@@ -1091,10 +1100,12 @@ bool IsSupportedVersion(base::Vector<const uint8_t> header,
+                         WasmEnabledFeatures enabled_features) {
+   if (header.size() < WasmSerializer::kHeaderSize) return false;
+   uint8_t current_version[WasmSerializer::kHeaderSize];
+   Writer writer({current_version, WasmSerializer::kHeaderSize});
+   WriteHeader(&writer, enabled_features);
++  WriteCacheLength({current_version, WasmSerializer::kHeaderSize},
++                   header.size());
+   return memcmp(header.begin(), current_version, WasmSerializer::kHeaderSize) ==
+          0;
+ }
+ 
+ MaybeDirectHandle<WasmModuleObject> DeserializeNativeModule(

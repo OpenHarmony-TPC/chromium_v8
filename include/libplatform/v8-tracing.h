@@ -114,7 +114,7 @@ class V8_PLATFORM_EXPORT TraceObject {
   void operator=(const TraceObject&) = delete;
 };
 
-class V8_PLATFORM_EXPORT TraceWriter {
+class V8_PLATFORM_EXPORT JSVM_PLATFORM_EXPORT TraceWriter {
  public:
   TraceWriter() = default;
   virtual ~TraceWriter() = default;
@@ -157,7 +157,7 @@ class V8_PLATFORM_EXPORT TraceBufferChunk {
   void operator=(const TraceBufferChunk&) = delete;
 };
 
-class V8_PLATFORM_EXPORT TraceBuffer {
+class V8_PLATFORM_EXPORT JSVM_PLATFORM_EXPORT TraceBuffer {
  public:
   TraceBuffer() = default;
   virtual ~TraceBuffer() = default;
@@ -193,7 +193,7 @@ enum TraceRecordMode {
   ECHO_TO_CONSOLE,
 };
 
-class V8_PLATFORM_EXPORT TraceConfig {
+class V8_PLATFORM_EXPORT JSVM_PLATFORM_EXPORT TraceConfig {
  public:
   typedef std::vector<std::string> StringList;
 

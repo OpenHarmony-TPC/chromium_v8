@@ -412,6 +412,7 @@ Node* WasmGraphBuilder::BuildWasmCall(const Signature<T>* sig,
   return call;
 }
 
+
 // Only call this function for code which is not reused across instantiations,
 // as we do not patch the embedded js_context.
 Node* WasmGraphBuilder::BuildCallToRuntimeWithContext(Runtime::FunctionId f,

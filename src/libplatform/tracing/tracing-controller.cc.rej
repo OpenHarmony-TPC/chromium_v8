@@ -1,0 +1,26 @@
+--- src/v8/src/libplatform/tracing/tracing-controller.cc
++++ src/v8/src/libplatform/tracing/tracing-controller.cc
+@@ -8,10 +8,11 @@
+ 
+ #include "include/libplatform/v8-tracing.h"
+ #include "src/base/atomicops.h"
+ #include "src/base/platform/mutex.h"
+ #include "src/base/platform/time.h"
++#include "src/tracing/trace-event.h"
+ 
+ #ifdef V8_USE_PERFETTO
+ #include "perfetto/ext/trace_processor/export_json.h"
+ #include "perfetto/trace_processor/trace_processor.h"
+ #include "perfetto/tracing/tracing.h"
+@@ -216,10 +217,11 @@ void TracingController::StartTracing(TraceConfig* trace_config) {
+   }
+   for (auto o : observers_copy) {
+     o->OnTraceEnabled();
+   }
+ #endif
++  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.runtime"), "V8.StartTracing");
+ }
+ 
+ void TracingController::StopTracing() {
+   bool expected = true;
+   if (!recording_.compare_exchange_strong(expected, false)) {

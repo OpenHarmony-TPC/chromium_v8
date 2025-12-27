@@ -343,7 +343,7 @@ class V8_EXPORT_PRIVATE NativeModuleSerializer {
   NativeModuleSerializer& operator=(const NativeModuleSerializer&) = delete;
 
   size_t Measure() const;
-  bool Write(Writer* writer);
+  bool Write(Writer* writer, base::Vector<uint8_t> buffer);
 
  private:
   size_t MeasureCode(const WasmCode*) const;
@@ -626,7 +626,7 @@ uint32_t NativeModuleSerializer::CanonicalSigIdToModuleLocalTypeId(
   return it->second;
 }
 
-bool NativeModuleSerializer::Write(Writer* writer) {
+bool NativeModuleSerializer::Write(Writer* writer, base::Vector<uint8_t> buffer) {
   DCHECK(!write_called_);
   write_called_ = true;
 
@@ -654,6 +654,8 @@ bool NativeModuleSerializer::Write(Writer* writer) {
   CHECK_EQ(total_written_code_, total_code_size);
 
   WriteTieringBudget(writer);
+
+  WriteCacheLength(buffer, writer->bytes_written());
   return true;
 }
 

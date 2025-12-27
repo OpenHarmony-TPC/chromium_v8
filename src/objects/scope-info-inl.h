@@ -31,6 +31,7 @@ bool ScopeInfo::HasSimpleParameters() const {
   return HasSimpleParametersBit::decode(Flags());
 }
 
+
 bool ScopeInfo::HasContextCells() const {
   return HasContextCellsBit::decode(Flags());
 }
