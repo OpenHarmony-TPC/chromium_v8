@@ -451,6 +451,13 @@ constexpr uint32_t kDefaultMaxWasmCodeSpaceSizeMb = 32;
 constexpr uint32_t kDefaultMaxWasmCodeSpaceSizeMb = 1024;
 #endif
 
+#ifdef OHOS_JS_ENGINE
+constexpr int kEnumTimesCacheMaxPropertiesNum = 1000;
+constexpr int kSlowEnumTimesCacheCapacity = 5;
+constexpr size_t kOperateEnumTimeCacheInvalidPos = -1;
+constexpr int kHitsObjTimesThreshold = 4;
+#endif
+
 // Align IsolateData to a most common CPU cache line size.
 constexpr size_t kIsolateDataAlignment = 64;
 

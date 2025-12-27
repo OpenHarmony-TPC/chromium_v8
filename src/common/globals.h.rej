@@ -1,0 +1,19 @@
+--- src/v8/src/common/globals.h
++++ src/v8/src/common/globals.h
+@@ -117,10 +117,16 @@ namespace internal {
+ #define COMPRESS_POINTERS_IN_SHARED_CAGE_BOOL true
+ #else
+ #define COMPRESS_POINTERS_IN_SHARED_CAGE_BOOL false
+ #endif
+ 
++#ifdef V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES && OHOS_JS_ENGINE
++#define V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL true
++#else
++#define V8_ENABLE_ENUM_CACHE_FOR_SLOW_PROPERTIES_BOOL false
++#endif
++
+ #if COMPRESS_POINTERS_BOOL && !COMPRESS_POINTERS_IN_SHARED_CAGE_BOOL
+ #define COMPRESS_POINTERS_IN_MULTIPLE_CAGES_BOOL true
+ #else
+ #define COMPRESS_POINTERS_IN_MULTIPLE_CAGES_BOOL false
+ #endif

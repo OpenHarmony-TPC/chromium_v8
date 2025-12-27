@@ -1,0 +1,26 @@
+--- src/v8/include/v8-persistent-handle.h
++++ src/v8/include/v8-persistent-handle.h
+@@ -491,18 +509,21 @@ template <class T>
+ template <class S>
+ void PersistentBase<T>::Reset(Isolate* isolate,
+                               const PersistentBase<S>& other) {
+   static_assert(std::is_base_of_v<T, S>, "type check");
+   Reset();
+-  if (other.IsEmpty()) return;
++  if (other.IsEmpty()) {
++    return;
++  }
+   this->slot() = New(isolate, other.template value<S>());
+ }
+ 
+ template <class T>
+ template <typename P>
+ V8_INLINE void PersistentBase<T>::SetWeak(
+-    P* parameter, typename WeakCallbackInfo<P>::Callback callback,
++    P* parameter,
++    typename WeakCallbackInfo<P>::Callback callback,
+     WeakCallbackType type) {
+   using Callback = WeakCallbackInfo<void>::Callback;
+ #if (__GNUC__ >= 8) && !defined(__clang__)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wcast-function-type"

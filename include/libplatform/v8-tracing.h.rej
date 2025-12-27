@@ -1,0 +1,15 @@
+--- src/v8/include/libplatform/v8-tracing.h
++++ src/v8/include/libplatform/v8-tracing.h
+@@ -229,11 +229,11 @@ class V8_PLATFORM_EXPORT TraceConfig {
+   __pragma(warning(suppress : 4275)) code
+ #else
+ #define V8_PLATFORM_NON_EXPORTED_BASE(code) code
+ #endif  // defined(_MSC_VER)
+ 
+-class V8_PLATFORM_EXPORT TracingController
++class V8_PLATFORM_EXPORT JSVM_PLATFORM_EXPORT TracingController
+     : public V8_PLATFORM_NON_EXPORTED_BASE(v8::TracingController) {
+  public:
+   TracingController();
+   ~TracingController() override;
+ 
