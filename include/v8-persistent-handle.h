@@ -475,7 +475,9 @@ void PersistentBase<T>::Reset(Isolate* isolate,
                               const PersistentBase<S>& other) {
   static_assert(std::is_base_of_v<T, S>, "type check");
   Reset();
-  if (other.IsEmpty()) return;
+  if (other.IsEmpty()) {
+    return;
+  }
   this->slot() = New(isolate, other.template value<S>());
 }
 
