@@ -1127,8 +1127,6 @@ bool HeaderMatches(base::Vector<const uint8_t> data,
   base::SmallVector<uint8_t, 32> current_header(header_size);
   Writer writer(base::VectorOf(current_header));
   WriteHeader(&writer, enabled_features, compile_imports);
-  WriteCacheLength({current_header.data(), WasmSerializer::kHeaderSize},
-                   data.size());
   DCHECK_EQ(header_size, writer.bytes_written());
   return base::VectorOf(current_header) == data.SubVector(0, header_size);
 }
