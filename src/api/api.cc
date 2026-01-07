@@ -2588,12 +2588,15 @@ MaybeLocal<WasmModuleObject> WasmModuleObject::DeserializeOrCompile(
     MemorySpan<const uint8_t> wasm_cache_data, bool& cacheRejected) {
 #if V8_ENABLE_WEBASSEMBLY
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+  base::OwnedVector<const uint8_t> wire_bytes_copy =
+      base::OwnedCopyOf(base::Vector<const uint8_t>(wire_bytes.data(), wire_bytes.size()));
   i::MaybeDirectHandle<i::WasmModuleObject> maybe_module =
       i::wasm::DeserializeNativeModule(
           i_isolate,
+          i::wasm::WasmEnabledFeatures::FromIsolate(i_isolate),
           base::Vector<const uint8_t>(wasm_cache_data.data(),
                                       wasm_cache_data.size()),
-          base::Vector<const uint8_t>(wire_bytes.data(), wire_bytes.size()),
+          wire_bytes_copy,
           i::wasm::CompileTimeImports(),
           {});
   cacheRejected = maybe_module.is_null();
@@ -2632,8 +2635,7 @@ bool WasmModuleObject::CompileFunction(Isolate* v8_isolate,
                 static_cast<uint8_t>(i::wasm::ExecutionTier::kTurbofan));
   auto executionTier =
       static_cast<i::wasm::ExecutionTier>(static_cast<uint8_t>(tier));
-  i::wasm::GetWasmEngine()->CompileFunction(i_isolate->counters(),
-                                            module->native_module(),
+  i::wasm::GetWasmEngine()->CompileFunction(module->native_module(),
                                             function_index, executionTier);
   if (native_module->compilation_state()->failed()) {
     return false;
