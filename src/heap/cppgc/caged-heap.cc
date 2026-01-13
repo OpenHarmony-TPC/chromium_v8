@@ -27,6 +27,10 @@
 #include "src/heap/cppgc/heap-page.h"
 #include "src/heap/cppgc/member-storage.h"
 
+#ifdef USING_OHOS_WEB
+#include <sys/prctl.h>
+#endif
+
 namespace cppgc {
 namespace internal {
 
@@ -74,7 +78,14 @@ VirtualMemory ReserveCagedHeap(PageAllocator& platform_allocator) {
 
     VirtualMemory memory(&platform_allocator, kTryReserveSize,
                          kTryReserveAlignment, hint);
+#ifdef USING_OHOS_WEB
+    if (memory.IsReserved()) {
+      prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, memory.address(), memory.size(), "blink_gc_cage");
+      return memory;
+    }
+#else
     if (memory.IsReserved()) return memory;
+#endif
   }
 
   GetGlobalOOMHandler()("Oilpan: CagedHeap reservation.");
