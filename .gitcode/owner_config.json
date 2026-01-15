@@ -3,7 +3,7 @@
         "arkweb-JSEngine": [
             "yuanxiaogou"
         ],
-        "Arkweb_Build": [
+        "arkweb-performance": [
             "doublelucky"
         ]
     },
@@ -12,7 +12,7 @@
             "info": "[JavaScript引擎]"
         },
         "doublelucky": {
-            "info": "[build]"
+            "info": "[performance]"
         }
     }
 }
