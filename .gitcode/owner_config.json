@@ -2,17 +2,11 @@
     "groups": {
         "arkweb-JSEngine": [
             "yuanxiaogou"
-        ],
-        "arkweb-performance": [
-            "doublelucky"
         ]
     },
     "userInfos": {
         "yuanxiaogou": {
             "info": "[JavaScript引擎]"
-        },
-        "doublelucky": {
-            "info": "[performance]"
         }
     }
 }
