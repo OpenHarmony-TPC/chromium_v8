@@ -2,11 +2,17 @@
     "groups": {
         "arkweb-JSEngine": [
             "yuanxiaogou"
+        ],
+        "Arkweb_Build": [
+            "doublelucky"
         ]
     },
     "userInfos": {
         "yuanxiaogou": {
             "info": "[JavaScript引擎]"
+        },
+        "doublelucky": {
+            "info": "[build]"
         }
     }
 }
