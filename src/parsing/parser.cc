@@ -1246,10 +1246,10 @@ FunctionLiteral* Parser::ParseClassForMemberInitialization(
     // Pre-allocating the preceding scope (ID 1) ensures it exists before the
     // parser encounters `b`, preventing the incorrect allocation of a new ID.
 
-    if (initializer_kind ==
+    if (initalizer_kind ==
         FunctionKind::kClassMembersInitializerFunctionPrecededByStatic) {
       class_info.EnsureStaticElementsScope(this, kNoSourcePosition, -1);
-    } else if (initializer_kind ==
+    } else if (initalizer_kind ==
                FunctionKind::kClassStaticInitializerFunctionPrecededByMember) {
       class_info.EnsureInstanceMembersScope(this, kNoSourcePosition, -1);
     }
@@ -1269,11 +1269,7 @@ FunctionLiteral* Parser::ParseClassForMemberInitialization(
 
   if (has_error()) return nullptr;
 
-<<<<<<< HEAD
-  DCHECK(IsClassMembersInitializerFunction(initalizer_kind));
-=======
-  DCHECK(IsClassInitializerFunction(initializer_kind));
->>>>>>> 978f2b8a73f... Fix class member initializer reparsing logic
+  DCHECK(IsClassInitializerFunction(initalizer_kind));
 
   no_expression_scope.ValidateExpression();
 
