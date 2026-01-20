@@ -45,7 +45,8 @@ MaybeHandle<JSSegmentIterator> JSSegmentIterator::Create(
 
   // 5. Set iterator.[[IteratedStringNextSegmentCodeUnitIndex]] to 0.
   DirectHandle<Managed<icu::UnicodeString>> unicode_string =
-      Intl::SetTextToBreakIterator(isolate, input_string, break_iterator.get());
+      Intl::SetTextToBreakIterator(isolate, handle(*input_string, isolate),
+          break_iterator.get());
 
   break_iterator->first();
   DirectHandle<Managed<icu::BreakIterator>> managed_break_iterator =
