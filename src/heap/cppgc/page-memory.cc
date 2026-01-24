@@ -269,10 +269,6 @@ void PageBackend::FreeLargePageMemory(Address writeable_base) {
   auto size = large_page_memory_regions_.erase(pmr);
   USE(size);
   DCHECK_EQ(1u, size);
-#ifdef USING_OHOS_WEB
-  prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, pmr->reserved_region().base(),
-      pmr->reserved_region().size(), "blink_gc_cage");
-#endif
 }
 
 void PageBackend::DiscardPooledPages() {
