@@ -109,6 +109,9 @@ TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
 
   BIND(&tailcall_to_shared);
   // Tail call into code object on the SharedFunctionInfo.
+  // TODO(https://crbug.com/451355210, ishell): consider removing this
+  // duplicate implementation in favour of returning code object from above
+  // runtime calls once non-leaptering code is removed.
   // TODO(saelo): this is not safe. We either need to validate the parameter
   // count here or obtain the code from the dispatch table.
   TNode<Code> code = GetSharedFunctionInfoCode(shared);
@@ -1674,6 +1677,12 @@ TF_BUILTIN(InstantiateAsmJs, CodeStubAssembler) {
   BIND(&tailcall_to_function);
   // On failure, tail call back to regular JavaScript by re-calling the given
   // function which has been reset to the compile lazy builtin.
+  // Make sure that the dispatch table entry is still intact; calling out to JS
+  // might have free'd and re-allocated it (https://crbug.com/462217236).
+  CSA_SBXCHECK(
+      this,
+      Word32Equal(DynamicJSParameterCount(),
+                  LoadParameterCountFromJSDispatchTable(dispatch_handle)));
 
   TNode<Code> code = LoadJSFunctionCode(function);
   TailCallJSCode(code, context, function, new_target, arg_count,

@@ -613,6 +613,9 @@ void StraightForwardRegisterAllocator::AllocateRegisters() {
     }
     AllocateControlNode(block->control_node(), block);
   }
+
+  // Clean up remaining register allocations at the end
+  ClearRegisters();
 }
 
 void StraightForwardRegisterAllocator::FreeRegistersUsedBy(ValueNode* node) {
@@ -1553,8 +1556,8 @@ void StraightForwardRegisterAllocator::SpillRegisters() {
   double_registers_.ForEachUsedRegister(spill);
 }
 
-template <typename RegisterT>
-void StraightForwardRegisterAllocator::SpillAndClearRegisters(
+template <typename RegisterT, bool spill>
+void StraightForwardRegisterAllocator::ClearRegisters(
     RegisterFrameState<RegisterT>& registers) {
   while (registers.used() != registers.empty()) {
     RegisterT reg = registers.used().first();
@@ -1563,7 +1566,9 @@ void StraightForwardRegisterAllocator::SpillAndClearRegisters(
       printing_visitor_->os() << "  clearing registers with "
                               << PrintNodeLabel(graph_labeller(), node) << "\n";
     }
-    Spill(node);
+    if (spill) {
+      Spill(node);
+    }
     registers.FreeRegistersUsedBy(node);
     DCHECK(!registers.used().has(reg));
   }
@@ -1572,6 +1577,11 @@ void StraightForwardRegisterAllocator::SpillAndClearRegisters(
 void StraightForwardRegisterAllocator::SpillAndClearRegisters() {
   SpillAndClearRegisters(general_registers_);
   SpillAndClearRegisters(double_registers_);
+}
+
+void StraightForwardRegisterAllocator::ClearRegisters() {
+  ClearRegisters(general_registers_);
+  ClearRegisters(double_registers_);
 }
 
 void StraightForwardRegisterAllocator::SaveRegisterSnapshot(NodeBase* node) {
