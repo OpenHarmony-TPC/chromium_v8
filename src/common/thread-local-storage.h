@@ -31,7 +31,9 @@
 #if V8_TLS_LIBRARY_MODE
 #define V8_TLS_MODEL "local-dynamic"
 #else
-#if defined(V8_TARGET_OS_WIN)
+#if defined(HWADDRESS_SANITIZER)
+#define V8_TLS_MODEL "local-dynamic"
+#elif defined(V8_TARGET_OS_WIN)
 #define V8_TLS_MODEL "initial-exec"
 #elif defined(V8_TARGET_OS_ANDROID)
 #define V8_TLS_MODEL "local-dynamic"
