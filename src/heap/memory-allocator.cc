@@ -31,8 +31,11 @@
 #include <sys/prctl.h>  // for prctl
 #endif
 
+#ifdef USING_OHOS
+#define MEMTAG_PREFIX "JSVM_V8_HEAP_"
+#endif
 #ifdef USING_OHOS_WEB
-#include "../../../arkweb/chromium_ext/v8/ohlog.h"
+#define MEMTAG_PREFIX "JS_V8_HEAP_"
 #endif
 
 namespace v8 {
@@ -262,10 +265,15 @@ MemoryAllocator::AllocateUninitializedChunkAt(BaseSpace* space,
   LOG(isolate_,
       NewEvent("MemoryChunk", reinterpret_cast<void*>(base), chunk_size));
 
-#ifdef USING_OHOS_WEB
-  int ret = prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, reinterpret_cast<void*>(base), chunk_size, "JS_V8_HEAP");
+#if defined(USING_OHOS) || defined(USING_OHOS_WEB)
+  std::stringstream tagss;
+  constexpr uint32_t THREAD_NAME_LEN_MAX = 17;
+  char name[THREAD_NAME_LEN_MAX] = {0};
+  prctl(PR_GET_NAME, name);
+  tagss << MEMTAG_PREFIX << isolate_->id() << "_" << name;
+  int ret = prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, reinterpret_cast<void*>(base), chunk_size, tagss.str().c_str());
   if (ret == -1) {
-    StreamHilog("PR set name JS_V8_HEAP failed!");
+    base::OS::PrintError("PR set name V8_HEAP failed!");
   }
 #endif
 
