@@ -1500,8 +1500,10 @@ MaybeHandle<String> Intl::NumberToLocaleString(Isolate* isolate,
                 Isolate::ICUObjectCacheType::kDefaultNumberFormat, locales));
     // We may use the cached icu::NumberFormat for a fast path.
     if (cached_number_format != nullptr) {
-      return JSNumberFormat::FormatNumeric(isolate, *cached_number_format,
-                                           numeric_obj);
+      std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt =
+          std::make_shared<icu::number::LocalizedNumberFormatter>(
+              *cached_number_format);
+      return JSNumberFormat::FormatNumeric(isolate, lfmt, numeric_obj);
     }
   }
 
@@ -1530,10 +1532,9 @@ MaybeHandle<String> Intl::NumberToLocaleString(Isolate* isolate,
   }
 
   // Return FormatNumber(numberFormat, x).
-  icu::number::LocalizedNumberFormatter* icu_number_format =
-      number_format->icu_number_formatter()->raw();
-  return JSNumberFormat::FormatNumeric(isolate, *icu_number_format,
-                                       numeric_obj);
+
+  return JSNumberFormat::FormatNumeric(
+      isolate, number_format->icu_number_formatter()->get(), numeric_obj);
 }
 
 namespace {
