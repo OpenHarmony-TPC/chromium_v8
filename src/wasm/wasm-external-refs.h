@@ -202,8 +202,16 @@ void resume_wasmfx_stack(Isolate* isolate, wasm::StackMemory* to, Address sp,
                          Address fp, Address pc);
 Address suspend_wasmfx_stack(Isolate* isolate, Address sp, Address fp,
                              Address pc, Address wanted_tag_raw,
+<<<<<<< HEAD
                              Address cont_raw);
 void return_stack(Isolate* isolate, wasm::StackMemory* to);
+=======
+                             Address cont_raw, Address return_buffer,
+                             const CanonicalSig* sig);
+void return_jspi_stack(Isolate* isolate, wasm::StackMemory* to);
+void return_wasmfx_stack(Isolate* isolate, wasm::StackMemory* to);
+void retire_stack(Isolate* isolate, wasm::StackMemory* stack);
+>>>>>>> 096a780ac89... Merged: [jspi] Clear EPT entry on stack return
 
 intptr_t switch_to_the_central_stack(Isolate* isolate, uintptr_t sp);
 void switch_from_the_central_stack(Isolate* isolate);

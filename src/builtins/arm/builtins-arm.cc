@@ -2936,7 +2936,8 @@ void SwitchStacks(MacroAssembler* masm, ExternalReference fn,
   }
 
   {
-    bool is_return = fn == ExternalReference::wasm_return_stack();
+    bool is_return = fn == ExternalReference::wasm_return_jspi_stack() ||
+                     fn == ExternalReference::wasm_return_wasmfx_stack();
     int num_args = is_return ? 2 : maybe_suspender.is_valid() ? 6 : 5;
     __ PrepareCallCFunction(num_args);
     FrameScope scope(masm, StackFrame::MANUAL);
@@ -2973,8 +2974,8 @@ void ReloadParentStack(MacroAssembler* masm, Register return_reg,
   __ ldr(parent, MemOperand(active_stack, wasm::kStackParentOffset));
 
   // Switch stack!
-  SwitchStacks(masm, ExternalReference::wasm_return_stack(), parent, nullptr,
-               no_reg, {return_reg, return_value, context, parent});
+  SwitchStacks(masm, ExternalReference::wasm_return_jspi_stack(), parent,
+               nullptr, no_reg, {return_reg, return_value, context, parent});
   LoadJumpBuffer(masm, parent, false, tmp3);
 }
 
@@ -3372,9 +3373,15 @@ void Builtins::Generate_WasmFXReturn(MacroAssembler* masm) {
   __ LoadRootRelative(active_stack, IsolateData::active_stack_offset());
   Register parent = r1;
   __ Move(parent, MemOperand(active_stack, wasm::kStackParentOffset));
+<<<<<<< HEAD
   SwitchStacks(masm, ExternalReference::wasm_return_stack(), parent, nullptr,
                no_reg, {parent});
   LoadJumpBuffer(masm, parent, true, r2);
+=======
+  SwitchStacks(masm, ExternalReference::wasm_return_wasmfx_stack(), parent,
+               nullptr, no_reg, {parent, arg_buffer});
+  LoadJumpBuffer(masm, parent, true, r6);
+>>>>>>> 096a780ac89... Merged: [jspi] Clear EPT entry on stack return
   __ Trap();
 }
 
