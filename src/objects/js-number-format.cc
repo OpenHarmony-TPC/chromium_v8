@@ -1490,7 +1490,7 @@ int32_t SignedStringLength(StringHandle string) {
 
 icu::number::FormattedNumber FormatDecimalString(
     Isolate* isolate,
-    const icu::number::LocalizedNumberFormatter& number_format,
+    std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt,
     Handle<String> string, UErrorCode& status) {
   string = String::Flatten(isolate, string);
   DisallowGarbageCollection no_gc;
@@ -1499,10 +1499,9 @@ icu::number::FormattedNumber FormatDecimalString(
   if (flat.IsOneByte()) {
     const char* char_buffer =
         reinterpret_cast<const char*>(flat.ToOneByteVector().begin());
-    return number_format.formatDecimal({char_buffer, length}, status);
+    return lfmt->formatDecimal({char_buffer, length}, status);
   }
-  return number_format.formatDecimal({string->ToCString().get(), length},
-                                     status);
+  return lfmt->formatDecimal({string->ToCString().get(), length}, status);
 }
 
 }  // namespace
@@ -1524,7 +1523,7 @@ MaybeHandle<String> IntlMathematicalValue::ToString(Isolate* isolate) const {
 namespace {
 Maybe<icu::number::FormattedNumber> IcuFormatNumber(
     Isolate* isolate,
-    const icu::number::LocalizedNumberFormatter& number_format,
+    std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt,
     Handle<Object> numeric_obj) {
   icu::number::FormattedNumber formatted;
   // If it is BigInt, handle it differently.
@@ -1542,7 +1541,7 @@ Maybe<icu::number::FormattedNumber> IcuFormatNumber(
     DCHECK(flat.IsOneByte());
     const char* char_buffer =
         reinterpret_cast<const char*>(flat.ToOneByteVector().begin());
-    formatted = number_format.formatDecimal({char_buffer, length}, status);
+    formatted = lfmt->formatDecimal({char_buffer, length}, status);
   } else {
     if (IsString(*numeric_obj)) {
       // TODO(ftang) Correct the handling of string after the resolution of
@@ -1555,21 +1554,20 @@ Maybe<icu::number::FormattedNumber> IcuFormatNumber(
       if (flat.IsOneByte()) {
         const char* char_buffer =
             reinterpret_cast<const char*>(flat.ToOneByteVector().begin());
-        formatted = number_format.formatDecimal({char_buffer, length}, status);
+        formatted = lfmt->formatDecimal({char_buffer, length}, status);
       } else {
         // We may have two bytes string such as "漢 123456789".substring(2)
         // The value will be "123456789" only in ASCII range, but encoded
         // in two bytes string.
         // ICU accepts UTF8 string, so if the source is two-byte encoded,
         // copy into a UTF8 string via ToCString.
-        formatted = number_format.formatDecimal(
-            {string->ToCString().get(), length}, status);
+        formatted = lfmt->formatDecimal({string->ToCString().get(), length}, status);
       }
     } else {
       double number = IsNaN(*numeric_obj)
                           ? std::numeric_limits<double>::quiet_NaN()
                           : Object::NumberValue(*numeric_obj);
-      formatted = number_format.formatDouble(number, status);
+      formatted = lfmt->formatDouble(number, status);
     }
   }
   if (U_FAILURE(status)) {
@@ -1586,7 +1584,7 @@ Maybe<icu::number::FormattedNumber> IcuFormatNumber(
 
 Maybe<icu::number::FormattedNumber> IntlMathematicalValue::FormatNumeric(
     Isolate* isolate,
-    const icu::number::LocalizedNumberFormatter& number_format,
+    std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt,
     const IntlMathematicalValue& x) {
   if (IsString(*x.value_)) {
     Handle<String> string;
@@ -1594,7 +1592,7 @@ Maybe<icu::number::FormattedNumber> IntlMathematicalValue::FormatNumeric(
                                      Nothing<icu::number::FormattedNumber>());
     UErrorCode status = U_ZERO_ERROR;
     icu::number::FormattedNumber result =
-        FormatDecimalString(isolate, number_format, string, status);
+        FormatDecimalString(isolate, std::move(lfmt), string, status);
     if (U_FAILURE(status)) {
       THROW_NEW_ERROR_RETURN_VALUE(isolate,
                                    NewTypeError(MessageTemplate::kIcuError),
@@ -1603,7 +1601,7 @@ Maybe<icu::number::FormattedNumber> IntlMathematicalValue::FormatNumeric(
     return Just(std::move(result));
   }
   CHECK(IsNumber(*x.value_) || IsBigInt(*x.value_));
-  return IcuFormatNumber(isolate, number_format, x.value_);
+  return IcuFormatNumber(isolate, std::move(lfmt), x.value_);
 }
 
 Maybe<icu::number::FormattedNumberRange> IntlMathematicalValue::FormatRange(
@@ -2008,8 +2006,8 @@ namespace {
 
 // #sec-partitionnumberrangepattern
 template <typename T, MaybeDirectHandle<T> (*F)(
-                          Isolate*, const icu::FormattedValue&,
-                          const icu::number::LocalizedNumberFormatter&, bool)>
+              Isolate*, const icu::FormattedValue&,
+              std::shared_ptr<icu::number::LocalizedNumberFormatter>, bool)>
 MaybeDirectHandle<T> PartitionNumberRangePattern(
     Isolate* isolate, DirectHandle<JSNumberFormat> number_format,
     Handle<Object> start, Handle<Object> end, const char* func_name) {
@@ -2056,13 +2054,13 @@ MaybeDirectHandle<T> PartitionNumberRangePattern(
   icu::number::FormattedNumberRange formatted =
       std::move(maybe_formatted).FromJust();
 
-  return F(isolate, formatted, *(number_format->icu_number_formatter()->raw()),
+  return F(isolate, formatted, number_format->icu_number_formatter()->get(),
            false /* is_nan */);
 }
 
-MaybeDirectHandle<String> FormatToString(
-    Isolate* isolate, const icu::FormattedValue& formatted,
-    const icu::number::LocalizedNumberFormatter&, bool) {
+
+MaybeDirectHandle<String> FormatToString(Isolate* isolate,
+                                         const icu::FormattedValue& formatted) {
   UErrorCode status = U_ZERO_ERROR;
   icu::UnicodeString result = formatted.toString(status);
   if (U_FAILURE(status)) {
@@ -2071,12 +2069,18 @@ MaybeDirectHandle<String> FormatToString(
   return Intl::ToString(isolate, result);
 }
 
+MaybeDirectHandle<String> FormatToString(
+    Isolate* isolate, const icu::FormattedValue& formatted,
+    std::shared_ptr<icu::number::LocalizedNumberFormatter>, bool) {
+  return FormatToString(isolate, formatted);
+}
+
 MaybeDirectHandle<JSArray> FormatToJSArray(
     Isolate* isolate, const icu::FormattedValue& formatted,
-    const icu::number::LocalizedNumberFormatter& nfmt, bool is_nan,
+    std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt, bool is_nan,
     bool output_source) {
   UErrorCode status = U_ZERO_ERROR;
-  bool is_unit = Style::UNIT == StyleFromSkeleton(nfmt.toSkeleton(status));
+  bool is_unit = Style::UNIT == StyleFromSkeleton(lfmt->toSkeleton(status));
   CHECK(U_SUCCESS(status));
 
   Factory* factory = isolate->factory();
@@ -2095,8 +2099,8 @@ MaybeDirectHandle<JSArray> FormatToJSArray(
 
 MaybeDirectHandle<JSArray> FormatRangeToJSArray(
     Isolate* isolate, const icu::FormattedValue& formatted,
-    const icu::number::LocalizedNumberFormatter& nfmt, bool is_nan) {
-  return FormatToJSArray(isolate, formatted, nfmt, is_nan, true);
+    std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt, bool is_nan) {
+  return FormatToJSArray(isolate, formatted, std::move(lfmt), is_nan, true);
 }
 
 }  // namespace
@@ -2123,22 +2127,19 @@ JSNumberFormat::GetRangeFormatter(
 
 MaybeDirectHandle<String> JSNumberFormat::FormatNumeric(
     Isolate* isolate,
-    const icu::number::LocalizedNumberFormatter& number_format,
+    std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt,
     Handle<Object> numeric_obj) {
   Maybe<icu::number::FormattedNumber> maybe_format =
-      IcuFormatNumber(isolate, number_format, numeric_obj);
+      IcuFormatNumber(isolate, std::move(lfmt), numeric_obj);
   MAYBE_RETURN(maybe_format, DirectHandle<String>());
   icu::number::FormattedNumber formatted = std::move(maybe_format).FromJust();
 
-  return FormatToString(isolate, formatted, number_format, IsNaN(*numeric_obj));
+  return FormatToString(isolate, formatted);
 }
 
 MaybeDirectHandle<String> JSNumberFormat::NumberFormatFunction(
     Isolate* isolate, DirectHandle<JSNumberFormat> number_format,
     Handle<Object> value) {
-  icu::number::LocalizedNumberFormatter* fmt =
-      number_format->icu_number_formatter()->raw();
-  CHECK_NOT_NULL(fmt);
 
   // 4. Let x be ? ToIntlMathematicalValue(value).
   IntlMathematicalValue x;
@@ -2148,32 +2149,33 @@ MaybeDirectHandle<String> JSNumberFormat::NumberFormatFunction(
 
   // 5. Return FormatNumeric(nf, x).
   Maybe<icu::number::FormattedNumber> maybe_formatted =
-      IntlMathematicalValue::FormatNumeric(isolate, *fmt, x);
+      IntlMathematicalValue::FormatNumeric(
+          isolate, number_format->icu_number_formatter()->get(), x);
   MAYBE_RETURN(maybe_formatted, DirectHandle<String>());
   icu::number::FormattedNumber formatted =
       std::move(maybe_formatted).FromJust();
 
-  return FormatToString(isolate, formatted, *fmt, x.IsNaN());
+  return FormatToString(isolate, formatted);
 }
 
 MaybeDirectHandle<JSArray> JSNumberFormat::FormatToParts(
     Isolate* isolate, DirectHandle<JSNumberFormat> number_format,
     Handle<Object> numeric_obj) {
-  icu::number::LocalizedNumberFormatter* fmt =
-      number_format->icu_number_formatter()->raw();
-  DCHECK_NOT_NULL(fmt);
   IntlMathematicalValue value;
   MAYBE_ASSIGN_RETURN_ON_EXCEPTION_VALUE(
       isolate, value, IntlMathematicalValue::From(isolate, numeric_obj),
       DirectHandle<JSArray>());
 
+  std::shared_ptr<icu::number::LocalizedNumberFormatter> lfmt(
+      number_format->icu_number_formatter()->get());
   Maybe<icu::number::FormattedNumber> maybe_formatted =
-      IntlMathematicalValue::FormatNumeric(isolate, *fmt, value);
+      IntlMathematicalValue::FormatNumeric(isolate, lfmt, value);
   MAYBE_RETURN(maybe_formatted, DirectHandle<JSArray>());
   icu::number::FormattedNumber formatted =
       std::move(maybe_formatted).FromJust();
 
-  return FormatToJSArray(isolate, formatted, *fmt, value.IsNaN(), false);
+  return FormatToJSArray(isolate, formatted, std::move(lfmt), value.IsNaN(),
+                         false);
 }
 
 // #sec-number-format-functions
