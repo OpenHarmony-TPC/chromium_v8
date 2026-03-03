@@ -2554,7 +2554,16 @@ struct PhiOp : OperationT<PhiOp> {
   static constexpr size_t kLoopPhiBackEdgeIndex = 1;
 
   explicit PhiOp(base::Vector<const OpIndex> inputs, RegisterRepresentation rep)
-      : Base(inputs), rep(rep) {}
+      : Base(CheckPhiInputCount(inputs)), rep(rep) {}
+
+  static base::Vector<const OpIndex> CheckPhiInputCount(
+      base::Vector<const OpIndex> inputs) {
+    // We add an additional CHECK specifically for Phi, to prevent Wasm from
+    // passing too many inputs, e.g. as part of a br_table operation.
+    CHECK_LE(inputs.size(),
+             std::numeric_limits<decltype(PhiOp::input_count)>::max());
+    return inputs;
+  }
 
   template <typename Fn, typename Mapper>
   V8_INLINE auto Explode(Fn fn, Mapper& mapper) const {
