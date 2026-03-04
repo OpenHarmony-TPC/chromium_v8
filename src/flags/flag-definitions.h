@@ -3290,6 +3290,10 @@ DEFINE_BOOL(update_allocation_limits_after_loading, false,
 DEFINE_EXPERIMENTAL_FEATURE(shared_heap,
                             "Enables a shared heap between isolates.")
 
+#if defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP)
+DEFINE_BOOL(log_heapdump, false, "log heapdump")
+#endif
+
 #if defined(V8_USE_LIBM_TRIG_FUNCTIONS)
 DEFINE_BOOL(use_libm_trig_functions, true, "use libm trig functions")
 #endif
