@@ -432,6 +432,11 @@ class ShellOptions {
     bool specified_ = false;
   };
 
+#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+  DisallowReassignment<const char*> translate_path = {"translate", nullptr};
+  DisallowReassignment<const char*> translate_out = {"translate-out", nullptr};
+#endif
+
   DisallowReassignment<const char*> d8_path = {"d8-path", ""};
   DisallowReassignment<bool> fuzzilli_coverage_statistics = {
       "fuzzilli-coverage-statistics", false};

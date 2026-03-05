@@ -140,6 +140,10 @@
 #include "../../../arkweb/chromium_ext/v8/restrace.h"
 #endif
 
+#if defined(OH_ENABLE_HEAP_DUMP)
+#include "arkweb/chromium_ext/v8/heap_dump/heap_dump.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -1826,6 +1830,9 @@ void Heap::CollectGarbage(AllocationSpace space,
   if (!CanExpandOldGeneration(0)) {
     InvokeNearHeapLimitCallback();
     if (!CanExpandOldGeneration(0)) {
+#if defined(OH_ENABLE_HEAP_DUMP) && defined(USING_OHOS_WEB)
+      dfx::DumpHeapAfterOOM(this);
+#endif
       if (v8_flags.heap_snapshot_on_oom) {
         isolate()->heap_profiler()->WriteSnapshotToDiskAfterGC();
       }
@@ -3873,6 +3880,9 @@ void Heap::ReportIneffectiveMarkCompactIfNeeded() {
                  consecutive_ineffective_mark_compacts_ == 0);
   if (consecutive_ineffective_mark_compacts_ ==
       kMaxConsecutiveIneffectiveMarkCompacts) {
+#if defined(OH_ENABLE_HEAP_DUMP) && defined(USING_OHOS_WEB)
+    dfx::DumpHeapAfterOOM(this);
+#endif
     if (v8_flags.heap_snapshot_on_oom) {
       isolate()->heap_profiler()->WriteSnapshotToDiskAfterGC();
     }
