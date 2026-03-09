@@ -2025,13 +2025,12 @@ TNode<RawPtrT> CodeStubAssembler::LoadCodeEntryFromIndirectPointerHandle(
 
 void CodeStubAssembler::SetSupportsDynamicParameterCount(
     TNode<JSFunction> callee, TNode<JSDispatchHandleT> dispatch_handle) {
-  TNode<Uint16T> dynamic_parameter_count;
 #ifdef V8_ENABLE_LEAPTIERING
-  dynamic_parameter_count =
+  TNode<Uint16T> dynamic_parameter_count =
       LoadParameterCountFromJSDispatchTable(dispatch_handle);
 #else
   TNode<SharedFunctionInfo> shared = LoadJSFunctionSharedFunctionInfo(callee);
-  dynamic_parameter_count =
+  TNode<Uint16T> dynamic_parameter_count =
       LoadSharedFunctionInfoFormalParameterCountWithReceiver(shared);
 #endif
   SetDynamicJSParameterCount(dynamic_parameter_count);
@@ -10815,7 +10814,8 @@ void CodeStubAssembler::ForEachEnumerableOwnProperty(
 
               var_value = CallGetterIfAccessor(
                   value_or_accessor, object, var_details.value(), context,
-                  object, next_key, &slow_load, kCallJSGetterUseCachedName);
+                  object, kExpectingJSReceiver, next_key, &slow_load,
+                  kCallJSGetterUseCachedName);
               Goto(&value_ready);
 
               BIND(&slow_load);
@@ -11316,9 +11316,9 @@ template void CodeStubAssembler::LoadPropertyFromDictionary(
 // result of the getter call.
 TNode<Object> CodeStubAssembler::CallGetterIfAccessor(
     TNode<Object> value, TNode<HeapObject> holder, TNode<Uint32T> details,
-    TNode<Context> context, TNode<Object> receiver, TNode<Object> name,
-    Label* if_bailout, GetOwnPropertyMode mode,
-    ExpectedReceiverMode expected_receiver_mode) {
+    TNode<Context> context, TNode<Object> receiver,
+    ExpectedReceiverMode expected_receiver_mode, TNode<Object> name,
+    Label* if_bailout, GetOwnPropertyMode mode) {
   TVARIABLE(Object, var_value, value);
   Label done(this), if_accessor_info(this, Label::kDeferred);
 
@@ -11541,7 +11541,7 @@ void CodeStubAssembler::TryGetOwnProperty(
     }
     TNode<Object> value = CallGetterIfAccessor(
         var_value->value(), object, var_details->value(), context, receiver,
-        unique_name, if_bailout, mode, expected_receiver_mode);
+        expected_receiver_mode, unique_name, if_bailout, mode);
     *var_value = value;
     Goto(if_found_value);
   }
@@ -17035,7 +17035,8 @@ TNode<BoolT> CodeStubAssembler::NeedsAnyPromiseHooks(TNode<Uint32T> flags) {
 }
 
 TNode<Code> CodeStubAssembler::LoadBuiltin(TNode<Smi> builtin_id) {
-  CSA_DCHECK(this, SmiBelow(builtin_id, SmiConstant(Builtins::kBuiltinCount)));
+  CSA_SBXCHECK(this,
+               SmiBelow(builtin_id, SmiConstant(Builtins::kBuiltinCount)));
 
   TNode<IntPtrT> offset =
       ElementOffsetFromIndex(SmiToBInt(builtin_id), SYSTEM_POINTER_ELEMENTS);
@@ -17055,6 +17056,7 @@ TNode<JSDispatchHandleT> CodeStubAssembler::LoadBuiltinDispatchHandle(
 }
 #endif  // V8_ENABLE_LEAPTIERING
 
+// LINT.IfChange(GetSharedFunctionInfoCode)
 TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
     TNode<SharedFunctionInfo> shared_info, TVariable<Uint16T>* data_type_out,
     Label* if_compile_lazy) {
@@ -17213,6 +17215,7 @@ TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
   BIND(&done);
   return sfi_code.value();
 }
+// LINT.ThenChange(/src/objects/shared-function-info.cc:GetSharedFunctionInfoCode)
 
 TNode<RawPtrT> CodeStubAssembler::LoadCodeInstructionStart(
     TNode<Code> code, CodeEntrypointTag tag) {
