@@ -1497,6 +1497,13 @@ void TrustedWeakFixedArray::TrustedWeakFixedArrayPrint(std::ostream& os) {
   os << "\n";
 }
 
+void ProtectedWeakFixedArray::ProtectedWeakFixedArrayPrint(std::ostream& os) {
+  PrintHeader(os, "ProtectedWeakFixedArray");
+  os << "\n - length: " << length();
+  PrintWeakArrayElements(os, this);
+  os << "\n";
+}
+
 void WeakArrayList::WeakArrayListPrint(std::ostream& os) {
   PrintHeader(os, "WeakArrayList");
   os << "\n - capacity: " << capacity();
@@ -2767,6 +2774,9 @@ void WasmDispatchTable::WasmDispatchTablePrint(std::ostream& os) {
   int len = length();
   os << "\n - length: " << len;
   os << "\n - capacity: " << capacity();
+  Tagged<ProtectedWeakFixedArray> uses = protected_uses();
+  os << "\n - uses: " << Brief(uses);
+  os << "\n - table type: " << table_type().name();
   // Only print up to 55 elements; otherwise print the first 50 and "[...]".
   int printed = len > 55 ? 50 : len;
   for (int i = 0; i < printed; ++i) {
@@ -2821,9 +2831,11 @@ void WasmImportData::WasmImportDataPrint(std::ostream& os) {
   } else {
     os << "<empty>";
   }
-  os << "\n - suspend: " << suspend();
+  os << "\n - suspend: " << static_cast<int>(suspend());
   os << "\n - wrapper_budget: " << wrapper_budget();
-  os << "\n - call_origin: " << Brief(call_origin());
+  if (has_call_origin()) {
+    os << "\n - call_origin: " << Brief(call_origin());
+  }
   os << "\n - sig: " << sig() << " (" << sig()->parameter_count() << " params, "
      << sig()->return_count() << " returns)";
   os << "\n";
@@ -3410,6 +3422,22 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {
       break;
     case WEAK_FIXED_ARRAY_TYPE:
       os << "<WeakFixedArray[" << Cast<WeakFixedArray>(*this)->length() << "]>";
+      break;
+    case TRUSTED_FIXED_ARRAY_TYPE:
+      os << "<TrustedFixedArray[" << Cast<TrustedFixedArray>(*this)->length()
+         << "]>";
+      break;
+    case TRUSTED_WEAK_FIXED_ARRAY_TYPE:
+      os << "<TrustedWeakFixedArray["
+         << Cast<TrustedWeakFixedArray>(*this)->length() << "]>";
+      break;
+    case PROTECTED_FIXED_ARRAY_TYPE:
+      os << "<ProtectedFixedArray["
+         << Cast<ProtectedFixedArray>(*this)->length() << "]>";
+      break;
+    case PROTECTED_WEAK_FIXED_ARRAY_TYPE:
+      os << "<ProtectedWeakFixedArray["
+         << Cast<ProtectedWeakFixedArray>(*this)->length() << "]>";
       break;
     case TRANSITION_ARRAY_TYPE:
       os << "<TransitionArray[" << Cast<TransitionArray>(*this)->length()
