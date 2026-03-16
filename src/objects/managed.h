@@ -106,6 +106,11 @@ class Managed : public Foreign {
   // Get a raw pointer to the C++ object.
   V8_INLINE CppType* raw() { return GetSharedPtrPtr()->get(); }
 
+  // Get a raw pointer to the C++ object.
+  V8_INLINE CppType* raw(const DisallowGarbageCollection& no_gc) {
+    return GetSharedPtrPtr()->get();
+  }
+
   // Get a reference to the shared pointer to the C++ object.
   V8_INLINE const std::shared_ptr<CppType>& get() { return *GetSharedPtrPtr(); }
 
