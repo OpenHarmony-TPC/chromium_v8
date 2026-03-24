@@ -616,8 +616,6 @@ enum ExternalPointerTag : uint16_t {
   kSyntheticModuleTag,
   kMicrotaskCallbackTag,
   kMicrotaskCallbackDataTag,
-  kCFunctionTag,
-  kCFunctionInfoTag,
   kMessageListenerTag,
   kWaiterQueueForeignTag,
 
@@ -629,6 +627,7 @@ enum ExternalPointerTag : uint16_t {
   kWasmFuncDataTag,
   kWasmManagedDataTag,
   kWasmNativeModuleTag,
+  kCFunctionWithSignatureTag,
   kIcuBreakIteratorTag,
   kIcuUnicodeStringTag,
   kIcuListFormatterTag,
