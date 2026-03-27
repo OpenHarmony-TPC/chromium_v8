@@ -191,6 +191,7 @@ class PropertyCellData : public HeapObjectData {
 
 namespace {
 
+<<<<<<< HEAD
 ZoneVector<Address> GetCFunctions(Tagged<FixedArray> function_overloads,
                                   Isolate* isolate, Zone* zone) {
   const int len = function_overloads->length();
@@ -211,11 +212,20 @@ ZoneVector<const CFunctionInfo*> GetCSignatures(
       ZoneVector<const CFunctionInfo*>(len, zone);
   for (int i = 0; i < len; i++) {
     c_signatures[i] =
+=======
+ZoneVector<CFunctionInfoWithDetails> GetCFunctionsWithSignatures(
+    Tagged<FixedArray> function_overloads, Isolate* isolate, Zone* zone) {
+  const uint32_t len = function_overloads->ulength().value();
+  ZoneVector<CFunctionInfoWithDetails> c_functions_with_signatures =
+      ZoneVector<CFunctionInfoWithDetails>(len, zone);
+  for (uint32_t i = 0; i < len; i++) {
+    auto overload =
+>>>>>>> f5ac1a82d0c... [fastapi] Read c-function and signature atomically
         Cast<Managed<CFunctionWithSignature>>(function_overloads->get(i))
-            ->raw()
-            ->signature;
+            ->raw();
+    c_functions_with_signatures[i] = {overload->address, overload->signature};
   }
-  return c_signatures;
+  return c_functions_with_signatures;
 }
 
 }  // namespace
@@ -1936,16 +1946,12 @@ bool StringRef::IsExternalString() const {
   return i::IsExternalString(*object());
 }
 
-ZoneVector<Address> FunctionTemplateInfoRef::c_functions(
+ZoneVector<CFunctionInfoWithDetails>
+FunctionTemplateInfoRef::c_functions_with_signatures(
     JSHeapBroker* broker) const {
-  return GetCFunctions(Cast<FixedArray>(object()->GetCFunctionOverloads()),
-                       broker->isolate(), broker->zone());
-}
-
-ZoneVector<const CFunctionInfo*> FunctionTemplateInfoRef::c_signatures(
-    JSHeapBroker* broker) const {
-  return GetCSignatures(Cast<FixedArray>(object()->GetCFunctionOverloads()),
-                        broker->isolate(), broker->zone());
+  return GetCFunctionsWithSignatures(
+      Cast<FixedArray>(object()->GetCFunctionOverloads()), broker->isolate(),
+      broker->zone());
 }
 
 bool StringRef::IsSeqString() const { return i::IsSeqString(*object()); }
