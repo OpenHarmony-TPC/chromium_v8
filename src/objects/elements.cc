@@ -3688,7 +3688,7 @@ class TypedElementsAccessor
     ElementType* last = data + end;
 
     // Guard against switching the ElementsKind to make this too big.
-    SBXCHECK(sizeof(ElementType) * end <= ArrayBuffer::kMaxByteLength);
+    SBXCHECK(sizeof(ElementType) * end <= TypedArray::kMaxByteLength);
 
     if (typed_array->buffer()->is_shared()) {
       // TypedArrays backed by shared buffers need to be filled using atomic
@@ -3933,7 +3933,7 @@ class TypedElementsAccessor
     ElementType* data = static_cast<ElementType*>(typed_array->DataPtr());
 
     // Guard against switching the ElementsKind to make this too big.
-    SBXCHECK(ElementsKindToByteSize(Kind) * len <= ArrayBuffer::kMaxByteLength);
+    SBXCHECK(ElementsKindToByteSize(Kind) * len <= TypedArray::kMaxByteLength);
 
     if (typed_array->buffer()->is_shared()) {
       // TypedArrays backed by shared buffers need to be reversed using atomic
@@ -4092,6 +4092,10 @@ class TypedElementsAccessor
       // Guard against switching the ElementsKind to make this too big.
       SBXCHECK(source_byte_length <= ArrayBuffer::kMaxByteLength);
       SBXCHECK(dest_byte_length <= ArrayBuffer::kMaxByteLength);
+
+      // Guard against switching the ElementsKind to make this too big.
+      SBXCHECK(source_byte_length <= TypedArray::kMaxByteLength);
+      SBXCHECK(dest_byte_length <= TypedArray::kMaxByteLength);
 
       // If the typedarrays are overlapped, clone the source.
       if (dest_data + dest_byte_length > source_data &&
@@ -4270,7 +4274,7 @@ class TypedElementsAccessor
 
     // Guard against switching the ElementsKind to make this too big.
     SBXCHECK(ElementsKindToByteSize(Kind) * length <=
-             ArrayBuffer::kMaxByteLength);
+             TypedArray::kMaxByteLength);
 
     for (size_t i = 0; i < length; i++) {
       DirectHandle<Object> elem;
@@ -4374,9 +4378,9 @@ struct CopyBetweenBackingStoresImpl {
                    TypedArrayCType<Kind>* dest_data_ptr, size_t length,
                    IsSharedBuffer is_shared) {
     SBXCHECK(ElementsKindToByteSize(SourceKind) * length <=
-             ArrayBuffer::kMaxByteLength);
+             TypedArray::kMaxByteLength);
     SBXCHECK(ElementsKindToByteSize(Kind) * length <=
-             ArrayBuffer::kMaxByteLength);
+             TypedArray::kMaxByteLength);
     for (; length > 0; --length, ++source_data_ptr, ++dest_data_ptr) {
       // We use scalar accessors to avoid boxing/unboxing, so there are no
       // allocations.

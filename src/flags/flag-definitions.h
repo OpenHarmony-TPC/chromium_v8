@@ -2762,6 +2762,10 @@ DEFINE_BOOL(sim_abort_on_shadowstack_mismatch, true,
 #endif
 #endif
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+DEFINE_BOOL(mur, false, "")
+#endif // OHOS_MEM_USAGE_REPORT
+
 // Controlling source positions for Torque/CSA code.
 DEFINE_BOOL(enable_source_at_csa_bind, false,
             "Include source information in the binary at CSA bind locations.")
@@ -3898,6 +3902,10 @@ DEFINE_UINT(proto_assign_seq_opt_count, 2,
             "The minimum number of consecutive property assignments on the "
             "prototype object for replacing it with a single byte code")
 DEFINE_NEG_IMPLICATION(proto_assign_seq_opt_count == 0, proto_assign_seq_opt)
+
+#if defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP)
+DEFINE_BOOL(log_heapdump, false, "log heapdump")
+#endif
 
 #if defined(V8_USE_LIBM_TRIG_FUNCTIONS)
 DEFINE_BOOL(use_libm_trig_functions, true, "use libm trig functions")

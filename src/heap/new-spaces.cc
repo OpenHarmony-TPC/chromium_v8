@@ -33,6 +33,10 @@
 #include "src/heap/spaces.h"
 #include "src/heap/zapping.h"
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -771,7 +775,10 @@ std::optional<std::pair<Address, Address>> SemiSpaceNewSpace::Allocate(
 void SemiSpaceNewSpace::Free(Address start, Address end) {
   DCHECK_LE(start, end);
   heap()->CreateFillerObjectAt(start, static_cast<int>(end - start));
-
+#ifdef OH_ENABLE_RESTRACE
+  OH_RESTRACE_FREE_REGION(reinterpret_cast<void*>(start),
+                          static_cast<size_t>(end - start));
+#endif
   if (end == allocation_top()) {
     DecrementAllocationTop(start);
   }

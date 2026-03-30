@@ -24,6 +24,21 @@
 #include "src/sandbox/hardware-support.h"
 #include "src/utils/allocation.h"
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
+#if V8_OS_LINUX
+#include <sys/prctl.h>  // for prctl
+#endif
+
+#ifdef USING_OHOS
+#define MEMTAG_PREFIX "JSVM_V8_HEAP_"
+#endif
+#ifdef USING_OHOS_WEB
+#define MEMTAG_PREFIX "JS_V8_HEAP_"
+#endif
+
 namespace v8::internal {
 
 size_t MemoryAllocator::commit_page_size_ = 0;
@@ -226,6 +241,18 @@ MemoryAllocator::AllocateUninitializedChunkAt(BaseSpace* space,
   LOG(isolate_,
       NewEvent("MemoryChunk", reinterpret_cast<void*>(base), chunk_size));
 
+#if defined(USING_OHOS) || defined(USING_OHOS_WEB)
+  std::stringstream tagss;
+  constexpr uint32_t THREAD_NAME_LEN_MAX = 17;
+  char name[THREAD_NAME_LEN_MAX] = {0};
+  prctl(PR_GET_NAME, name);
+  tagss << MEMTAG_PREFIX << isolate_->id() << "_" << name;
+  int ret = prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, reinterpret_cast<void*>(base), chunk_size, tagss.str().c_str());
+  if (ret == -1) {
+    base::OS::PrintError("PR set name V8_HEAP failed!");
+  }
+#endif
+
   Address area_start = base + MemoryChunkLayout::ObjectStartOffsetInMemoryChunk(
                                   space->identity());
   Address area_end = area_start + area_size;
@@ -240,6 +267,9 @@ void MemoryAllocator::PartialFreeMemory(MemoryChunkMetadata* chunk,
                                         Address start_free,
                                         size_t bytes_to_free,
                                         Address new_area_end) {
+#ifdef OH_ENABLE_RESTRACE
+  OH_RESTRACE_FREE_REGION(reinterpret_cast<void*>(start_free), bytes_to_free);
+#endif
   VirtualMemory* reservation = chunk->reserved_memory();
   DCHECK(reservation->IsReserved());
   chunk->set_size(chunk->size() - bytes_to_free);
@@ -320,6 +350,10 @@ void MemoryAllocator::UnregisterReadOnlyPage(ReadOnlyPageMetadata* page) {
 void MemoryAllocator::FreeReadOnlyPage(ReadOnlyPageMetadata* chunk) {
   DCHECK(!chunk->is_pre_freed());
   LOG(isolate_, DeleteEvent("MemoryChunk", chunk));
+#ifdef OH_ENABLE_RESTRACE
+  OH_RESTRACE_FREE_REGION(reinterpret_cast<void*>(chunk->GetAreaStart()),
+                          chunk->area_size());
+#endif
 
   UnregisterSharedMemoryChunk(chunk);
 
@@ -361,6 +395,10 @@ void MemoryAllocator::PerformFreeMemory(MutablePageMetadata* chunk_metadata) {
 
 void MemoryAllocator::Free(MemoryAllocator::FreeMode mode,
                            MutablePageMetadata* page_metadata) {
+#if OH_ENABLE_RESTRACE
+  OH_RESTRACE_FREE_REGION(reinterpret_cast<void*>(page_metadata->area_start()),
+                          page_metadata->area_size());
+#endif
   PreFreeMemory(page_metadata);
   switch (mode) {
     case FreeMode::kImmediately:

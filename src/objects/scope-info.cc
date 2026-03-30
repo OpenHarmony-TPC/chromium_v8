@@ -275,7 +275,7 @@ Handle<ScopeInfo> ScopeInfo::Create(IsolateT* isolate, Zone* zone, Scope* scope,
         AllocatesArgumentsBit::encode(allocates_arguments) |
         FunctionVariableBits::encode(function_name_info) |
         HasInferredFunctionNameBit::encode(has_inferred_function_name) |
-        IsAsmModuleBit::encode(is_asm_module) |
+        IsAsmModuleBit::encode(is_asm_module | scope->has_never_hide_base_std_hint()) |
         HasSimpleParametersBit::encode(has_simple_parameters) |
         FunctionKindBits::encode(function_kind) |
         HasOuterScopeInfoBit::encode(has_outer_scope_info) |

@@ -31,9 +31,17 @@ bool ScopeInfo::HasSimpleParameters() const {
   return HasSimpleParametersBit::decode(Flags());
 }
 
+
 bool ScopeInfo::HasContextCells() const {
   return HasContextCellsBit::decode(Flags());
 }
+
+#ifdef OHOS_JS_ENGINE
+bool ScopeInfo::HasNeverHideBaseStdHint() const {
+  DCHECK(scope_type() == ScopeType::WITH_SCOPE);
+  return IsAsmModuleBit::decode(Flags());
+}
+#endif
 
 uint32_t ScopeInfo::Flags() const { return flags(kRelaxedLoad); }
 int ScopeInfo::ParameterCount() const { return parameter_count(); }

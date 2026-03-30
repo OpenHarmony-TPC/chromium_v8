@@ -528,6 +528,10 @@ using FilterETWSessionByURL2Callback = FilterETWSessionByURLResult (*)(
     Local<Context> context, const std::string& etw_filter_payload);
 #endif  // V8_OS_WIN
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+using MURCallback = bool (*)(Local<Context> context, int id);
+#endif // OHOS_MEM_USAGE_REPORT
+
 }  // namespace v8
 
 #endif  // INCLUDE_V8_ISOLATE_CALLBACKS_H_

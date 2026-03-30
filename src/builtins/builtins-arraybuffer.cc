@@ -159,6 +159,10 @@ BUILTIN(ArrayBufferConstructor) {
         isolate, NewRangeError(MessageTemplate::kInvalidArrayBufferLength));
   }
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+  MURCHECK(Object::NumberValue(*number_length) < 0x4f000000, 9);
+#endif // BUILDFLAG(ARKWEB_MEM_USAGE_REPORT)
+
   DirectHandle<Object> number_max_length;
   DirectHandle<Object> max_length;
   DirectHandle<Object> options = args.atOrUndefined(isolate, 2);

@@ -683,6 +683,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
 
   void FastCheck(TNode<BoolT> condition);
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+  void MURCheck(TNode<BoolT> condition, int id);
+#endif // OHOS_MEM_USAGE_REPORT
+
   TNode<RawPtrT> LoadCodeInstructionStart(TNode<Code> code,
                                           CodeEntrypointTag tag);
   TNode<BoolT> IsMarkedForDeoptimization(TNode<Code> code);
@@ -4362,6 +4366,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   // Promise helpers
   TNode<Uint32T> PromiseHookFlags();
   TNode<BoolT> HasAsyncEventDelegate();
+  // Used for OHOS. OpenHarmony OS.
+  TNode<BoolT> HasDfxAsyncStack();
 #ifdef V8_ENABLE_JAVASCRIPT_PROMISE_HOOKS
   TNode<BoolT> IsContextPromiseHookEnabled(TNode<Uint32T> flags);
 #endif

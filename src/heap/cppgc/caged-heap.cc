@@ -28,6 +28,10 @@
 #include "src/heap/cppgc/heap-page.h"
 #include "src/heap/cppgc/member-storage.h"
 
+#ifdef USING_OHOS_WEB
+#include <sys/prctl.h>
+#endif
+
 namespace cppgc {
 namespace internal {
 
@@ -121,6 +125,11 @@ CagedHeap::Reservation CagedHeap::ReserveCagedHeap(
         kReservationAlignment));
     VirtualMemory memory(&platform_allocator, kUsefulReservationSize,
                          kReservationAlignment, hint);
+#ifdef USING_OHOS_WEB
+    if (memory.IsReserved()) {
+      prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, memory.address(), memory.size(), "blink_gc_cage");
+    }
+#endif
     if (!memory.IsReserved()) {
       continue;
     }

@@ -27,6 +27,10 @@
 #include "src/objects/objects-inl.h"
 #include "src/utils/ostreams.h"
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -231,7 +235,10 @@ void LargeObjectSpace::ShrinkPageToObjectSize(LargePageMetadata* page,
   if (object_size < page->area_size()) {
     page->ClearOutOfLiveRangeSlots(object.address() + object_size);
     const Address new_area_end = page->area_start() + object_size;
-
+#ifdef OH_ENABLE_RESTRACE
+    OH_RESTRACE_MOVE(reinterpret_cast<void*>(object.address()),
+                     reinterpret_cast<void*>(object.address()), object_size);
+#endif
     // Object shrunk enough that we can even free some OS pages.
     if (used_committed_size < page->size()) {
       const size_t bytes_to_free = page->size() - used_committed_size;

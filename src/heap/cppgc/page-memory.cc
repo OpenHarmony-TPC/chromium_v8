@@ -18,6 +18,10 @@
 #include <errno.h>
 #endif
 
+#ifdef USING_OHOS_WEB
+#include <sys/prctl.h>
+#endif
+
 namespace cppgc {
 namespace internal {
 
@@ -58,6 +62,9 @@ void FreeMemoryRegion(PageAllocator& allocator,
   // Make sure pages returned to OS are unpoisoned.
   ASAN_UNPOISON_MEMORY_REGION(reserved_region.base(), reserved_region.size());
   allocator.FreePages(reserved_region.base(), reserved_region.size());
+#ifdef USING_OHOS_WEB
+  prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, reserved_region.base(), reserved_region.size(), "blink_gc_cage");
+#endif
 }
 
 std::unique_ptr<PageMemoryRegion> CreateNormalPageMemoryRegion(

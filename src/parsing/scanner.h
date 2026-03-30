@@ -446,6 +446,11 @@ class V8_EXPORT_PRIVATE Scanner {
 
   const Utf16CharacterStream* stream() const { return source_; }
 
+#ifdef OHOS_JS_ENGINE
+  bool HasNeverHideBaseStdHint() { return has_never_hide_base_std_hint_; }
+  void ResetHasNeverHideBaseStdHint() { has_never_hide_base_std_hint_ = false; }
+#endif
+
  private:
   // Scoped helper for saving & restoring scanner error state.
   // This is used for tagged template literals, in which normally forbidden
@@ -770,6 +775,9 @@ class V8_EXPORT_PRIVATE Scanner {
   bool saw_source_mapping_url_magic_comment_at_sign_ = false;
   bool saw_magic_comment_compile_hints_all_ = false;
   bool saw_non_comment_ = false;
+#ifdef OHOS_JS_ENGINE
+  bool has_never_hide_base_std_hint_ = false;
+#endif
   std::vector<int> per_function_compile_hint_positions_;
   size_t per_function_compile_hint_positions_idx_ = 0;
 

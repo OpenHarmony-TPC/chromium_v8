@@ -340,6 +340,12 @@ class V8_EXPORT_PRIVATE CallDescriptor final
 
   EncodedCSignature ToEncodedCSignature() const;
 
+#ifdef V8_USE_LLVM_BACKEND
+  bool hasContext(size_t& context_idx) const;
+
+  void printDescInfo() const;
+#endif
+
   std::optional<Runtime::FunctionId> runtime_function_id() const {
     return runtime_function_id_;
   }

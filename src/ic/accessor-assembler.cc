@@ -2501,6 +2501,9 @@ void AccessorAssembler::EmitFastElementsBoundsCheck(
   TVARIABLE(IntPtrT, var_length);
   Comment("Fast elements bounds check");
   Label if_array(this), length_loaded(this, &var_length);
+#if defined(OHOS_MEM_USAGE_REPORT) && defined(USING_OHOS_WEB)
+  CSA_MURCHECK(this, TaggedIsSmi(LoadFixedArrayBaseLength(elements)), 6);
+#endif // OHOS_MEM_USAGE_REPORT && USING_OHOS_WEB
   GotoIf(is_jsarray_condition, &if_array);
   {
     var_length = LoadAndUntagFixedArrayBaseLength(elements);

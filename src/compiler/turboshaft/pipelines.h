@@ -456,6 +456,11 @@ class V8_EXPORT_PRIVATE Pipeline {
       JumpOptimizationInfo* jump_optimization_info = nullptr,
       const ProfileDataFromFile* profile = nullptr, int initial_graph_hash = 0);
 
+#ifdef V8_USE_LLVM_BACKEND
+  bool IsSupportedBuiltin(Builtin builtin);
+  MaybeHandle<Code> GenerateCodeByLLVM(Linkage* linkage);
+#endif
+
   OptimizedCompilationInfo* info() { return data_->info(); }
 
   MaybeIndirectHandle<Code> FinalizeCode(bool retire_broker = true) {

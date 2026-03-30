@@ -267,7 +267,15 @@ class V8_NODISCARD EnterV8InternalScope {
 #endif  // V8_RUNTIME_CALL_STATS
         vm_state_{i_isolate} {
     DCHECK(!i_isolate->is_execution_terminating());
+#ifdef OHOS_JS_ENGINE
+    // Relaxed from DCHECK_EQ: in cross-thread scenarios (e.g., JSVM env handoff),
+    // TLS may not match the in-place isolate. This is safe because i_isolate
+    // is obtained from the HeapObject chain, not from TLS.
+    DCHECK_IMPLIES(i::Isolate::TryGetCurrent() != nullptr,
+                   i_isolate == i::Isolate::TryGetCurrent());
+#elif
     DCHECK_EQ(i_isolate, i::Isolate::TryGetCurrent());
+#endif
   }
 
   EnterV8InternalScope(i::Isolate* i_isolate, i::RuntimeCallCounterId rcc_id)
@@ -278,7 +286,12 @@ class V8_NODISCARD EnterV8InternalScope {
 #endif  // V8_RUNTIME_CALL_STATS
         vm_state_{i_isolate} {
     DCHECK(!i_isolate->is_execution_terminating());
+#ifdef OHOS_JS_ENGINE
+    DCHECK_IMPLIES(i::Isolate::TryGetCurrent() != nullptr,
+                   i_isolate == i::Isolate::TryGetCurrent());
+#elif
     DCHECK_EQ(i_isolate, i::Isolate::TryGetCurrent());
+#endif
   }
 
   template <typename T>
@@ -356,12 +369,32 @@ class V8_NODISCARD EnterV8BasicScope {
   i::VMState<v8::OTHER> vm_state_;
 };
 
+#ifdef OHOS_JS_ENGINE
+// Helper: Extract Isolate from a Context's HeapObject without using TLS.
+// Chain: NativeContext → MemoryChunk → MetadataNoIsolateCheck → heap → Isolate
+// This restores V8 13.2 behavior for cross-thread compatibility in embedders.
+static V8_INLINE i::Isolate* GetIsolateFromContext(Local<Context> context) {
+  auto native_context = i::Cast<i::NativeContext>(*Utils::OpenDirectHandle(*context));
+  i::MemoryChunk* chunk = i::MemoryChunk::FromHeapObject(native_context);
+  return i::Isolate::FromHeap(chunk->MetadataNoIsolateCheck()->heap());
+}
+#endif
+
 class V8_NODISCARD PrepareForExecutionScope
     : public EnterV8InternalScope<InternalEscapableScope, false> {
  public:
+#ifdef OHOS_JS_ENGINE
+  // Extract isolate from context HeapObject instead of TLS.
+  // This restores V8 13.2 behavior for cross-thread compatibility.
+#endif
   PrepareForExecutionScope(Local<Context> context,
                            i::RuntimeCallCounterId rcc_id)
+#ifdef OHOS_JS_ENGINE
+      : PrepareForExecutionScope{GetIsolateFromContext(context), context,
+                                 rcc_id} {}
+#elif
       : PrepareForExecutionScope{i::Isolate::Current(), context, rcc_id} {}
+#endif
 
   PrepareForExecutionScope(i::Isolate* i_isolate, Local<Context> context,
                            i::RuntimeCallCounterId rcc_id)

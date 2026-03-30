@@ -35,6 +35,16 @@ class V8_EXPORT_PRIVATE WasmSerializer {
   // [4] enabled features (via flags and OT) (uint32_t)
   // [5] compile time imports (variable size)
   static constexpr size_t kVersionHashOffset = kUInt32Size;
+  static constexpr size_t kSupportedCPUFeaturesOffset =
+      kVersionHashOffset + kUInt32Size;
+  static constexpr size_t kFlagHashOffset =
+      kSupportedCPUFeaturesOffset + kUInt32Size;
+#ifdef OHOS_JS_ENGINE
+  static constexpr size_t kEnabledFeaturesOffset =
+      kFlagHashOffset + kUInt32Size;
+  static constexpr size_t kCacheLengthOffset =
+      kEnabledFeaturesOffset + kUInt32Size;
+#endif
 
  private:
   NativeModule* native_module_;

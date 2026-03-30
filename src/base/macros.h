@@ -276,6 +276,7 @@ struct is_trivially_copyable {
   static constexpr bool value = std::is_trivially_copyable_v<T>;
 #endif
 };
+
 #define ASSERT_TRIVIALLY_COPYABLE(T)                         \
   static_assert(::v8::base::is_trivially_copyable<T>::value, \
                 #T " should be trivially copyable")
@@ -465,7 +466,8 @@ bool is_inbounds(float_t v) {
 
 // Setup for Linux shared library export.
 #if V8_HAS_ATTRIBUTE_VISIBILITY && \
-    (defined(BUILDING_V8_SHARED_PRIVATE) || USING_V8_SHARED_PRIVATE)
+    (defined(BUILDING_V8_SHARED_PRIVATE) || USING_V8_SHARED_PRIVATE) && \
+    !defined(OHOS_JS_ENGINE)
 #define V8_EXPORT_PRIVATE __attribute__((visibility("default")))
 #define V8_EXPORT_ENUM V8_EXPORT_PRIVATE
 #else
@@ -474,6 +476,13 @@ bool is_inbounds(float_t v) {
 #endif  // V8_HAS_ATTRIBUTE_VISIBILITY && ..
 
 #endif  // V8_OS_WIN
+
+#if defined(OHOS_MEM_USAGE_REPORT)
+// EXPAND is needed to work around MSVC's broken __VA_ARGS__ expansion.
+#define IF_MUR(V, ...) EXPAND(V(__VA_ARGS__))
+#else
+#define IF_MUR(V, ...)
+#endif  // OHOS_MEM_USAGE_REPORT
 
 // Defines IF_WASM, to be used in macro lists for elements that should only be
 // there if WebAssembly is enabled.

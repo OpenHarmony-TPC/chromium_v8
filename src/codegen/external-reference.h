@@ -256,6 +256,8 @@ enum class IsolateFieldId : uint8_t;
   V(verify_skipped_indirect_write_barrier,                                     \
     "Heap::VerifySkippedIndirectWriteBarrier")                                 \
   V(verify_skipped_write_barrier, "Heap::VerifySkippedWriteBarrier")           \
+  IF_MUR(V, mur_check_function, "mur_check_function")                          \
+  IF_MUR(V, address_of_mur_flag, "v8_flags.mur")                               \
   IF_WASM(V, wasm_start_stack, "wasm_start_stack")                             \
   IF_WASM(V, wasm_suspender_has_js_frames, "wasm_suspender_has_js_frames")     \
   IF_WASM(V, wasm_suspend_stack, "wasm_suspend_stack")                         \

@@ -288,7 +288,7 @@ class V8_EXPORT IsolateGroup {
  * thread at any given time.  The Locker/Unlocker API must be used to
  * synchronize.
  */
-class V8_EXPORT Isolate {
+class V8_EXPORT JSVM_EXPORT Isolate {
  public:
   /**
    * Initial configuration parameters for a new Isolate.
@@ -844,6 +844,10 @@ class V8_EXPORT Isolate {
   void SetFilterETWSessionByURL2Callback(
       FilterETWSessionByURL2Callback callback);
 #endif  // V8_OS_WIN
+
+#if defined(OHOS_MEM_USAGE_REPORT)
+  void SetMURCallback(MURCallback callback);
+#endif // OHOS_MEM_USAGE_REPORT
 
   /**
    * Optional notification that the system is running low on memory.

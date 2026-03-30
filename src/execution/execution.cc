@@ -11,6 +11,10 @@
 #include "src/execution/vm-state-inl.h"
 #include "src/logging/runtime-call-stats-scope.h"
 
+#ifdef OHOS_JS_ENGINE
+#include "../../../arkweb/chromium_ext/v8/trace.h"
+#endif
+
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/compiler/wasm-compiler.h"  // Only for static asserts.
 #include "src/wasm/code-space-access.h"
@@ -438,6 +442,9 @@ V8_WARN_UNUSED_RESULT MaybeHandle<Object> Invoke(Isolate* isolate,
       SealHandleScope shs(isolate);
 
       RCS_SCOPE(isolate, RuntimeCallCounterId::kJS_Execution);
+#ifdef OHOS_JS_ENGINE
+      auto trace = HiTrace("RCS_JS_Execution");
+#endif
       value = Tagged<Object>(
           stub_entry.Call(isolate->isolate_data()->isolate_root(), orig_func,
                           func, recv, JSParameterCount(argc), argv));
@@ -457,6 +464,9 @@ V8_WARN_UNUSED_RESULT MaybeHandle<Object> Invoke(Isolate* isolate,
       SealHandleScope shs(isolate);
 
       RCS_SCOPE(isolate, RuntimeCallCounterId::kJS_Execution);
+#ifdef OHOS_JS_ENGINE
+      auto trace = HiTrace("RCS_JS_Execution");
+#endif
       value = Tagged<Object>(stub_entry.Call(
           isolate->isolate_data()->isolate_root(), params.microtask_queue));
     }
@@ -652,6 +662,9 @@ void Execution::CallWasm(Isolate* isolate, DirectHandle<Code> wrapper_code,
 
   {
     RCS_SCOPE(isolate, RuntimeCallCounterId::kJS_Execution);
+#ifdef OHOS_JS_ENGINE
+    auto trace = HiTrace("RCS_JS_Execution");
+#endif
     static_assert(compiler::CWasmEntryParameters::kCodeEntry == 0);
     static_assert(compiler::CWasmEntryParameters::kObjectRef == 1);
     static_assert(compiler::CWasmEntryParameters::kArgumentsBuffer == 2);
