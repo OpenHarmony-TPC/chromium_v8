@@ -1492,6 +1492,21 @@ static Address LexicographicCompareWrapper(Isolate* isolate, Address smi_x,
 FUNCTION_REFERENCE(smi_lexicographic_compare_function,
                    LexicographicCompareWrapper)
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+static bool MURCheck(Isolate* isolate, int id) {
+  return isolate->RunMURCallback(id);
+}
+ 
+FUNCTION_REFERENCE(mur_check_function,
+                   MURCheck)
+ 
+ExternalReference
+ExternalReference::address_of_mur_flag() {
+  return ExternalReference(&v8_flags.mur);
+}
+#endif // OHOS_MEM_USAGE_REPORT
+ 
+
 uint32_t HasUnpairedSurrogate(const uint16_t* code_units, size_t length) {
   // Use uint32_t to avoid complexity around bool return types.
   static constexpr uint32_t kTrue = 1;

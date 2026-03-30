@@ -211,6 +211,25 @@ void CodeStubAssembler::FastCheck(TNode<BoolT> condition) {
   BIND(&ok);
 }
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+void CodeStubAssembler::MURCheck(TNode<BoolT> condition, int id) {
+  Label ok(this), not_ok(this, Label::kDeferred);
+  Branch(condition, &ok, &not_ok);
+  BIND(&not_ok);
+ 
+  TNode<ExternalReference> mur_check =
+      ExternalConstant(ExternalReference::mur_check_function());
+  TNode<ExternalReference> isolate_ptr =
+      ExternalConstant(ExternalReference::isolate_address(isolate()));
+  CallCFunction(mur_check, MachineType::Int32(),
+      std::make_pair(MachineType::Pointer(), isolate_ptr),
+      std::make_pair(MachineType::Int32(), Int32Constant(id)));
+ 
+  Goto(&ok);
+  BIND(&ok);
+}
+#endif // OHOS_MEM_USAGE_REPORT
+
 void CodeStubAssembler::FailAssert(
     const char* message, const std::vector<FileAndLine>& files_and_lines,
     std::initializer_list<ExtraNode> extra_nodes) {
@@ -2944,6 +2963,10 @@ TNode<TValue> CodeStubAssembler::LoadArrayElement(TNode<Array> array,
       ElementOffsetFromIndex(index_node, HOLEY_ELEMENTS, header_size);
   CSA_DCHECK(this, IsOffsetInBounds(offset, LoadArrayLength(array),
                                     array_header_size));
+#if defined(OHOS_MEM_USAGE_REPORT) && defined(USING_OHOS_WEB)
+  CSA_MURCHECK(this, IsOffsetInBounds(offset, LoadArrayLength(array),
+                                    array_header_size), 2);
+#endif // OHOS_MEM_USAGE_REPORT && USING_OHOS_WEB
   constexpr MachineType machine_type = MachineTypeOf<TValue>::value;
   return UncheckedCast<TValue>(LoadFromObject(machine_type, array, offset));
 }
@@ -3419,6 +3442,12 @@ TNode<Float64T> CodeStubAssembler::LoadFixedDoubleArrayElement(
              IsOffsetInBounds(offset, LoadAndUntagFixedArrayBaseLength(object),
                               OFFSET_OF_DATA_START(FixedDoubleArray),
                               HOLEY_DOUBLE_ELEMENTS));
+#if defined(OHOS_MEM_USAGE_REPORT) && defined(USING_OHOS_WEB)
+  CSA_MURCHECK(this,
+             IsOffsetInBounds(offset, LoadAndUntagFixedArrayBaseLength(object),
+                              OFFSET_OF_DATA_START(FixedDoubleArray),
+                              HOLEY_DOUBLE_ELEMENTS), 1);
+#endif // OHOS_MEM_USAGE_REPORT && USING_OHOS_WEB
   return LoadDoubleWithUndefinedAndHoleCheck(object, offset, if_undefined,
                                              if_hole, machine_type);
 }
@@ -18237,6 +18266,15 @@ TNode<BoolT> CodeStubAssembler::HasAsyncEventDelegate() {
   const TNode<RawPtrT> async_event_delegate = Load<RawPtrT>(ExternalConstant(
       ExternalReference::async_event_delegate_address(isolate())));
   return WordNotEqual(async_event_delegate, IntPtrConstant(0));
+}
+
+// Used for OHOS. OpenHarmony OS.
+TNode<BoolT> CodeStubAssembler::HasDfxAsyncStack() {
+#ifdef V8_ENABLE_OHOS_ASYNC_STACK
+  return BoolConstant(true);
+#else
+  return BoolConstant(false);
+#endif
 }
 
 TNode<Uint32T> CodeStubAssembler::PromiseHookFlags() {

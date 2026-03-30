@@ -126,6 +126,13 @@ bool Pipeline::AllocateRegisters(const RegisterConfiguration* config,
 
   // Perform instruction selection and register allocation.
   if (!PrepareForInstructionSelection(profile)) return false;
+
+#ifdef V8_USE_LLVM_BACKEND
+  if (IsSupportedBuiltin(info()->builtin()) && !v8_flags.debug_code) {
+    return GenerateCodeByLLVM(linkage);
+  }
+#endif
+
   if (!SelectInstructions(linkage)) return false;
   if (!AllocateRegisters(linkage->GetIncomingDescriptor())) return false;
   if (!AssembleCode(linkage)) return false;

@@ -121,6 +121,19 @@
 #include "src/wasm/wasm-serialization.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
+#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+#include "arkweb/chromium_ext/v8/heap_dump/binary_writer.h"
+#include "arkweb/chromium_ext/v8/heap_dump/binary_writer_base.h"
+#include "arkweb/chromium_ext/v8/heap_dump/dump_heap.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/binary_reader.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/snapshot_generator.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/snapshot_serializer.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/translate_heap.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/translate_objects.h"
+#include "arkweb/chromium_ext/v8/heap_dump/ut/binary_reader_ut.h"
+#include "arkweb/chromium_ext/v8/heap_dump/ut/binary_writer_ut.h"
+#endif
+
 #ifndef DCHECK
 #define DCHECK(condition) assert(condition)
 #endif
@@ -6252,8 +6265,31 @@ bool Shell::SetOptions(int argc, char* argv[]) {
       options.dump_counters_nvp = true;
     } else if (FlagMatches("--dump-system-memory-stats", &argv[i])) {
       options.dump_system_memory_stats = true;
-    } else if (FlagWithArgMatches("--icu-data-file", &flag_value, argc, argv,
+    }
+#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+
+    else if (FlagWithArgMatches("--translate", &flag_value, argc, argv, &i)) {
+      std::cout << "--translate " << flag_value << std::endl;
+      options.translate_path = flag_value;
+      if (!ends_with(options.translate_path, ".rawheap")) {
+        std::cout << "you should use it like: d8 --translate xx.rawheap"
+                  << std::endl;
+        return false;
+      }
+    } else if (FlagWithArgMatches("--translate-out", &flag_value, argc, argv,
                                   &i)) {
+      std::cout << "--translate-out " << flag_value << std::endl;
+      if (!ends_with(flag_value, ".heapsnapshot")) {
+        std::cout << "you should use it like: d8 --translate xx.rawheap "
+                     "--translate-out xxx.heapsnapshot"
+                  << std::endl;
+        return false;
+      }
+      options.translate_out = flag_value;
+    }
+#endif
+    else if (FlagWithArgMatches("--icu-data-file", &flag_value, argc, argv,
+                                &i)) {
       options.icu_data_file = flag_value;
     } else if (FlagWithArgMatches("--icu-locale", &flag_value, argc, argv,
                                   &i)) {
@@ -6599,7 +6635,26 @@ bool Shell::RunMainIsolate(v8::Isolate* isolate, bool keep_context_alive) {
     // context and SourceGroup::Execute may execute a non-nestable task, e.g. a
     // stackless GC.
     global_context.Get(isolate)->Enter();
-    if (!options.isolate_sources[0].Execute(isolate)) success = false;
+#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+
+    if (options.translate_path) {
+      dfx::BinaryReader reader(std::string(options.translate_path));
+      dfx::SnapshotGenerator generator;
+
+      dfx::HeapTranslator translator(&reader, &generator);
+      translator.TranslateHeap();
+
+      dfx::SnapshotJSONSerializer serializer(&generator);
+      if (options.translate_out) {
+        serializer.SetOutputFile(std::string(options.translate_out));
+      }
+      serializer.Serialize();
+      success = true;
+      return success;
+    } else
+#endif
+        if (!options.isolate_sources[0].Execute(isolate))
+      success = false;
     global_context.Get(isolate)->Exit();
   }
   if (!FinishExecuting(isolate, global_context)) success = false;

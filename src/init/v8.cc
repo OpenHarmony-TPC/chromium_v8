@@ -31,6 +31,7 @@
 #include "src/sandbox/sandbox.h"
 #include "src/sandbox/testing.h"
 #include "src/snapshot/snapshot.h"
+#include "third_party/ohos_ndk/includes/ohos_adapter/ohos_adapter_helper.h"
 #if defined(V8_USE_PERFETTO)
 #include "src/tracing/code-data-source.h"
 #endif  // defined(V8_USE_PERFETTO)
@@ -44,6 +45,10 @@
 #include "src/diagnostics/etw-jit-win.h"
 #endif  // V8_ENABLE_ETW_STACK_WALKING
 
+#ifdef USING_OHOS_WEB
+#include "../../../arkweb/chromium_ext/v8/ohlog.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -51,6 +56,9 @@ namespace internal {
 v8::Platform* V8::platform_ = nullptr;
 const OOMDetails V8::kNoOOMDetails{false, nullptr};
 const OOMDetails V8::kHeapOOM{true, nullptr};
+#ifdef OHOS_JS_ENGINE
+bool rcs_enable = false;
+#endif
 
 namespace {
 enum class V8StartupState {
@@ -186,6 +194,30 @@ void V8::Initialize() {
     std::ofstream(Isolate::GetTurboCfgFileName(nullptr).c_str(),
                   std::ios_base::trunc);
   }
+
+#ifdef USING_OHOS_WEB
+  if (v8_flags.maglev) {
+    StreamHilog("Maglev is on");
+  }
+  StreamHilog("PGO is on");
+#endif
+
+#ifdef OHOS_JS_ENGINE
+#ifdef OSOHOS
+#ifdef USING_OHOS_WEB
+  rcs_enable = OHOS::NWeb::OhosAdapterHelper::GetInstance()
+                      .GetSystemPropertiesInstance()
+                      .GetBoolParameter("web.debug.rcs", false);
+  if (rcs_enable == true) {
+    TracingFlags::runtime_stats.store(1, std::memory_order_relaxed);
+    StreamHilog("RCS is on");
+  } else {
+    TracingFlags::runtime_stats.store(0, std::memory_order_relaxed);
+    StreamHilog("RCS is off");
+  }
+#endif
+#endif
+#endif
 
   // The --jitless and --interpreted-frames-native-stack flags are incompatible
   // since the latter requires code generation while the former prohibits code

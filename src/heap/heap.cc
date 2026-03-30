@@ -143,6 +143,14 @@
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
+#if defined(OH_ENABLE_HEAP_DUMP)
+#include "arkweb/chromium_ext/v8/heap_dump/heap_dump.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -2778,6 +2786,7 @@ void Heap::CallGCPrologueCallbacks(GCType gc_type, GCCallbackFlags flags,
   GCCallbacksScope scope(this);
   if (scope.CheckReenter()) {
     RCS_SCOPE(isolate(), RuntimeCallCounterId::kGCPrologueCallback);
+    HITRACE_RCS_SCOPE(isolate(), RuntimeCallCounterId::kGCPrologueCallback);
     TRACE_GC(tracer(), scope_id);
     HandleScope handle_scope(isolate());
     gc_prologue_callbacks_.Invoke(gc_type, flags);
@@ -2791,6 +2800,7 @@ void Heap::CallGCEpilogueCallbacks(GCType gc_type, GCCallbackFlags flags,
   GCCallbacksScope scope(this);
   if (scope.CheckReenter()) {
     RCS_SCOPE(isolate(), RuntimeCallCounterId::kGCEpilogueCallback);
+    HITRACE_RCS_SCOPE(isolate(), RuntimeCallCounterId::kGCEpilogueCallback);
     TRACE_GC(tracer(), scope_id);
     HandleScope handle_scope(isolate());
     gc_epilogue_callbacks_.Invoke(gc_type, flags);
@@ -3428,6 +3438,10 @@ void Heap::OnMoveEvent(Tagged<HeapObject> source, Tagged<HeapObject> target,
                                      size_in_bytes,
                                      /*is_embedder_object=*/false);
   }
+#ifdef OH_ENABLE_RESTRACE
+  OH_RESTRACE_MOVE(reinterpret_cast<void*>(source.address()),
+                   reinterpret_cast<void*>(target.address()), size_in_bytes);
+#endif
   for (auto& tracker : allocation_trackers_) {
     tracker->MoveEvent(source.address(), target.address(), size_in_bytes);
   }
@@ -3503,6 +3517,12 @@ Tagged<FixedArrayBase> Heap::LeftTrimFixedArray(Tagged<FixedArrayBase> object,
     // Notify the heap profiler of change in object layout.
     OnMoveEvent(object, new_object, new_object->Size());
   }
+#ifdef OH_ENABLE_RESTRACE
+  else {
+    OH_RESTRACE_MOVE(reinterpret_cast<void*>(old_start),
+                     reinterpret_cast<void*>(new_start), new_object->Size());
+  }
+#endif
 
 #ifdef ENABLE_SLOW_DCHECKS
   if (v8_flags.enable_slow_asserts) {
@@ -3589,6 +3609,12 @@ void Heap::RightTrimArray(Tagged<Array> object, int new_capacity,
   // using release store after creating a filler for the left-over space to
   // avoid races with the sweeper thread.
   object->set_capacity(new_capacity, kReleaseStore);
+
+#ifdef OH_ENABLE_RESTRACE
+  OH_RESTRACE_MOVE(reinterpret_cast<void*>(object.address()),
+                   reinterpret_cast<void*>(object.address()),
+                   Array::SizeFor(new_capacity));
+#endif
 
   // Notify the heap object allocation tracker of change in object layout. The
   // array may not be moved during GC, and size has to be adjusted nevertheless.

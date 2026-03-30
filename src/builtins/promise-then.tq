@@ -7,11 +7,16 @@
 namespace runtime {
 extern transitioning runtime DebugPromiseThen(
     implicit context: Context)(JSAny): JSAny;
+// Used for OHOS. OpenHarmony OS.
+extern transitioning runtime DfxPromiseThen(
+    implicit context: Context)(JSAny): JSAny;
 }
 
 namespace promise {
 
 extern macro CodeStubAssembler::HasAsyncEventDelegate(): bool;
+// Used for OHOS. OpenHarmony OS.
+extern macro CodeStubAssembler::HasDfxAsyncStack(): bool;
 
 macro IsPromiseSpeciesLookupChainIntact(
     nativeContext: NativeContext, promiseMap: Map): bool {
@@ -74,6 +79,13 @@ transitioning javascript builtin PromisePrototypeThen(
   //    resultCapability).
   PerformPromiseThenImpl(
       promise, onFulfilled, onRejected, resultPromiseOrCapability);
+  
+  // Used for OHOS. OpenHarmony OS.
+  // Promise has enqueue microtasks.
+  // Set dfx async stack id.
+  if (HasDfxAsyncStack()) {
+    runtime::DfxPromiseThen(resultPromise);
+  }
 
   // Async instrumentation for Promise#then(), Promise#catch() and
   // Promise#finally(), where the latter two both call eventually

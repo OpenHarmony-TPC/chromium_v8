@@ -29,6 +29,11 @@
 #include "src/wasm/wasm-objects-inl.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
+#ifdef V8_ENABLE_OHOS_ASYNC_STACK
+#include "src/objects/promise-inl.h"
+#include "../../../arkweb/chromium_ext/v8/dfx/async_stack/async_stack.h"
+#endif // V8_ENABLE_OHOS_ASYNC_STACK
+
 namespace v8 {
 namespace internal {
 
@@ -997,3 +1002,6 @@ RUNTIME_FUNCTION(Runtime_ProfileCreateSnapshotDataBlob) {
 
 }  // namespace internal
 }  // namespace v8
+
+// Used for OHOS. OpenHarmony OS.
+#include "../../../arkweb/chromium_ext/v8/dfx/async_stack/runtime.cpp"

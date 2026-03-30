@@ -17,6 +17,12 @@
 #include "v8-source-location.h"  // NOLINT(build/include_directory)
 #include "v8config.h"            // NOLINT(build/include_directory)
 
+#if defined(OH_ENABLE_HEAP_DUMP) || defined(ENABLE_ARKWEB)
+namespace dfx {
+class BinaryWriterBase;
+}
+#endif
+
 namespace v8 {
 
 class Isolate;
@@ -1411,6 +1417,10 @@ class Platform {
     static HighAllocationThroughputObserver default_observer;
     return &default_observer;
   }
+
+#if defined(OH_ENABLE_HEAP_DUMP) || defined(ENABLE_ARKWEB)
+  virtual std::shared_ptr<dfx::BinaryWriterBase> GetBinaryWriter() { return nullptr; }
+#endif
 
  protected:
   /**

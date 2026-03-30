@@ -167,6 +167,8 @@ declare_args() {
   # Add fuzzilli fuzzer support.
   v8_fuzzilli = false
 
+  v8_component_build = false
+
   # Force optimizing with -O3 for increased inlining.
   v8_force_optimize_speed = false
 
@@ -282,7 +284,7 @@ if (v8_use_perfetto_sdk) {
 
 # Chromium is configured to use the perfetto client library, v8 should also
 # use perfetto for tracing.
-if (build_with_chromium) {
+if (build_with_chromium && !v8_component_build) {
   v8_use_perfetto = true
 }
 

@@ -100,6 +100,10 @@
 #include "src/wasm/wasm-code-pointer-table.h"
 #endif
 
+#ifdef OH_ENABLE_RESTRACE
+#include "../../../arkweb/chromium_ext/v8/restrace.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -1670,6 +1674,15 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
       jit_allocation.WriteHeaderSlot<MapWord, HeapObject::kMapOffset>(
           MapWord::FromForwardingAddress(src, dst));
     }
+
+#ifdef OH_ENABLE_RESTRACE
+    // Only Fast Mode needs to call move restrace, Observed Mode will call
+    // heap::OnMoveEvent finally.
+    if (mode == MigrationMode::kFast) {
+      OH_RESTRACE_MOVE(reinterpret_cast<void*>(src_addr),
+                       reinterpret_cast<void*>(dst_addr), size);
+    }
+#endif
   }
 
   EvacuateVisitorBase(Heap* heap, EvacuationAllocator* local_allocator,

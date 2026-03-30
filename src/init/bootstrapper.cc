@@ -84,6 +84,10 @@
 #include "src/snapshot/snapshot.h"
 #include "src/zone/zone-hashmap.h"
 
+#ifdef V8_ENABLE_LONGQUE_API
+#include "../../../arkweb/chromium_ext/v8/builtins-longque.h"
+#endif  // V8_ENABLE_LONGQUE_API
+
 #ifdef V8_FUZZILLI
 #include "src/fuzzilli/fuzzilli.h"
 #endif
@@ -4887,6 +4891,30 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
     SimpleInstallFunction(isolate_, weak_ref_prototype, "deref",
                           Builtin::kWeakRefDeref, 0, kAdapt);
   }
+
+#ifdef V8_ENABLE_LONGQUE_API
+  {  // -- L o n g q u e
+    Handle<JSObject> object =
+        factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
+    JSObject::AddProperty(isolate_, global, longque::name, object, DONT_ENUM);
+    InstallToStringTag(isolate_, object, longque::name);
+
+    const auto* global_smi_constants = longque::GetGlobalSmiConstants();
+    size_t global_smi_constants_count = longque::GetGlobalSmiConstantsCount();
+    for (size_t i = 0; i < global_smi_constants_count; ++i) {
+      const std::pair<const char*, int>& key_value = global_smi_constants[i];
+      const char* key = key_value.first;
+      int value = key_value.second;
+      InstallConstant(isolate_, object, key,
+                      DirectHandle<Smi>(Smi::FromInt(value), isolate_));
+    }
+
+    constexpr int kNumParamsOfCreateDelegate = 3;
+    SimpleInstallFunction(isolate_, object, "createDelegate",
+                          Builtin::kCreateDelegate, kNumParamsOfCreateDelegate,
+                          kAdapt);
+  }
+#endif  // V8_ENABLE_LONGQUE_API
 
   {  // --- sloppy arguments map
     DirectHandle<String> arguments_string = factory->Arguments_string();

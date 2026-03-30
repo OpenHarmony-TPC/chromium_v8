@@ -168,6 +168,11 @@ void MicrotaskQueueBuiltinsAssembler::RunSingleMicrotask(
       &is_callable, &is_callback, &is_promise_fulfill_reaction_job,
       &is_promise_reject_reaction_job, &is_promise_resolve_thenable_job};
   static_assert(arraysize(case_values) == arraysize(case_labels), "");
+#ifdef V8_ENABLE_OHOS_ASYNC_STACK
+  CallRuntime(Runtime::kSetAsyncTraceOfMicrotask, GetCurrentContext(),
+              microtask);
+  // Jump to excute mocrotask.
+#endif
   Switch(microtask_type, &is_unreachable, case_values, case_labels,
          arraysize(case_labels));
 
@@ -363,6 +368,12 @@ void MicrotaskQueueBuiltinsAssembler::RunSingleMicrotask(
   }
 
   BIND(&done);
+#ifdef V8_ENABLE_OHOS_ASYNC_STACK
+  {
+    CallRuntime(Runtime::kClearAsyncTraceOfMicrotask, GetCurrentContext(),
+              microtask);
+  }
+#endif
 }
 
 void MicrotaskQueueBuiltinsAssembler::IncrementFinishedMicrotaskCount(

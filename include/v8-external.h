@@ -26,7 +26,7 @@ constexpr ExternalPointerTypeTag kExternalPointerTypeTagDefault = 0;
  * A JavaScript value that wraps a C++ void*. This type of value is mainly used
  * to associate C++ data structures with JavaScript objects.
  */
-class V8_EXPORT External : public Value {
+class V8_EXPORT JSVM_EXPORT External : public Value {
  public:
   V8_DEPRECATE_SOON("Use the version with the type tag.")
   static Local<External> New(Isolate* isolate, void* value) {

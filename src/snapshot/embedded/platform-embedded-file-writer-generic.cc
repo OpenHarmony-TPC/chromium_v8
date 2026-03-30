@@ -61,7 +61,7 @@ void PlatformEmbeddedFileWriterGeneric::DeclareSymbolGlobal(const char* name) {
 }
 
 void PlatformEmbeddedFileWriterGeneric::AlignToCodeAlignment() {
-#if V8_OS_LINUX && (V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64)
+#if (V8_OS_LINUX || V8_OS_OHOS) && (V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64)
   // On these architectures and platforms, we remap the builtins, so need these
   // to be aligned on a page boundary.
 #if V8_TARGET_ARCH_ARM64
@@ -81,7 +81,7 @@ void PlatformEmbeddedFileWriterGeneric::AlignToCodeAlignment() {
 }
 
 void PlatformEmbeddedFileWriterGeneric::AlignToPageSizeIfNeeded() {
-#if V8_OS_LINUX && (V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64)
+#if (V8_OS_LINUX || V8_OS_OHOS) && (V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64)
   // Since the builtins are remapped, need to pad until the next page boundary.
 #if V8_TARGET_ARCH_ARM64
   if (target_os_ == EmbeddedTargetOs::kAndroid) {

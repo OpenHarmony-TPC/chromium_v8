@@ -1563,9 +1563,18 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
   CPP(CallAsyncModuleFulfilled, JSParameterCount(0))                           \
   CPP(CallAsyncModuleRejected, JSParameterCount(0))
 
+#ifdef V8_ENABLE_LONGQUE_API
+#define BUILTIN_LIST_LONGQUE(CPP)                                              \
+  /* __Longque__ */                                                            \
+  CPP(CreateDelegate, JSParameterCount(3))
+#else
+#define BUILTIN_LIST_LONGQUE(CPP)
+#endif  // V8_ENABLE_LONGQUE_API
+
 #define BUILTIN_LIST_BASE(CPP, TFJ_TSA, TFJ, TFC_TSA, TFC, TFS, TFH, ASM) \
   BUILTIN_LIST_BASE_TIER0(CPP, TFJ, TFC, TFS, TFH, ASM)                   \
-  BUILTIN_LIST_BASE_TIER1(CPP, TFJ_TSA, TFJ, TFC_TSA, TFC, TFS, TFH, ASM)
+  BUILTIN_LIST_BASE_TIER1(CPP, TFJ_TSA, TFJ, TFC_TSA, TFC, TFS, TFH, ASM) \
+  BUILTIN_LIST_LONGQUE(CPP)
 
 #ifdef V8_TEMPORAL_SUPPORT
 #define BUILTIN_LIST_TEMPORAL(CPP, TFJ)                                        \

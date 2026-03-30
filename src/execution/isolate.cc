@@ -2032,6 +2032,7 @@ void Isolate::RequestInterrupt(InterruptCallback callback, void* data) {
 
 void Isolate::InvokeApiInterruptCallbacks() {
   RCS_SCOPE(this, RuntimeCallCounterId::kInvokeApiInterruptCallbacks);
+  HITRACE_RCS_SCOPE(this, RuntimeCallCounterId::kInvokeApiInterruptCallbacks);
   // Note: callback below should be called outside of execution access lock.
   while (true) {
     InterruptEntry entry;
@@ -4857,7 +4858,10 @@ Isolate::~Isolate() {
   compilation_cache_ = nullptr;
   delete bootstrapper_;
   bootstrapper_ = nullptr;
-
+#ifdef OHOS_JS_ENGINE
+  delete enum_times_cache_;
+  enum_times_cache_ = nullptr;
+#endif
   delete thread_manager_;
   thread_manager_ = nullptr;
 
@@ -5636,6 +5640,9 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
   date_cache_ = new DateCache();
   interpreter_ = new interpreter::Interpreter(this);
   bigint_processor_ = bigint::Processor::New(new BigIntPlatform(this));
+#ifdef OHOS_JS_ENGINE
+  enum_times_cache_ = new EnumTimesCache();
+#endif
 
   if (is_shared_space_isolate()) {
     global_safepoint_ = std::make_unique<GlobalSafepoint>(this);
@@ -7039,6 +7046,27 @@ FilterETWSessionByURLResult Isolate::RunFilterETWSessionByURLCallback(
 
 #endif  // V8_ENABLE_ETW_STACK_WALKING
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+void Isolate::SetMURCallback(
+    MURCallback callback) {
+  mur_callback_ = callback;
+}
+bool Isolate::RunMURCallback(
+    int id) {
+  if (!mur_callback_) {
+    return false;
+  }
+  if (!context().is_null()) {
+    v8::Local<v8::Context> context_mur = Utils::Convert<v8::internal::NativeContext, v8::Context>(native_context());
+    return mur_callback_(context_mur, id);
+  } else {
+    auto context = Handle<Context>::null();
+    v8::Local<v8::Context> context_mur = Utils::Convert<v8::internal::Context, v8::Context>(context);
+    return mur_callback_(context_mur, id);
+  }
+}
+#endif  // OHOS_MEM_USAGE_REPORT
+
 void Isolate::SetAddCrashKeyCallback(AddCrashKeyCallback callback) {
   add_crash_key_callback_ = callback;
 
@@ -8046,3 +8074,7 @@ void Isolate::PrintNumberStringCacheStats(const char* comment,
 
 }  // namespace internal
 }  // namespace v8
+
+#ifdef V8_ENABLE_OHOS_ASYNC_STACK
+#include "../../../arkweb/chromium_ext/v8/dfx/async_stack/isolate.cpp"
+#endif

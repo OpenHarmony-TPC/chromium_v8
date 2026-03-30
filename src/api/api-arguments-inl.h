@@ -92,6 +92,7 @@ DirectHandle<Object> FunctionCallbackArguments::CallOrConstruct(
     Tagged<FunctionTemplateInfo> function, bool is_construct) {
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kFunctionCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kFunctionCallback);
   v8::FunctionCallback f =
       reinterpret_cast<v8::FunctionCallback>(function->callback(isolate));
   if (isolate->should_check_side_effects() &&
@@ -188,6 +189,7 @@ PropertyCallbackArguments::CallNamedEnumerator(
     DirectHandle<InterceptorInfo> interceptor) {
   DCHECK(interceptor->is_named());
   RCS_SCOPE(isolate(), RuntimeCallCounterId::kNamedEnumeratorCallback);
+  HITRACE_RCS_SCOPE(isolate(), RuntimeCallCounterId::kNamedEnumeratorCallback);
   return CallPropertyEnumerator(interceptor);
 }
 
@@ -197,6 +199,7 @@ DirectHandle<Object> PropertyCallbackArguments::CallNamedQuery(
   DCHECK_NAME_COMPATIBLE(interceptor, name);
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedQueryCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedQueryCallback);
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(*name);
   slot_at(kReturnValueIndex).store(Smi::FromInt(v8::None));
@@ -214,6 +217,7 @@ DirectHandle<JSAny> PropertyCallbackArguments::CallNamedGetter(
   DCHECK_NAME_COMPATIBLE(interceptor, name);
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedGetterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedGetterCallback);
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(*name);
   slot_at(kReturnValueIndex).store(ReadOnlyRoots(isolate).undefined_value());
@@ -231,6 +235,7 @@ Handle<JSAny> PropertyCallbackArguments::CallNamedDescriptor(
   DCHECK_NAME_COMPATIBLE(interceptor, name);
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedDescriptorCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedDescriptorCallback);
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(*name);
   slot_at(kReturnValueIndex).store(ReadOnlyRoots(isolate).undefined_value());
@@ -250,6 +255,7 @@ v8::Intercepted PropertyCallbackArguments::CallNamedSetter(
   DCHECK_NAME_COMPATIBLE(interceptor, name);
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedSetterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedSetterCallback);
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(*name);
   slot_at(kReturnValueIndex).store(ReadOnlyRoots(isolate).true_value());
@@ -269,6 +275,7 @@ v8::Intercepted PropertyCallbackArguments::CallNamedDefiner(
   DCHECK_NAME_COMPATIBLE(interceptor, name);
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedDefinerCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedDefinerCallback);
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(*name);
   slot_at(kReturnValueIndex).store(ReadOnlyRoots(isolate).true_value());
@@ -288,6 +295,7 @@ v8::Intercepted PropertyCallbackArguments::CallNamedDeleter(
   DCHECK_NAME_COMPATIBLE(interceptor, name);
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedDeleterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedDeleterCallback);
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(*name);
   slot_at(kReturnValueIndex).store(ReadOnlyRoots(isolate).true_value());
@@ -309,6 +317,7 @@ PropertyCallbackArguments::CallIndexedEnumerator(
     DirectHandle<InterceptorInfo> interceptor) {
   DCHECK(!interceptor->is_named());
   RCS_SCOPE(isolate(), RuntimeCallCounterId::kIndexedEnumeratorCallback);
+  HITRACE_RCS_SCOPE(isolate(), RuntimeCallCounterId::kIndexedEnumeratorCallback);
   return CallPropertyEnumerator(interceptor);
 }
 
@@ -318,6 +327,7 @@ DirectHandle<Object> PropertyCallbackArguments::CallIndexedQuery(
   DCHECK(!interceptor->is_named());
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedQueryCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedQueryCallback);
   index_ = index;
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(Smi::zero());  // indexed callback marker
@@ -337,6 +347,7 @@ DirectHandle<JSAny> PropertyCallbackArguments::CallIndexedGetter(
   DCHECK(!interceptor->is_named());
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedGetterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kNamedGetterCallback);
   index_ = index;
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(Smi::zero());  // indexed callback marker
@@ -356,6 +367,7 @@ Handle<JSAny> PropertyCallbackArguments::CallIndexedDescriptor(
   DCHECK(!interceptor->is_named());
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedDescriptorCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedDescriptorCallback);
   index_ = index;
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(Smi::zero());  // indexed callback marker
@@ -376,6 +388,7 @@ v8::Intercepted PropertyCallbackArguments::CallIndexedSetter(
   DCHECK(!interceptor->is_named());
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedSetterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedSetterCallback);
   index_ = index;
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(Smi::zero());  // indexed callback marker
@@ -397,6 +410,7 @@ v8::Intercepted PropertyCallbackArguments::CallIndexedDefiner(
   DCHECK(!interceptor->is_named());
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedDefinerCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedDefinerCallback);
   index_ = index;
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(Smi::zero());  // indexed callback marker
@@ -416,6 +430,7 @@ v8::Intercepted PropertyCallbackArguments::CallIndexedDeleter(
   DCHECK(!interceptor->is_named());
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedDeleterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kIndexedDeleterCallback);
   index_ = index;
   slot_at(kCallbackInfoIndex).store(*interceptor);
   slot_at(kPropertyKeyIndex).store(Smi::zero());  // indexed callback marker
@@ -466,6 +481,7 @@ DirectHandle<JSAny> PropertyCallbackArguments::CallAccessorGetter(
     DirectHandle<AccessorInfo> accessor_info, DirectHandle<Name> name) {
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kAccessorGetterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kAccessorGetterCallback);
   // Unlike interceptor callbacks we know that the property exists, so
   // the callback is allowed to have side effects.
   AcceptSideEffects();
@@ -487,6 +503,7 @@ bool PropertyCallbackArguments::CallAccessorSetter(
     DirectHandle<Object> value) {
   Isolate* isolate = this->isolate();
   RCS_SCOPE(isolate, RuntimeCallCounterId::kAccessorSetterCallback);
+  HITRACE_RCS_SCOPE(isolate, RuntimeCallCounterId::kAccessorSetterCallback);
   // Unlike interceptor callbacks we know that the property exists, so
   // the callback is allowed to have side effects.
   AcceptSideEffects();

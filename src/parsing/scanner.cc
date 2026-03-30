@@ -312,6 +312,11 @@ void Scanner::TryToParseMagicComment(base::uc32 hash_or_at_sign) {
   } else if (name_literal == base::StaticOneByteVector("debugId") &&
              hash_or_at_sign == '#') {
     value = &debug_id_;
+#ifdef OHOS_JS_ENGINE
+  } else if (name_literal ==
+             base::StaticOneByteVector("@optNeverHideBaseStd")) {
+    has_never_hide_base_std_hint_ = true;
+#endif
   } else {
     return;
   }

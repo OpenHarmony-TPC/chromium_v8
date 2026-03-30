@@ -526,4 +526,16 @@ DEFINE_CHECK_OP_IMPL(GT)
 #define DCHECK_BOUNDS(index, limit) ((void)0)
 #endif
 
+#if defined(OHOS_MEM_USAGE_REPORT)
+#define MURCHECK(condition, id)                   \
+  do {                                           \
+    if (v8_flags.mur) {                           \
+      if (V8_UNLIKELY(!(condition))) {           \
+        Isolate::Current()->RunMURCallback(id);   \
+      }                                          \
+    }                                            \
+  } while (false)                                
+#endif // OHOS_MEM_USAGE_REPORT
+ 
+
 #endif  // V8_BASE_LOGGING_H_

@@ -681,6 +681,12 @@ void KeyedStoreGenericAssembler::EmitGenericElementStore(
   {
     TNode<IntPtrT> length =
         PositiveSmiUntag(LoadFastJSArrayLength(CAST(receiver)));
+#if defined(OHOS_MEM_USAGE_REPORT) && defined(USING_OHOS_WEB)
+    TNode<Smi> capacity2_smi = LoadFixedArrayBaseLength(elements);
+    CSA_MURCHECK(this, TaggedIsSmi(capacity2_smi), 5);
+    TNode<IntPtrT> capacity2 = SmiUntag(capacity2_smi);
+    CSA_MURCHECK(this, UintPtrLessThanOrEqual(length, capacity2), 0);
+#endif // OHOS_MEM_USAGE_REPORT && USING_OHOS_WEB
     GotoIf(UintPtrLessThan(index, length), &if_in_bounds);
     TNode<IntPtrT> capacity = LoadAndUntagFixedArrayBaseLength(elements);
     GotoIf(UintPtrGreaterThanOrEqual(index, capacity), &if_grow);
