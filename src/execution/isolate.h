@@ -492,6 +492,13 @@ V8_EXPORT_PRIVATE void FreeCurrentEmbeddedBlob();
 
 using DebugObjectCache = std::vector<Handle<HeapObject>>;
 
+#ifdef OHOS_JS_ENGINE
+#define ISOLATE_INIT_LIST_JS_ENGINE(V)  \
+  V(OOMErrorCallbackWithIsolate, oom_behavior_with_isolate, nullptr)
+#else
+#define ISOLATE_INIT_LIST_JS_ENGINE(V)
+#endif
+
 #define ISOLATE_INIT_LIST(V)                                                \
   /* Assembler state. */                                                    \
   V(FatalErrorCallback, exception_behavior, nullptr)                        \
@@ -1180,6 +1187,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
     name##_ = value;                                              \
   }
   ISOLATE_INIT_LIST(GLOBAL_ACCESSOR)
+  ISOLATE_INIT_LIST_JS_ENGINE(GLOBAL_ACCESSOR)
 #undef GLOBAL_ACCESSOR
 
   void SetDetailedSourcePositionsForProfiling(bool value) {
@@ -2785,6 +2793,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
 #define GLOBAL_BACKING_STORE(type, name, initialvalue) type name##_;
   ISOLATE_INIT_LIST(GLOBAL_BACKING_STORE)
+  ISOLATE_INIT_LIST_JS_ENGINE(GLOBAL_BACKING_STORE)
 #undef GLOBAL_BACKING_STORE
 
 #define GLOBAL_ARRAY_BACKING_STORE(type, name, length) type name##_[length];
@@ -2798,6 +2807,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 #define ISOLATE_FIELD_OFFSET(type, name, ignored) \
   static const intptr_t name##_debug_offset_;
   ISOLATE_INIT_LIST(ISOLATE_FIELD_OFFSET)
+  ISOLATE_INIT_LIST_JS_ENGINE(ISOLATE_FIELD_OFFSET)
   ISOLATE_INIT_ARRAY_LIST(ISOLATE_FIELD_OFFSET)
 #undef ISOLATE_FIELD_OFFSET
 #endif

@@ -4323,6 +4323,7 @@ Isolate::Isolate(IsolateGroup* isolate_group)
 #define ISOLATE_INIT_EXECUTE(type, name, initial_value) \
   name##_ = (initial_value);
   ISOLATE_INIT_LIST(ISOLATE_INIT_EXECUTE)
+  ISOLATE_INIT_LIST_JS_ENGINE(ISOLATE_INIT_EXECUTE)
 #undef ISOLATE_INIT_EXECUTE
 
 #define ISOLATE_INIT_ARRAY_EXECUTE(type, name, length) \
@@ -6539,6 +6540,7 @@ int Isolate::GenerateIdentityHash(uint32_t mask) {
 #define ISOLATE_FIELD_OFFSET(type, name, ignored) \
   const intptr_t Isolate::name##_debug_offset_ = OFFSET_OF(Isolate, name##_);
 ISOLATE_INIT_LIST(ISOLATE_FIELD_OFFSET)
+ISOLATE_INIT_LIST_JS_ENGINE(ISOLATE_FIELD_OFFSET)
 ISOLATE_INIT_ARRAY_LIST(ISOLATE_FIELD_OFFSET)
 #undef ISOLATE_FIELD_OFFSET
 #endif

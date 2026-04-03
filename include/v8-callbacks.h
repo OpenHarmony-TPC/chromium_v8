@@ -8,6 +8,9 @@
 #include <stddef.h>
 
 #include <functional>
+#ifdef OHOS_JS_ENGINE
+#include <sstream>
+#endif
 #include <string>
 
 #include "cppgc/common.h"
@@ -236,6 +239,15 @@ using OOMErrorCallback = void (*)(const char* location,
 using OOMErrorCallbackWithData = void (*)(const char* location,
                                           const OOMDetails& details,
                                           void* data);
+
+#ifdef OHOS_JS_ENGINE
+// heap_stat: JSON string containing heap statistics from Heap::DumpJSONHeapStatistics.
+// The lifetime of heap_stat is within this callback; do not store or use it after the callback returns.
+using OOMErrorCallbackWithIsolate = void (*)(Isolate* isolate,
+                                             const char* location,
+                                             const OOMDetails& details,
+                                             const char* heap_stat);
+#endif
 
 using MessageCallback = void (*)(Local<Message> message, Local<Value> data);
 
