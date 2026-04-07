@@ -14,6 +14,10 @@
 #include "src/objects/templates.h"
 #include "src/sandbox/sandbox.h"
 
+#ifdef V8_INTL_SUPPORT
+#include "src/objects/js-segments.h"
+#endif  // V8_INTL_SUPPORT
+
 #ifdef V8_OS_LINUX
 #include <signal.h>
 #include <sys/mman.h>
@@ -872,6 +876,10 @@ SandboxTesting::FieldOffsetMap& SandboxTesting::GetFieldOffsetMap() {
         SharedFunctionInfo::kFormalParameterCountOffset;
     fields[SCRIPT_TYPE]["wasm_managed_native_module"] =
         Script::kEvalFromPositionOffset;
+#ifdef V8_INTL_SUPPORT
+    fields[JS_SEGMENTS_TYPE]["icu_iterator_with_text"] =
+        JSSegments::kIcuIteratorWithTextOffset;
+#endif  // V8_INTL_SUPPORT
 #ifdef V8_ENABLE_WEBASSEMBLY
     fields[WASM_MODULE_OBJECT_TYPE]["managed_native_module"] =
         WasmModuleObject::kManagedNativeModuleOffset;
