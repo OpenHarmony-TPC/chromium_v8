@@ -2729,6 +2729,8 @@ DirectHandle<WasmDispatchTable> WasmDispatchTable::Grow(
       instance->set_dispatch_table0(*new_table);
     }
   }
+  old_table->set_protected_uses(
+  *isolate->factory()->empty_protected_weak_fixed_array());
   return new_table;
 }
 
