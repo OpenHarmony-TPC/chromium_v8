@@ -17171,7 +17171,8 @@ void CodeStubAssembler::StoreJSTypedArrayLength(TNode<JSTypedArray> typed_array,
 }
 
 TNode<UintPtrT> CodeStubAssembler::LoadJSTypedArrayLengthAndCheckDetached(
-    TNode<JSTypedArray> typed_array, Label* detached) {
+    TNode<JSTypedArray> typed_array, Label* detached,
+    std::optional<TNode<Int32T>> elements_kind) {
   TVARIABLE(UintPtrT, result);
   TNode<JSArrayBuffer> buffer = LoadJSArrayBufferViewBuffer(typed_array);
 
@@ -17181,7 +17182,8 @@ TNode<UintPtrT> CodeStubAssembler::LoadJSTypedArrayLengthAndCheckDetached(
   BIND(&variable_length);
   {
     result =
-        LoadVariableLengthJSTypedArrayLength(typed_array, buffer, detached);
+        LoadVariableLengthJSTypedArrayLength(typed_array, buffer, detached,
+                                             elements_kind);
     Goto(&end);
   }
 
@@ -17200,12 +17202,12 @@ TNode<UintPtrT> CodeStubAssembler::LoadJSTypedArrayLengthAndCheckDetached(
 // ES #sec-integerindexedobjectlength
 TNode<UintPtrT> CodeStubAssembler::LoadVariableLengthJSTypedArrayLength(
     TNode<JSTypedArray> array, TNode<JSArrayBuffer> buffer,
-    Label* detached_or_out_of_bounds) {
+    Label* detached_or_out_of_bounds, std::optional<TNode<Int32T>> elements_kind) {
   // byte_length already takes array's offset into account.
   TNode<UintPtrT> byte_length = LoadVariableLengthJSArrayBufferViewByteLength(
       array, buffer, detached_or_out_of_bounds);
-  TNode<Uint8T> element_shift =
-      RabGsabElementsKindToElementByteShift(LoadElementsKind(array));
+  TNode<Int32T> kind = elements_kind ? *elements_kind : LoadElementsKind(array);
+  TNode<Uint8T> element_shift = RabGsabElementsKindToElementByteShift(kind);
   return WordShr(byte_length, element_shift);
 }
 
