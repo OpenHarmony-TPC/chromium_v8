@@ -3771,13 +3771,7 @@ TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
             &check_for_interpreter_data);
   {
     TNode<Code> code = CAST(var_result.value());
-#ifdef DEBUG
-    TNode<Int32T> code_flags =
-        LoadObjectField<Int32T>(code, Code::kFlagsOffset);
-    CSA_DCHECK(
-        this, Word32Equal(DecodeWord32<Code::KindField>(code_flags),
-                          Int32Constant(static_cast<int>(CodeKind::BASELINE))));
-#endif  // DEBUG
+    CSA_SBXCHECK(this, IsBaselineCode(code));
     TNode<HeapObject> baseline_data = CAST(LoadProtectedPointerField(
         code, Code::kDeoptimizationDataOrInterpreterDataOffset));
     var_result = baseline_data;
@@ -17817,6 +17811,7 @@ TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
     BIND(&check_is_baseline_data);
     {
       TNode<Code> baseline_code = CAST(sfi_data);
+      CSA_SBXCHECK(this, IsBaselineCode(baseline_code));
       sfi_code = baseline_code;
       Goto(&done);
     }
