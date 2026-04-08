@@ -172,7 +172,7 @@ class Managed : public Foreign {
   // The wrapper keeps the ref counter incremented, guaranteeing that the C++
   // object stays alive even if our Foreign gets corrupted by an in-sandbox
   // corruption and collected by GC.
-  V8_INLINE Ptr ptr() { return Ptr(*GetSharedPtrPtr(GetDestructor())); }
+  V8_INLINE Ptr ptr() { return Ptr(*GetSharedPtrPtr()); }
 
   // Read back the memory estimate that was provided when creating this Managed.
   size_t estimated_size() const { return GetDestructor()->estimated_size_; }
