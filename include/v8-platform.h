@@ -25,6 +25,7 @@ class BinaryWriterBase;
 
 namespace v8 {
 
+class OOMReporter;
 class Isolate;
 
 // Valid priorities supported by the task scheduling infrastructure.
@@ -1422,6 +1423,7 @@ class Platform {
   virtual std::shared_ptr<dfx::BinaryWriterBase> GetBinaryWriter() { return nullptr; }
 #endif
 
+  virtual std::shared_ptr<v8::OOMReporter> GetOOMReporter() { return nullptr; }
  protected:
   /**
    * Default implementation of current wall-clock time in milliseconds
