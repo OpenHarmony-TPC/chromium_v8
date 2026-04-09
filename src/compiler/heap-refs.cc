@@ -191,36 +191,13 @@ class PropertyCellData : public HeapObjectData {
 
 namespace {
 
-<<<<<<< HEAD
-ZoneVector<Address> GetCFunctions(Tagged<FixedArray> function_overloads,
-                                  Isolate* isolate, Zone* zone) {
-  const int len = function_overloads->length();
-  ZoneVector<Address> c_functions = ZoneVector<Address>(len, zone);
-  for (int i = 0; i < len; i++) {
-    c_functions[i] =
-        Cast<Managed<CFunctionWithSignature>>(function_overloads->get(i))
-            ->raw()
-            ->address;
-  }
-  return c_functions;
-}
-
-ZoneVector<const CFunctionInfo*> GetCSignatures(
-    Tagged<FixedArray> function_overloads, Isolate* isolate, Zone* zone) {
-  const int len = function_overloads->length();
-  ZoneVector<const CFunctionInfo*> c_signatures =
-      ZoneVector<const CFunctionInfo*>(len, zone);
-  for (int i = 0; i < len; i++) {
-    c_signatures[i] =
-=======
 ZoneVector<CFunctionInfoWithDetails> GetCFunctionsWithSignatures(
     Tagged<FixedArray> function_overloads, Isolate* isolate, Zone* zone) {
-  const uint32_t len = function_overloads->ulength().value();
+  const int len = function_overloads->length();
   ZoneVector<CFunctionInfoWithDetails> c_functions_with_signatures =
       ZoneVector<CFunctionInfoWithDetails>(len, zone);
-  for (uint32_t i = 0; i < len; i++) {
+  for (int i = 0; i < len; i++) {
     auto overload =
->>>>>>> f5ac1a82d0c... [fastapi] Read c-function and signature atomically
         Cast<Managed<CFunctionWithSignature>>(function_overloads->get(i))
             ->raw();
     c_functions_with_signatures[i] = {overload->address, overload->signature};
