@@ -3905,15 +3905,9 @@ void Builtins::Generate_WasmFXReturn(MacroAssembler* masm) {
   __ LoadRootRelative(active_stack, IsolateData::active_stack_offset());
   Register parent = x1;
   __ Move(parent, MemOperand(active_stack, wasm::kStackParentOffset));
-<<<<<<< HEAD
-  SwitchStacks(masm, ExternalReference::wasm_return_stack(), parent, nullptr,
-               no_reg, {parent});
-  LoadJumpBuffer(masm, parent, true, x2);
-=======
   SwitchStacks(masm, ExternalReference::wasm_return_wasmfx_stack(), parent,
-               nullptr, no_reg, {parent, arg_buffer});
-  LoadJumpBuffer(masm, parent, true, x3);
->>>>>>> 096a780ac89... Merged: [jspi] Clear EPT entry on stack return
+	       nullptr, no_reg, {parent});
+  LoadJumpBuffer(masm, parent, true, x2);
   __ Trap();
 }
 
