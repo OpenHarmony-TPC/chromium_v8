@@ -3789,12 +3789,16 @@ TNode<Object> CodeStubAssembler::LoadSharedFunctionInfoUntrustedData(
 
 void CodeStubAssembler::GotoIfSharedFunctionInfoHasBaselineCode(
     TNode<SharedFunctionInfo> sfi, Label* if_baseline) {
-  Label if_default(this);
+  Label if_default(this), if_code(this);
 
   TVARIABLE(Object, var_result);
   LoadTrustedUnknownPointerFromObject(
       sfi, SharedFunctionInfo::kTrustedFunctionDataOffset, &var_result,
-      &if_default, &if_default, {{CODE_TYPE, if_baseline}});
+      &if_default, &if_default, {{CODE_TYPE, &if_code}});
+
+  BIND(&if_code);
+  CSA_SBXCHECK(this, IsBaselineCode(CAST(var_result.value())));
+  Goto(if_baseline);
 
   BIND(&if_default);
 }
@@ -3817,7 +3821,10 @@ TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
       nullptr,
       {{BYTECODE_ARRAY_TYPE, &done},
        {INTERPRETER_DATA_TYPE, &is_interpreter_data},
-       {CODE_TYPE, &is_code}});
+#if !V8_JITLESS_BOOL
+       {CODE_TYPE, &is_code}
+#endif
+      });
 
   BIND(&is_interpreter_data);
   {
@@ -3825,16 +3832,11 @@ TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
     Goto(&done);
   }
 
+#if !V8_JITLESS_BOOL
   BIND(&is_code);
   {
     TNode<Code> code = CAST(var_result.value());
-#ifdef DEBUG
-    TNode<Int32T> code_flags =
-        LoadObjectField<Int32T>(code, Code::kFlagsOffset);
-    CSA_DCHECK(
-        this, Word32Equal(DecodeWord32<Code::KindField>(code_flags),
-                          Int32Constant(static_cast<int>(CodeKind::BASELINE))));
-#endif  // DEBUG
+    CSA_SBXCHECK(this, IsBaselineCode(code));
     TNode<HeapObject> baseline_data = CAST(LoadProtectedPointerField(
         code, Code::kDeoptimizationDataOrInterpreterDataOffset));
 
@@ -3855,6 +3857,7 @@ TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
       Goto(&done);
     }
   }
+#endif
 
   BIND(&done);
   return CAST(var_result.value());
@@ -18400,6 +18403,7 @@ TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
   BIND(&check_is_baseline_data);
   {
     TNode<Code> baseline_code = CAST(sfi_data_out.value());
+    CSA_SBXCHECK(this, IsBaselineCode(baseline_code));
     sfi_code = baseline_code;
     Goto(&done);
   }

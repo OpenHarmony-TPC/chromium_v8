@@ -46,7 +46,11 @@ class ShiftedDigits : public Digits {
       len_++;
     }
     shift_ = shift;
-    if (shift == 0) {
+    // For shift == 0, we could always allow in-place handling if we didn't
+    // have to worry about concurrent malicious corruption. The situations
+    // where the source is corruptible are the same where callers don't allow
+    // in-place modification.
+    if (shift == 0 && allow_inplace) {
       inplace_ = true;
       return;
     }

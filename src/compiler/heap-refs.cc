@@ -27,6 +27,7 @@
 #include "src/objects/heap-number-inl.h"
 #include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/literal-objects-inl.h"
+#include "src/objects/managed-inl.h"
 #include "src/objects/property-cell.h"
 #include "src/objects/template-objects-inl.h"
 
@@ -190,31 +191,18 @@ class PropertyCellData : public HeapObjectData {
 
 namespace {
 
-ZoneVector<Address> GetCFunctions(Tagged<FixedArray> function_overloads,
-                                  Isolate* isolate, Zone* zone) {
-  const int len = function_overloads->length() /
-                  FunctionTemplateInfo::kFunctionOverloadEntrySize;
-  ZoneVector<Address> c_functions = ZoneVector<Address>(len, zone);
-  for (int i = 0; i < len; i++) {
-    c_functions[i] = v8::ToCData<kCFunctionTag>(
-        isolate, function_overloads->get(
-                     FunctionTemplateInfo::kFunctionOverloadEntrySize * i));
-  }
-  return c_functions;
-}
-
-ZoneVector<const CFunctionInfo*> GetCSignatures(
+ZoneVector<CFunctionInfoWithDetails> GetCFunctionsWithSignatures(
     Tagged<FixedArray> function_overloads, Isolate* isolate, Zone* zone) {
-  const int len = function_overloads->length() /
-                  FunctionTemplateInfo::kFunctionOverloadEntrySize;
-  ZoneVector<const CFunctionInfo*> c_signatures =
-      ZoneVector<const CFunctionInfo*>(len, zone);
+  const int len = function_overloads->length();
+  ZoneVector<CFunctionInfoWithDetails> c_functions_with_signatures =
+      ZoneVector<CFunctionInfoWithDetails>(len, zone);
   for (int i = 0; i < len; i++) {
-    c_signatures[i] = v8::ToCData<const CFunctionInfo*, kCFunctionInfoTag>(
-        isolate, function_overloads->get(
-                     FunctionTemplateInfo::kFunctionOverloadEntrySize * i + 1));
+    auto overload =
+        Cast<Managed<CFunctionWithSignature>>(function_overloads->get(i))
+            ->raw();
+    c_functions_with_signatures[i] = {overload->address, overload->signature};
   }
-  return c_signatures;
+  return c_functions_with_signatures;
 }
 
 }  // namespace
@@ -1935,16 +1923,12 @@ bool StringRef::IsExternalString() const {
   return i::IsExternalString(*object());
 }
 
-ZoneVector<Address> FunctionTemplateInfoRef::c_functions(
+ZoneVector<CFunctionInfoWithDetails>
+FunctionTemplateInfoRef::c_functions_with_signatures(
     JSHeapBroker* broker) const {
-  return GetCFunctions(Cast<FixedArray>(object()->GetCFunctionOverloads()),
-                       broker->isolate(), broker->zone());
-}
-
-ZoneVector<const CFunctionInfo*> FunctionTemplateInfoRef::c_signatures(
-    JSHeapBroker* broker) const {
-  return GetCSignatures(Cast<FixedArray>(object()->GetCFunctionOverloads()),
-                        broker->isolate(), broker->zone());
+  return GetCFunctionsWithSignatures(
+      Cast<FixedArray>(object()->GetCFunctionOverloads()), broker->isolate(),
+      broker->zone());
 }
 
 bool StringRef::IsSeqString() const { return i::IsSeqString(*object()); }
