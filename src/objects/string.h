@@ -26,6 +26,12 @@
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
 
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+namespace v8::dfx {
+class ObjectTranslator;
+}
+#endif
+
 namespace v8::internal {
 
 namespace maglev {
@@ -1123,6 +1129,9 @@ V8_OBJECT class ThinString : public String {
   friend class compiler::AccessBuilder;
   friend class FullStringForwardingTableCleaner;
   friend class TorqueGeneratedThinStringAsserts;
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+  friend class dfx::ObjectTranslator;
+#endif
 
   friend Tagged<String> String::GetUnderlying() const;
 
@@ -1176,6 +1185,9 @@ V8_OBJECT class SlicedString : public String {
   friend class TorqueGeneratedSlicedStringAsserts;
 
   friend Tagged<String> String::GetUnderlying() const;
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+  friend class dfx::ObjectTranslator;
+#endif
 
   TaggedMember<String> parent_;
   TaggedMember<Smi> offset_;

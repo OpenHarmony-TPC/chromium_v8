@@ -18,6 +18,11 @@
 #include "src/objects/object-macros.h"
 
 namespace v8 {
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+namespace dfx {
+class ObjectTranslator;
+}
+#endif
 namespace internal {
 
 namespace compiler {
@@ -314,6 +319,9 @@ V8_OBJECT class Symbol : public Name {
   friend class CodeStubAssembler;
   friend class maglev::MaglevAssembler;
   friend class TorqueGeneratedSymbolAsserts;
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+  friend class dfx::ObjectTranslator;
+#endif
 
   // TODO(cbruni): remove once the new maptracer is in place.
   friend class Name;  // For PrivateSymbolToName.

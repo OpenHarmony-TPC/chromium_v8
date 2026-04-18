@@ -10,12 +10,12 @@
 #include <cstring>
 #include <vector>
 
+#include "arkweb/chromium_ext/v8/ohlog.h"
 #include "src/base/hashing.h"
 #include "src/base/logging.h"
 #include "src/base/platform/platform.h"
 #include "src/base/platform/wrappers.h"
 #include "src/utils/allocation.h"
-#include "../../../arkweb/chromium_ext/v8/ohlog.h"
 
 #ifdef V8_CC_MSVC
 #include <intrin.h>  // _AddressOfReturnAddress()
@@ -37,9 +37,9 @@ void PrintF(const char* format, ...) {
   va_start(arguments, format);
 #ifdef USING_OHOS_WEB
   PrintHilog(format, arguments);
-#else  
+#else
   base::OS::VPrint(format, arguments);
-#endif  
+#endif
   va_end(arguments);
 }
 
@@ -50,7 +50,7 @@ void PrintF(FILE* out, const char* format, ...) {
   PrintHilog(format, arguments);
 #else
   base::OS::VFPrint(out, format, arguments);
-#endif  
+#endif
   va_end(arguments);
 }
 

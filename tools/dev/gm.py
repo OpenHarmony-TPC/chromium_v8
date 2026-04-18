@@ -255,6 +255,9 @@ if RECLIENT_MODE:
   if RECLIENT_MODE == Reclient.CUSTOM:
     BUILD_DISTRIBUTION_LINE += f"\nreclient_cfg_dir = \"{RECLIENT_CFG_REL}\""
 
+# NIY(web):v8_enable_sandbox = true
+# v8_enable_i18n_support = true
+# v8_use_external_startup_data not set false
 RELEASE_ARGS_TEMPLATE = f"""\
 is_component_build = false
 is_debug = false
@@ -264,8 +267,24 @@ v8_enable_disassembler = true
 v8_enable_object_print = true
 v8_enable_verify_heap = true
 dcheck_always_on = false
+
+build_host = true
+build_arkweb = false
+v8_enable_pointer_compression = true
+v8_enable_pointer_compression_shared_cage = true
+v8_ohos_enable_heapdump = true
+enable_js_protobuf = false
+v8_use_external_startup_data = false
+v8_deprecation_warnings = false
+v8_use_libm_trig_functions = false
+v8_enable_i18n_support = false
+cppgc_enable_slim_write_barrier = false
+v8_enable_pointer_compression_8gb = false
+v8_enable_sandbox = false
+v8_enable_ohos_js_engine = false
 """
 
+# NIY: open v8_enable_slow_dchecks and dcheck_always_on
 DEBUG_ARGS_TEMPLATE = f"""\
 is_component_build = true
 is_debug = true

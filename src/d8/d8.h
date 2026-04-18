@@ -440,7 +440,11 @@ class ShellOptions {
   };
   DisallowReassignment<bool> can_block = {"can_block", true};
 
-#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+#if (defined(OH_ENABLE_HEAP_DUMP) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+  DisallowReassignment<const char*> heapdump_out = {"heapdump-out", nullptr};
+#endif
+
+#if (defined(OH_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
   DisallowReassignment<const char*> translate_path = {"translate", nullptr};
   DisallowReassignment<const char*> translate_out = {"translate-out", nullptr};
 #endif

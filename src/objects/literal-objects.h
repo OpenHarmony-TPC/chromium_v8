@@ -15,6 +15,11 @@
 #include "src/objects/object-macros.h"
 
 namespace v8 {
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+namespace dfx {
+class ObjectTranslator;
+}
+#endif
 namespace internal {
 
 class ClassLiteral;
@@ -111,6 +116,9 @@ V8_OBJECT class ArrayBoilerplateDescription : public StructLayout {
   friend class Factory;
   friend class TorqueGeneratedArrayBoilerplateDescriptionAsserts;
   friend class V8HeapExplorer;
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+  friend class dfx::ObjectTranslator;
+#endif
 
   TaggedMember<Smi> flags_;
   TaggedMember<FixedArrayBase> constant_elements_;

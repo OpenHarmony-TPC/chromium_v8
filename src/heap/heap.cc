@@ -147,8 +147,8 @@
 #include "../../../arkweb/chromium_ext/v8/restrace.h"
 #endif
 
-#if defined(OH_ENABLE_HEAP_DUMP)
-#include "arkweb/chromium_ext/v8/heap_dump/heap_dump.h"
+#ifdef OH_ENABLE_HEAP_DUMP
+#include "arkweb/chromium_ext/v8/dfx/heap_dump/heap-dump.h"
 #endif
 
 namespace v8 {
@@ -1440,6 +1440,12 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
       v8_flags.heap_snapshot_on_oom) {
     heap_profiler()->WriteSnapshotToDiskAfterGC();
   }
+#if defined(OH_ENABLE_HEAP_DUMP)
+  if (gc_reason == GarbageCollectionReason::kLastResort &&
+      v8_flags.heap_dump_on_oom) {
+    dfx::DumpHeapAfterOOM(this);
+  }
+#endif
 
   collection_barrier_->ResumeThreadsAwaitingCollection(
       RequestedGCKind::kLastResort);
@@ -1843,6 +1849,11 @@ void Heap::CheckHeapLimitReached() {
       if (v8_flags.heap_snapshot_on_oom) {
         heap_profiler()->WriteSnapshotToDiskAfterGC();
       }
+#if defined(OH_ENABLE_HEAP_DUMP)
+      if (v8_flags.heap_dump_on_oom) {
+        dfx::DumpHeapAfterOOM(this);
+      }
+#endif
       FatalProcessOutOfMemory("Reached heap limit");
     }
   }
@@ -3856,6 +3867,11 @@ void Heap::CheckIneffectiveMarkCompact(size_t old_generation_size,
     if (v8_flags.heap_snapshot_on_oom) {
       heap_profiler()->WriteSnapshotToDiskAfterGC();
     }
+#if defined(OH_ENABLE_HEAP_DUMP)
+    if (v8_flags.heap_dump_on_oom) {
+      dfx::DumpHeapAfterOOM(this);
+    }
+#endif
     FatalProcessOutOfMemory("Ineffective mark-compacts near heap limit");
   }
 }

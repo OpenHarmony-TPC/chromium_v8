@@ -12,6 +12,11 @@
 #include "src/objects/object-macros.h"
 
 namespace v8 {
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+namespace dfx {
+class ObjectTranslator;
+}
+#endif
 namespace internal {
 
 class StructBodyDescriptor;
@@ -109,6 +114,9 @@ V8_OBJECT class AccessorPair : public StructLayout {
   friend class CodeStubAssembler;
   friend class V8HeapExplorer;
   friend class TorqueGeneratedAccessorPairAsserts;
+#ifdef OH_ENABLE_HEAP_TRANSLATE
+  friend class dfx::ObjectTranslator;
+#endif
 
   TaggedMember<Object> getter_;
   TaggedMember<Object> setter_;

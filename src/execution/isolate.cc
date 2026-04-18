@@ -8078,5 +8078,5 @@ void Isolate::PrintNumberStringCacheStats(const char* comment,
 }  // namespace v8
 
 #ifdef V8_ENABLE_OHOS_ASYNC_STACK
-#include "../../../arkweb/chromium_ext/v8/dfx/async_stack/isolate.cpp"
+#include "arkweb/chromium_ext/v8/dfx/async_stack/isolate.cpp"
 #endif
