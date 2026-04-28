@@ -7828,6 +7828,10 @@ if (current_toolchain == v8_generator_toolchain) {
       ":v8_shared_internal_headers",
       "//build/win:default_exe_manifest",
     ]
+    ldflags = [ 
+      "-pie",
+      "-lgcc_s", 
+    ]
   }
 }
 
@@ -7928,6 +7932,10 @@ if (current_toolchain == v8_snapshot_toolchain) {
       "//build/config/compiler:no_exceptions",
       "//build/config/compiler:no_rtti",
     ]
+    ldflags = [ 
+      "-pie",
+      "-lgcc_s", 
+    ]
   }
 }
 
@@ -7975,6 +7983,10 @@ if (v8_enable_i18n_support) {
       ]
 
       configs = [ ":internal_config" ]
+      ldflags = [ 
+        "-pie",
+        "-lgcc_s", 
+      ]
     }
   }
 
@@ -8191,6 +8203,8 @@ if (is_component_build) {
     configs = [ ":internal_config" ]
 
     public_configs = [ ":external_config" ]
+
+    ldflags += [ "-lgcc_s" ]
   }
 
   v8_component("cppgc") {
@@ -8417,6 +8431,10 @@ if (want_v8_shell) {
     if (current_os == "zos" && is_component_build) {
       deps += [ ":zoslib" ]
     }
+    ldflags = [ 
+      "-pie",
+      "-lgcc_s", 
+    ]
   }
 }
 
