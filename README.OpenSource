@@ -1,0 +1,11 @@
+[
+    {
+        "Name": "V8 JavaScript Engine",
+        "License": "BSD-3-Clause",
+        "License File": "LICENSE",
+        "Version Number": "ad25f9ae50a53bee50f459bfee25fb1e6f64adc3",
+        "Owner": "huamengzheng@huawei.com",
+        "Upstream URL": "https://chromium.googlesource.com/v8/v8.git@ad25f9ae50a53bee50f459bfee25fb1e6f64adc3",
+        "Description": "V8 JavaScript引擎"
+    }
+]
