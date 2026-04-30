@@ -78,7 +78,6 @@ TF_BUILTIN(ReturnReceiver, CodeStubAssembler) {
 }
 
 TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
-  Label tailcall_to_shared(this);
   auto context = Parameter<Context>(Descriptor::kContext);
   auto new_target = Parameter<Object>(Descriptor::kJSNewTarget);
   auto arg_count =
@@ -98,23 +97,18 @@ TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
       ExternalConstant(ExternalReference::isolate_address());
   TNode<SharedFunctionInfo> shared =
       CAST(LoadObjectField(function, JSFunction::kSharedFunctionInfoOffset));
-  TNode<IntPtrT> result = UncheckedCast<IntPtrT>(
-      CallCFunction(f, MachineType::UintPtr(),
-                    std::make_pair(MachineType::Pointer(), isolate_ptr),
-                    std::make_pair(MachineType::TaggedPointer(), shared)));
-  GotoIf(IntPtrEqual(result, IntPtrConstant(0)), &tailcall_to_shared);
+  TNode<Object> result =
+      CAST(CallCFunction(f, MachineType::AnyTagged(),
+                         std::make_pair(MachineType::Pointer(), isolate_ptr),
+                         std::make_pair(MachineType::TaggedPointer(), shared)));
 
-  CallRuntime(Runtime::kDebugBreakAtEntry, context, function);
-  Goto(&tailcall_to_shared);
-
-  BIND(&tailcall_to_shared);
-  // Tail call into code object on the SharedFunctionInfo.
-  // TODO(https://crbug.com/451355210, ishell): consider removing this
-  // duplicate implementation in favour of returning code object from above
-  // runtime calls once non-leaptering code is removed.
-  // TODO(saelo): this is not safe. We either need to validate the parameter
-  // count here or obtain the code from the dispatch table.
-  TNode<Code> code = GetSharedFunctionInfoCode(shared);
+  auto code = Select<Code>(
+      TaggedIsSmi(result),
+      [=, this] {
+        return CallRuntime<Code>(Runtime::kDebugBreakAtEntry, context,
+                                 function);
+      },
+      [=, this] { return CAST(result); });
   TailCallJSCode(code, context, function, new_target, arg_count,
                  dispatch_handle);
 }
