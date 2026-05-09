@@ -462,7 +462,7 @@ declare_args() {
 
   v8_enable_oom_repoter = is_ohos && is_arkweb
 
-  v8_ohos_enable_heapdump = is_ohos && v8_component_build
+  v8_ohos_enable_heapdump = is_ohos && !is_component_build
 
   # Enable Sparkplug
   # Sets -DV8_ENABLE_SPARKPLUG.
@@ -6811,6 +6811,14 @@ v8_source_set("v8_base_without_compiler") {
   if (v8_enable_ohos_js_engine) {
     sources += [
       "//arkweb/chromium_ext/v8/dfx/heap_profiler/dfx-heap-profiler.cc"
+    ]
+  }
+  if (is_arkweb && v8_ohos_enable_heapdump && enable_heap_dump) {
+    sources += [
+      "//arkweb/chromium_ext/v8/dfx/heap_profiler/heap-profile.h",
+      "//arkweb/chromium_ext/v8/dfx/heap_profiler/heap-profile.cc",
+      "//arkweb/chromium_ext/v8/dfx/heap_profiler/stream-utils.h",
+      "//arkweb/chromium_ext/v8/dfx/heap_profiler/stream-utils.cc",
     ]
   }
   if (v8_ohos_enable_heapdump) {
