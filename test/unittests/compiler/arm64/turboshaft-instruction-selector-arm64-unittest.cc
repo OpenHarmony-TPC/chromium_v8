@@ -3689,18 +3689,10 @@ TEST_P(TurboshaftInstructionSelectorMemoryAccessTest, LoadWithShiftedIndex) {
       m.Return(
           m.Load(memacc.type, m.Parameter(0), m.ChangeUint32ToUint64(index)));
       Stream s = m.Build();
-      if (immediate_shift == ElementSizeLog2Of(memacc.type.representation())) {
-        ASSERT_EQ(1U, s.size());
-        EXPECT_EQ(memacc.ldr_opcode, s[0]->arch_opcode());
-        EXPECT_EQ(kMode_Operand2_R_LSL_I, s[0]->addressing_mode());
-        EXPECT_EQ(3U, s[0]->InputCount());
-        EXPECT_EQ(1U, s[0]->OutputCount());
-      } else {
-        // Make sure we haven't merged the shift into the load instruction.
-        ASSERT_NE(1U, s.size());
-        EXPECT_NE(memacc.ldr_opcode, s[0]->arch_opcode());
-        EXPECT_NE(kMode_Operand2_R_LSL_I, s[0]->addressing_mode());
-      }
+      // Make sure we haven't merged the shift into the load instruction.
+      ASSERT_NE(1U, s.size());
+      EXPECT_NE(memacc.ldr_opcode, s[0]->arch_opcode());
+      EXPECT_NE(kMode_Operand2_R_LSL_I, s[0]->addressing_mode());
     }
     // 64 bit shift
     {
@@ -3739,18 +3731,10 @@ TEST_P(TurboshaftInstructionSelectorMemoryAccessTest, StoreWithShiftedIndex) {
               m.ChangeUint32ToUint64(index), m.Parameter(2), kNoWriteBarrier);
       m.Return(m.Int32Constant(0));
       Stream s = m.Build();
-      if (immediate_shift == ElementSizeLog2Of(memacc.type.representation())) {
-        ASSERT_EQ(1U, s.size());
-        EXPECT_EQ(memacc.str_opcode, s[0]->arch_opcode());
-        EXPECT_EQ(kMode_Operand2_R_LSL_I, s[0]->addressing_mode());
-        EXPECT_EQ(4U, s[0]->InputCount());
-        EXPECT_EQ(0U, s[0]->OutputCount());
-      } else {
-        // Make sure we haven't merged the shift into the store instruction.
-        ASSERT_NE(1U, s.size());
-        EXPECT_NE(memacc.str_opcode, s[0]->arch_opcode());
-        EXPECT_NE(kMode_Operand2_R_LSL_I, s[0]->addressing_mode());
-      }
+      // Make sure we haven't merged the shift into the store instruction.
+      ASSERT_NE(1U, s.size());
+      EXPECT_NE(memacc.str_opcode, s[0]->arch_opcode());
+      EXPECT_NE(kMode_Operand2_R_LSL_I, s[0]->addressing_mode());
     }
     // 64 bit shift
     {
