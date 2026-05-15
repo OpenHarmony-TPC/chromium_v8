@@ -1590,6 +1590,9 @@ config("features") {
     if (enable_heap_dump_test) {
       defines += [ "OH_ENABLE_HEAP_DUMP_TEST" ]
     }
+    if (enable_heap_dump_json_metadata) {
+      defines += [ "OH_ENABLE_HEAP_DUMP_JSON_METADATA" ]
+    }
   }
   if (v8_lower_limits_mode) {
     defines += [ "V8_LOWER_LIMITS_MODE" ]
