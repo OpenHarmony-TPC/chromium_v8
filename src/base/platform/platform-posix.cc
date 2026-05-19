@@ -1147,7 +1147,7 @@ void OS::VPrintError(const char* format, va_list args) {
 #elif defined(USING_OHOS)
   char buffer[HILOG_MAXSIZE];
   (void)VSNPrintF(buffer, HILOG_MAXSIZE, format, args);
-  HilogPrint(ERROR, "%{public}s", buffer);
+  HilogPrint(FATAL, "%{public}s", buffer);
 #else
   vfprintf(stderr, format, args);
 #endif
