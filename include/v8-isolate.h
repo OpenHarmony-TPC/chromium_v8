@@ -1671,6 +1671,14 @@ class V8_EXPORT JSVM_EXPORT Isolate {
    */
   void SetOOMErrorHandler(OOMErrorCallbackWithData that, void* data);
 
+#ifdef OHOS_JS_ENGINE
+  /**
+   * Set the callback to invoke in case of OOM errors with isolate parameter.
+   * This callback receives the isolate as first argument.
+   */
+  void SetOOMErrorHandlerWithIsolate(OOMErrorCallbackWithIsolate that);
+#endif
+
   /**
    * Add a callback to invoke in case the heap size is close to the heap limit.
    * If multiple callbacks are added, only the most recently added callback is
