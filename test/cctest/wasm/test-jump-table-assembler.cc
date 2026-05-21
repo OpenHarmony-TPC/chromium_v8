@@ -169,7 +169,8 @@ void CompileJumpTableThunk(Address thunk, Address jump_target) {
 #endif
 
   FlushInstructionCache(thunk, kThunkBufferSize);
-#if defined(V8_OS_DARWIN) && defined(V8_HOST_ARCH_ARM64)
+#if (defined(V8_OS_DARWIN) || defined(V8_OS_OHOS)) && \
+    defined(V8_HOST_ARCH_ARM64)
   // MacOS on arm64 refuses {mprotect} calls to toggle permissions of RWX
   // memory. Simply do nothing here, as the space will by default be executable
   // and non-writable for the JumpTableRunner.

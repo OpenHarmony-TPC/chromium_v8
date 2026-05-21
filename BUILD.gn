@@ -543,6 +543,9 @@ declare_args() {
 }
 
 declare_args() {
+  # Enable jit memroy W^X protection.
+  v8_enable_jitfort = false
+
   v8_enable_hitrace_runtime_call_stats = v8_enable_ohos_js_engine
 }
 
@@ -1599,6 +1602,9 @@ config("features") {
   }
   if (v8_enable_oom_repoter) {
     defines += [ "V8_ENABLE_OHOS_OOM_MONITOR" ]
+  }
+  if (is_ohos && v8_enable_jitfort) {
+    defines += [ "V8_ENABLE_JITFORT" ]
   }
 }
 
@@ -6689,6 +6695,13 @@ v8_source_set("v8_base_without_compiler") {
     }
   }
 
+  if (v8_enable_jitfort) {
+    sources += [
+      "//arkweb/chromium_ext/v8/src/base/platform/jitfort.h",
+      "//arkweb/chromium_ext/v8/src/base/platform/jitfort.cc",
+    ]
+  }
+  
   configs = [
     ":internal_config",
     ":cppgc_base_config",

@@ -51,6 +51,10 @@
 #include "../../../arkweb/chromium_ext/v8/ohlog.h"
 #endif
 
+#if V8_HAS_JIT_FORT_PROTECT
+#include "src/base/platform/jitfort.h"
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -125,6 +129,9 @@ void V8::InitializePlatform(v8::Platform* platform) {
   }
 #endif  // V8_ENABLE_ETW_STACK_WALKING
 
+#if V8_HAS_JIT_FORT_PROTECT
+  base::JITFort::Init();
+#endif
   // Initialization needs to happen on platform-level, as this sets up some
   // cppgc internals that are needed to allow gracefully failing during cppgc
   // platform setup.
