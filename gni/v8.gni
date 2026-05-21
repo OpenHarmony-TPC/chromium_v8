@@ -503,9 +503,13 @@ template("v8_executable") {
         configs -= invoker.remove_configs
       }
       configs += invoker.configs
+      ldflags = []
       if (is_linux || is_chromeos) {
         # For enabling ASLR.
-        ldflags = [ "-pie" ]
+        ldflags = [ 
+          "-pie",
+          "-lgcc_s", 
+          ]
       }
       deps += [ v8_path_prefix + ":v8_dump_build_config" ]
 
