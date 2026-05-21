@@ -64,6 +64,10 @@ class HeapProfiler : public HeapObjectAllocationTracker {
   HeapSnapshot* TakeSnapshot(
       const v8::HeapProfiler::HeapSnapshotOptions options);
 
+#if defined(OH_ENABLE_HEAP_DUMP)
+    void DumpRawHeapSnapshot(OutputStream* stream);
+#endif
+
   // Implementation of --heap-snapshot-on-oom.
   void WriteSnapshotToDiskAfterGC(
       HeapSnapshotMode snapshot_mode = HeapSnapshotMode::kRegular);
