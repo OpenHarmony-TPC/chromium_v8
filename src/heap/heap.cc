@@ -147,7 +147,7 @@
 #include "../../../arkweb/chromium_ext/v8/restrace.h"
 #endif
 
-#ifdef OH_ENABLE_HEAP_DUMP
+#if defined(OH_ENABLE_HEAP_DUMP) && defined(USING_OHOS)
 #include "arkweb/chromium_ext/v8/dfx/heap_dump/heap-dump.h"
 #endif
 
@@ -1440,7 +1440,7 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
       v8_flags.heap_snapshot_on_oom) {
     heap_profiler()->WriteSnapshotToDiskAfterGC();
   }
-#if defined(OH_ENABLE_HEAP_DUMP)
+#if defined(OH_ENABLE_HEAP_DUMP) && defined(USING_OHOS)
   if (gc_reason == GarbageCollectionReason::kLastResort &&
       v8_flags.heap_dump_on_oom) {
     dfx::DumpHeapAfterOOM(this);
@@ -1849,7 +1849,7 @@ void Heap::CheckHeapLimitReached() {
       if (v8_flags.heap_snapshot_on_oom) {
         heap_profiler()->WriteSnapshotToDiskAfterGC();
       }
-#if defined(OH_ENABLE_HEAP_DUMP)
+#if defined(OH_ENABLE_HEAP_DUMP) && defined(USING_OHOS)
       if (v8_flags.heap_dump_on_oom) {
         dfx::DumpHeapAfterOOM(this);
       }
@@ -3867,7 +3867,7 @@ void Heap::CheckIneffectiveMarkCompact(size_t old_generation_size,
     if (v8_flags.heap_snapshot_on_oom) {
       heap_profiler()->WriteSnapshotToDiskAfterGC();
     }
-#if defined(OH_ENABLE_HEAP_DUMP)
+#if defined(OH_ENABLE_HEAP_DUMP) && defined(USING_OHOS)
     if (v8_flags.heap_dump_on_oom) {
       dfx::DumpHeapAfterOOM(this);
     }
