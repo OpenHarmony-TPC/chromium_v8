@@ -443,7 +443,6 @@ declare_args() {
 
   v8_enable_restrace = is_ohos && (is_arkweb || v8_component_build)
 
-  v8_enable_oom_repoter = is_ohos && is_arkweb
   # Enable Sparkplug
   # Sets -DV8_ENABLE_SPARKPLUG.
   v8_enable_sparkplug = ""
@@ -1562,9 +1561,6 @@ config("features") {
   }
   if (v8_function_arguments_caller_are_own_props) {
     defines += [ "V8_FUNCTION_ARGUMENTS_CALLER_ARE_OWN_PROPS" ]
-  }
-  if (v8_enable_oom_repoter) {
-    defines += [ "V8_ENABLE_OHOS_OOM_MONITOR" ]
   }
 }
 
@@ -4614,10 +4610,6 @@ v8_header_set("v8_internal_headers") {
 
   if (v8_enable_restrace) {
     sources += [ "//arkweb/chromium_ext/v8/restrace.h" ]
-  }
-
-  if (v8_enable_oom_repoter) {
-    sources += [ "//arkweb/chromium_ext/v8/dfx/oom_mojom/v8_oom_reporter.h" ]
   }
 
   if (v8_enable_snapshot_compression) {
