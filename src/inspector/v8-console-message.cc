@@ -258,7 +258,7 @@ V8ConsoleMessage::wrapArguments(V8InspectorSessionImpl* session,
   int contextGroupId = session->contextGroupId();
   int contextId = m_contextId;
   if (m_arguments.empty() || !contextId) return nullptr;
-  std::shared_ptr<InspectedContext> inspectedContext =
+  InspectedContext* inspectedContext =
       inspector->getContext(contextGroupId, contextId);
   if (!inspectedContext) return nullptr;
 
@@ -423,7 +423,7 @@ V8ConsoleMessage::wrapException(V8InspectorSessionImpl* session,
                                 bool generatePreview) const {
   if (m_arguments.empty() || !m_contextId) return nullptr;
   DCHECK_EQ(1u, m_arguments.size());
-  std::shared_ptr<InspectedContext> inspectedContext =
+  InspectedContext* inspectedContext =
       session->inspector()->getContext(session->contextGroupId(), m_contextId);
   if (!inspectedContext) return nullptr;
 

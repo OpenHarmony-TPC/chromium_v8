@@ -196,8 +196,8 @@ void V8InspectorImpl::disconnect(V8InspectorSessionImpl* session) {
   }
 }
 
-std::shared_ptr<InspectedContext> V8InspectorImpl::getContext(
-    int groupId, int contextId) const {
+InspectedContext* V8InspectorImpl::getContext(int groupId,
+                                              int contextId) const {
   if (!groupId || !contextId) return nullptr;
 
   auto contextGroupIt = m_contexts.find(groupId);
@@ -206,21 +206,20 @@ std::shared_ptr<InspectedContext> V8InspectorImpl::getContext(
   auto contextIt = contextGroupIt->second->find(contextId);
   if (contextIt == contextGroupIt->second->end()) return nullptr;
 
-  return contextIt->second;
+  return contextIt->second.get();
 }
 
-std::shared_ptr<InspectedContext> V8InspectorImpl::getContext(
-    int contextId) const {
+InspectedContext* V8InspectorImpl::getContext(int contextId) const {
   return getContext(contextGroupId(contextId), contextId);
 }
 
 v8::MaybeLocal<v8::Context> V8InspectorImpl::contextById(int contextId) {
-  std::shared_ptr<InspectedContext> context = getContext(contextId);
+  InspectedContext* context = getContext(contextId);
   return context ? context->context() : v8::MaybeLocal<v8::Context>();
 }
 
 V8DebuggerId V8InspectorImpl::uniqueDebuggerId(int contextId) {
-  std::shared_ptr<InspectedContext> context = getContext(contextId);
+  InspectedContext* context = getContext(contextId);
   internal::V8DebuggerId unique_id;
   if (context) unique_id = m_debugger->debuggerIdFor(context->contextGroupId());
 
@@ -272,13 +271,11 @@ void V8InspectorImpl::contextCollected(int groupId, int contextId) {
   if (storageIt != m_consoleStorageMap.end())
     storageIt->second->contextDestroyed(contextId);
 
-  std::shared_ptr<InspectedContext> inspectedContext =
-      getContext(groupId, contextId);
+  InspectedContext* inspectedContext = getContext(groupId, contextId);
   if (!inspectedContext) return;
 
   forEachSession(groupId, [&inspectedContext](V8InspectorSessionImpl* session) {
-    session->runtimeAgent()->reportExecutionContextDestroyed(
-        inspectedContext.get());
+    session->runtimeAgent()->reportExecutionContextDestroyed(inspectedContext);
   });
   discardInspectedContext(groupId, contextId);
 }
@@ -399,7 +396,7 @@ v8::MaybeLocal<v8::Context> V8InspectorImpl::exceptionMetaDataContext() {
 
 void V8InspectorImpl::discardInspectedContext(int contextGroupId,
                                               int contextId) {
-  auto context = getContext(contextGroupId, contextId);
+  auto* context = getContext(contextGroupId, contextId);
   if (!context) return;
   m_uniqueIdToContextId.erase(context->uniqueId().pair());
   m_contexts[contextGroupId]->erase(contextId);

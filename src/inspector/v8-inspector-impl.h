@@ -133,9 +133,8 @@ class V8InspectorImpl : public V8Inspector {
   void discardInspectedContext(int contextGroupId, int contextId);
   void disconnect(V8InspectorSessionImpl*);
   V8InspectorSessionImpl* sessionById(int contextGroupId, int sessionId);
-  std::shared_ptr<InspectedContext> getContext(int groupId,
-                                               int contextId) const;
-  std::shared_ptr<InspectedContext> getContext(int contextId) const;
+  InspectedContext* getContext(int groupId, int contextId) const;
+  InspectedContext* getContext(int contextId) const;
   V8_EXPORT_PRIVATE V8Console* console();
   void forEachContext(int contextGroupId,
                       const std::function<void(InspectedContext*)>& callback);
@@ -183,7 +182,7 @@ class V8InspectorImpl : public V8Inspector {
   MuteExceptionsMap m_muteExceptionsMap;
 
   using ContextByIdMap =
-      std::unordered_map<int, std::shared_ptr<InspectedContext>>;
+      std::unordered_map<int, std::unique_ptr<InspectedContext>>;
   using ContextsByGroupMap =
       std::unordered_map<int, std::unique_ptr<ContextByIdMap>>;
   ContextsByGroupMap m_contexts;
