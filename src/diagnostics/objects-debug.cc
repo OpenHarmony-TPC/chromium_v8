@@ -2685,12 +2685,8 @@ void WasmDispatchTableForImports::WasmDispatchTableForImportsVerify(
 
 void WasmTableObject::WasmTableObjectVerify(Isolate* isolate) {
   TorqueGeneratedClassVerifiers::WasmTableObjectVerify(*this, isolate);
-  bool is_function_table =
-      unsafe_type().ref_type_kind() == wasm::RefTypeKind::kFunction;
-  bool has_dispatch_table = trusted_dispatch_table(isolate) !=
-                            *isolate->factory()->empty_wasm_dispatch_table();
-  CHECK_EQ(is_function_table, has_dispatch_table);
-  if (is_function_table) {
+  if (has_trusted_dispatch_table() &&
+      !has_trusted_dispatch_table_unpublished(isolate)) {
     CHECK_EQ(trusted_dispatch_table(isolate)->length(), current_length());
   }
 }

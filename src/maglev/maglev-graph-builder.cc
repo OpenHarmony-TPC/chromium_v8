@@ -4623,19 +4623,18 @@ void MaglevGraphBuilder::BuildInitializeStore_TrustedPointer(
   CHECK(!result.IsDoneWithAbort());
 }
 
-bool MaglevGraphBuilder::IsEscaping(InlinedAllocation* alloc) {
-  if (alloc->HasEscapingUses()) return true;
-  auto it = graph_->allocations_elide_map().find(alloc);
-  if (it == graph_->allocations_elide_map().end()) return false;
+namespace {
+bool IsEscaping(Graph* graph, InlinedAllocation* alloc) {
+  if (alloc->IsEscaping()) return true;
+  auto it = graph->allocations_elide_map().find(alloc);
+  if (it == graph->allocations_elide_map().end()) return false;
   for (InlinedAllocation* inner_alloc : it->second) {
-    if (IsEscaping(inner_alloc)) {
+    if (IsEscaping(graph, inner_alloc)) {
       return true;
     }
   }
   return false;
 }
-
-namespace {
 
 bool VerifyIsNotEscaping(VirtualObjectList vos, InlinedAllocation* alloc) {
   for (VirtualObject* vo : vos) {
@@ -4646,7 +4645,7 @@ bool VerifyIsNotEscaping(VirtualObjectList vos, InlinedAllocation* alloc) {
       if (!nested_value->Is<InlinedAllocation>()) return true;
       ValueNode* nested_alloc = nested_value->Cast<InlinedAllocation>();
       if (nested_alloc == alloc) {
-        if (vo->allocation()->HasEscapingUses() ||
+        if (vo->allocation()->IsEscaping() ||
             !VerifyIsNotEscaping(vos, vo->allocation())) {
           escaped = true;
         }
@@ -4665,7 +4664,6 @@ bool MaglevGraphBuilder::CanTrackObjectChanges(ValueNode* receiver,
   if (!v8_flags.maglev_object_tracking) return false;
   if (!receiver->Is<InlinedAllocation>()) return false;
   InlinedAllocation* alloc = receiver->Cast<InlinedAllocation>();
-  if (IsEscaping(alloc)) return false;
   if (mode == TrackObjectMode::kStore) {
     // If we have two objects A and B, such that A points to B (it contains B in
     // one of its field), we cannot change B without also changing A, even if
@@ -4674,6 +4672,7 @@ bool MaglevGraphBuilder::CanTrackObjectChanges(ValueNode* receiver,
         graph_->allocations_elide_map().end()) {
       return false;
     }
+    if (alloc->IsEscaping()) return false;
     // Ensure object is escaped if we are within a try-catch block. This is
     // crucial because a deoptimization point inside the catch handler could
     // re-materialize objects differently, depending on whether the throw
@@ -4682,6 +4681,9 @@ bool MaglevGraphBuilder::CanTrackObjectChanges(ValueNode* receiver,
     // the try-block started,  but for now, err on the side of caution and
     // always escape.
     if (IsInsideTryBlock()) return false;
+  } else {
+    DCHECK_EQ(mode, TrackObjectMode::kLoad);
+    if (IsEscaping(graph_, alloc)) return false;
   }
   // We don't support loop phis inside VirtualObjects, so any access inside a
   // loop should escape the object, except for objects that were created since
@@ -9067,7 +9069,7 @@ MaybeReduceResult MaglevGraphBuilder::TryReduceArrayIteratorPrototypeNext(
     VirtualObject* array = iterated_object->Cast<InlinedAllocation>()->object();
     // TODO(victorgomes): Remove this once we track changes in the inlined
     // allocated object.
-    if (IsEscaping(iterated_object->Cast<InlinedAllocation>())) {
+    if (iterated_object->Cast<InlinedAllocation>()->IsEscaping()) {
       FAIL("allocation is escaping, map could have been changed");
     }
     // TODO(victorgomes): This effectively disable the optimization for `for-of`
@@ -12132,7 +12134,7 @@ MaglevGraphBuilder::TryGetNonEscapingArgumentsObject(ValueNode* value) {
   }
   // TODO(victorgomes): We can probably loosen the IsNotEscaping requirement if
   // we keep track of the arguments object changes so far.
-  if (IsEscaping(alloc)) return {};
+  if (alloc->IsEscaping()) return {};
   VirtualObject* object = alloc->object();
   if (!object->has_static_map()) return {};
   // TODO(victorgomes): Support simple JSArray forwarding.
