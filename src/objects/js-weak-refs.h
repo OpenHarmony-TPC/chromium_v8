@@ -14,11 +14,6 @@
 #include "src/objects/object-macros.h"
 
 namespace v8 {
-#ifdef OH_ENABLE_HEAP_TRANSLATE
-namespace dfx {
-class ObjectTranslator;
-}
-#endif
 namespace internal {
 
 class NativeContext;
@@ -170,9 +165,6 @@ V8_OBJECT class WeakCell : public HeapObjectLayout {
   friend class ScavengerWeakObjectsProcessor;
   friend class TorqueGeneratedWeakCellAsserts;
   friend class V8HeapExplorer;
-#ifdef OH_ENABLE_HEAP_TRANSLATE
-  friend class dfx::ObjectTranslator;
-#endif
 } V8_OBJECT_END;
 
 class JSWeakRef : public TorqueGeneratedJSWeakRef<JSWeakRef, JSObject> {

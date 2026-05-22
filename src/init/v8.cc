@@ -31,9 +31,7 @@
 #include "src/sandbox/sandbox.h"
 #include "src/sandbox/testing.h"
 #include "src/snapshot/snapshot.h"
-#ifdef OHOS_JS_ENGINE
 #include "third_party/ohos_ndk/includes/ohos_adapter/ohos_adapter_helper.h"
-#endif
 #if defined(V8_USE_PERFETTO)
 #include "src/tracing/code-data-source.h"
 #endif  // defined(V8_USE_PERFETTO)
@@ -208,8 +206,8 @@ void V8::Initialize() {
 #ifdef OSOHOS
 #ifdef USING_OHOS_WEB
   rcs_enable = OHOS::NWeb::OhosAdapterHelper::GetInstance()
-                   .GetSystemPropertiesInstance()
-                   .GetBoolParameter("web.debug.rcs", false);
+                      .GetSystemPropertiesInstance()
+                      .GetBoolParameter("web.debug.rcs", false);
   if (rcs_enable == true) {
     TracingFlags::runtime_stats.store(1, std::memory_order_relaxed);
     StreamHilog("RCS is on");

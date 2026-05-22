@@ -299,7 +299,7 @@ void BodyDescriptorBase::IterateSelfIndirectPointer(Tagged<HeapObject> obj,
 template <typename ObjectVisitor>
 void BodyDescriptorBase::IterateProtectedPointer(Tagged<HeapObject> obj,
                                                  int offset, ObjectVisitor* v) {
-#ifndef OH_ENABLE_HEAP_TRANSLATE
+#ifndef ON_ENABLE_HEAP_TRANSLATE
   // [arkweb or jsvm]IsTrustedObject try to get and visit map in obj
   DCHECK(IsTrustedObject(obj));
 #endif

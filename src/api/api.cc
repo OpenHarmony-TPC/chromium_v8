@@ -78,7 +78,7 @@
 #include "src/init/startup-data-util.h"
 #include "src/init/v8.h"
 #ifdef V8_ENABLE_OHOS_OOM_MONITOR
-#include "arkweb/chromium_ext/v8/dfx/oom_mojom/v8-oom-reporter.h"
+#include "arkweb/chromium_ext/v8/dfx/oom_mojom/v8_oom_reporter.h"
 #endif
 #include "src/json/json-parser.h"
 #include "src/json/json-stringifier.h"
@@ -292,9 +292,9 @@ void Utils::ReportApiFailure(const char* location, const char* message) {
 void Utils::ReportOOMFailure(i::Isolate* i_isolate, const char* location,
                              const OOMDetails& details) {
 #ifdef V8_ENABLE_OHOS_OOM_MONITOR
-  if (dfx::V8OOMReportCallbackWithData report = dfx::GetOOMReportCallback();
-      report) {
-    report(location, details, nullptr);
+  auto reporter = i::V8::GetCurrentPlatform()->GetOOMReporter();
+  if (reporter) {
+    reporter->ReportOOM(location, details);
   }
 #endif
 
@@ -901,7 +901,7 @@ void Context::Enter() {
   i::Tagged<i::NativeContext> env = *Utils::OpenDirectHandle(this);
 #ifdef OHOS_JS_ENGINE
   i::Isolate* i_isolate = GetIsolateFromNativeContext(env);
-#else
+#elif
   i::Isolate* i_isolate = i::Isolate::Current();
 #endif
   EnterV8NoScriptNoExceptionScope api_scope(i_isolate);
@@ -916,7 +916,7 @@ void Context::Exit() {
 #ifdef OHOS_JS_ENGINE
   i::Isolate* i_isolate = GetIsolateFromNativeContext(
       i::Cast<i::NativeContext>(*env));
-#else
+#elif
   i::Isolate* i_isolate = i::Isolate::Current();
 #endif
   EnterV8NoScriptNoExceptionScope api_scope(i_isolate);

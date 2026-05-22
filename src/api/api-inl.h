@@ -273,7 +273,7 @@ class V8_NODISCARD EnterV8InternalScope {
     // is obtained from the HeapObject chain, not from TLS.
     DCHECK_IMPLIES(i::Isolate::TryGetCurrent() != nullptr,
                    i_isolate == i::Isolate::TryGetCurrent());
-#else
+#elif
     DCHECK_EQ(i_isolate, i::Isolate::TryGetCurrent());
 #endif
   }
@@ -289,7 +289,7 @@ class V8_NODISCARD EnterV8InternalScope {
 #ifdef OHOS_JS_ENGINE
     DCHECK_IMPLIES(i::Isolate::TryGetCurrent() != nullptr,
                    i_isolate == i::Isolate::TryGetCurrent());
-#else
+#elif
     DCHECK_EQ(i_isolate, i::Isolate::TryGetCurrent());
 #endif
   }
@@ -392,7 +392,7 @@ class V8_NODISCARD PrepareForExecutionScope
 #ifdef OHOS_JS_ENGINE
       : PrepareForExecutionScope{GetIsolateFromContext(context), context,
                                  rcc_id} {}
-#else
+#elif
       : PrepareForExecutionScope{i::Isolate::Current(), context, rcc_id} {}
 #endif
 
