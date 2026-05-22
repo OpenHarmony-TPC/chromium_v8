@@ -1299,10 +1299,6 @@ class V8_EXPORT JSVM_EXPORT HeapProfiler {
    */
   static const uint16_t kPersistentHandleNoClassId = 0;
 
-#if defined(OHOS_JS_ENGINE)
-  void DumpRawHeapSnapshot(OutputStream* stream);
-#endif
-
  private:
   HeapProfiler();
   ~HeapProfiler();

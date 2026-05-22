@@ -121,20 +121,17 @@
 #include "src/wasm/wasm-serialization.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
-#if (defined(OH_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST) || \
-     defined(OH_ENABLE_HEAP_DUMP))
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/binary-writer-base.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/binary-writer.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/dump-heap.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/heap-dump.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/translator/binary-reader.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/translator/snapshot-generator.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/translator/snapshot-serializer.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/translator/translate-heap.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/translator/translate-objects.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/ut/binary-reader-ut.h"
-#include "arkweb/chromium_ext/v8/dfx/heap_dump/ut/binary-writer-ut.h"
-
+#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+#include "arkweb/chromium_ext/v8/heap_dump/binary_writer.h"
+#include "arkweb/chromium_ext/v8/heap_dump/binary_writer_base.h"
+#include "arkweb/chromium_ext/v8/heap_dump/dump_heap.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/binary_reader.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/snapshot_generator.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/snapshot_serializer.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/translate_heap.h"
+#include "arkweb/chromium_ext/v8/heap_dump/translator/translate_objects.h"
+#include "arkweb/chromium_ext/v8/heap_dump/ut/binary_reader_ut.h"
+#include "arkweb/chromium_ext/v8/heap_dump/ut/binary_writer_ut.h"
 #endif
 
 #ifndef DCHECK
@@ -159,23 +156,6 @@ bool fuzzilli_reprl = true;
 #else
 bool fuzzilli_reprl = false;
 #endif  // V8_FUZZILLI
-
-#if (defined(OH_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
-int RunTranslateOnce(const ShellOptions& options) {
-  dfx::BinaryReader reader(std::string(options.translate_path));
-  dfx::SnapshotGenerator generator;
-
-  dfx::HeapTranslator translator(&reader, &generator);
-  translator.TranslateHeap();
-
-  dfx::SnapshotJSONSerializer serializer(&generator);
-  if (options.translate_out) {
-    serializer.SetOutputFile(std::string(options.translate_out));
-  }
-  serializer.Serialize();
-  return 0;
-}
-#endif
 
 Isolate::CreateParams GetDefaultIsolateCreateParams() {
   Isolate::CreateParams create_params;
@@ -1081,13 +1061,6 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
   }
 
   MaybeLocal<Value> maybe_result = script->Run(realm);
-
-#if (defined(OH_ENABLE_HEAP_DUMP) || defined(OH_ENABLE_HEAP_DUMP_TEST))
-  if (options.heapdump_out) {
-    dfx::DumpRawHeap(i_isolate->heap(),
-                     std::string(options.heapdump_out.get()));
-  }
-#endif
 
   if (options.code_cache_options ==
           ShellOptions::CodeCacheOptions::kProduceCacheAfterExecute &&
@@ -5129,7 +5102,7 @@ V8_NOINLINE void FuzzerMonitor::SimulateErrors() {
 
 V8_NOINLINE void FuzzerMonitor::ControlFlowViolation() {
   // Control flow violation caught by CFI.
-  void (*func)() = (void (*)())&Dummy;
+  void (*func)() = (void (*)()) & Dummy;
   func();
 }
 
@@ -6293,19 +6266,7 @@ bool Shell::SetOptions(int argc, char* argv[]) {
     } else if (FlagMatches("--dump-system-memory-stats", &argv[i])) {
       options.dump_system_memory_stats = true;
     }
-#if (defined(OH_ENABLE_HEAP_DUMP) || defined(OH_ENABLE_HEAP_DUMP_TEST))
-    else if (FlagWithArgMatches("--heapdump-out", &flag_value, argc, argv,
-                                &i)) {
-      std::cout << "--heapdump-out " << flag_value << std::endl;
-      options.heapdump_out = flag_value;
-      if (!ends_with(options.heapdump_out, ".rawheap")) {
-        std::cout << "you should use it like: d8 --heapdump-out xx.rawheap"
-                  << std::endl;
-        return false;
-      }
-    }
-#endif
-#if (defined(OH_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
 
     else if (FlagWithArgMatches("--translate", &flag_value, argc, argv, &i)) {
       std::cout << "--translate " << flag_value << std::endl;
@@ -6674,7 +6635,25 @@ bool Shell::RunMainIsolate(v8::Isolate* isolate, bool keep_context_alive) {
     // context and SourceGroup::Execute may execute a non-nestable task, e.g. a
     // stackless GC.
     global_context.Get(isolate)->Enter();
-    if (!options.isolate_sources[0].Execute(isolate))
+#if (defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
+
+    if (options.translate_path) {
+      dfx::BinaryReader reader(std::string(options.translate_path));
+      dfx::SnapshotGenerator generator;
+
+      dfx::HeapTranslator translator(&reader, &generator);
+      translator.TranslateHeap();
+
+      dfx::SnapshotJSONSerializer serializer(&generator);
+      if (options.translate_out) {
+        serializer.SetOutputFile(std::string(options.translate_out));
+      }
+      serializer.Serialize();
+      success = true;
+      return success;
+    } else
+#endif
+        if (!options.isolate_sources[0].Execute(isolate))
       success = false;
     global_context.Get(isolate)->Exit();
   }
@@ -7155,11 +7134,6 @@ int Shell::Main(int argc, char* argv[]) {
   ConfigurePartitionAllocIfEnabled();
   v8::base::EnsureConsoleOutput();
   if (!SetOptions(argc, argv)) return 1;
-#if (defined(OH_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP_TEST))
-  if (options.translate_path) {
-    return RunTranslateOnce(options);
-  }
-#endif
   if (!i::v8_flags.fuzzing) d8_install_sigterm_handler();
 
   base::FlushDenormalsScope denormals_scope(options.flush_denormals);

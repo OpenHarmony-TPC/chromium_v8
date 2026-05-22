@@ -14,11 +14,6 @@
 #include "src/objects/object-macros.h"
 
 namespace v8 {
-#ifdef OH_ENABLE_HEAP_TRANSLATE
-namespace dfx {
-class ObjectTranslator;
-}
-#endif
 namespace internal {
 
 enum InstanceType : uint16_t;
@@ -163,9 +158,6 @@ V8_OBJECT class AllocationSite : public HeapObjectLayout {
   friend class ArrayBuiltinsAssembler;
   friend class ObjectBuiltinsAssembler;
   friend class V8HeapExplorer;
-#ifdef OH_ENABLE_HEAP_TRANSLATE
-  friend class dfx::ObjectTranslator;
-#endif
 
   // Contains either a Smi-encoded bitfield or a boilerplate. If it's a Smi the
   // AllocationSite is for a constructed Array.

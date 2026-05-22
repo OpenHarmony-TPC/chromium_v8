@@ -5,9 +5,7 @@
 #ifndef V8_OBJECTS_MODULE_H_
 #define V8_OBJECTS_MODULE_H_
 
-#if defined(OS_OHOS)
 #include "arkweb/build/features/features.h"
-#endif
 #include "include/v8-script.h"
 #include "src/objects/js-objects.h"
 #include "src/objects/objects.h"
@@ -100,12 +98,8 @@ class Module : public TorqueGeneratedModule<Module, HeapObject> {
   // If [must_resolve] is true, a null result indicates an exception. If
   // [must_resolve] is false, a null result may or may not indicate an
   // exception (so check manually!).
-#if defined(OS_OHOS)
 #if BUILDFLAG(ARKWEB_ENABLE_PAC)
   class __attribute__((nopac)) ResolveSet;
-#else
-  class ResolveSet;
-#endif  // BUILDFLAG(ARKWEB_ENABLE_PAC)
 #else
   class ResolveSet;
 #endif

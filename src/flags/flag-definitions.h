@@ -3903,12 +3903,8 @@ DEFINE_UINT(proto_assign_seq_opt_count, 2,
             "prototype object for replacing it with a single byte code")
 DEFINE_NEG_IMPLICATION(proto_assign_seq_opt_count == 0, proto_assign_seq_opt)
 
-#if defined(OH_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP)
+#if defined(ON_ENABLE_HEAP_TRANSLATE) || defined(OH_ENABLE_HEAP_DUMP)
 DEFINE_BOOL(log_heapdump, false, "log heapdump")
-#if defined(OH_ENABLE_HEAP_DUMP) && defined(USING_OHOS)
-DEFINE_BOOL(heap_dump_on_oom, false,
-            "Write a heap snapshot to disk on last-resort GCs")
-#endif
 #endif
 
 #if defined(V8_USE_LIBM_TRIG_FUNCTIONS)
