@@ -273,9 +273,7 @@ class RootVisitor;
   V(ProtectedFixedArray, empty_protected_fixed_array,                     \
     EmptyProtectedFixedArray)                                             \
   V(ProtectedWeakFixedArray, empty_protected_weak_fixed_array,            \
-    EmptyProtectedWeakFixedArray)                                         \
-  IF_WASM(V, WasmDispatchTable, empty_wasm_dispatch_table,                \
-          EmptyWasmDispatchTable)
+    EmptyProtectedWeakFixedArray)
 
 #define BUILTINS_WITH_SFI_LIST_GENERATOR(APPLY, V)                             \
   APPLY(V, ProxyRevoke, proxy_revoke)                                          \

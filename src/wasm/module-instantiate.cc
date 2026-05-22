@@ -1329,11 +1329,12 @@ Maybe<bool> InstanceBuilder::Build_Phase1(
               : DirectHandle<HeapObject>{isolate_->factory()->null_value()},
           table.address_type, &dispatch_table);
       (table.shared ? shared_tables : tables)->set(i, *table_obj);
-      (table.shared ? shared_dispatch_tables
-                                        : dispatch_tables)
-          ->set(i, *dispatch_table);
-      if (i == 0) {
-        trusted_data(table.shared)->set_dispatch_table0(*dispatch_table);
+      if (!dispatch_table.is_null()) {
+        (table.shared ? shared_dispatch_tables : dispatch_tables)
+            ->set(i, *dispatch_table);
+        if (i == 0) {
+          trusted_data(table.shared)->set_dispatch_table0(*dispatch_table);
+        }
       }
     }
   }
@@ -2066,18 +2067,19 @@ bool InstanceBuilder::ProcessImportedTable(int import_index, int table_index,
   // Note: {trusted_instance_data} is selected by the caller to be the
   // shared or non-shared part, depending on {table.shared}.
   trusted_instance_data->tables()->set(table_index, *table_object);
-  Tagged<WasmDispatchTable> dispatch_table =
-      table_object->trusted_dispatch_table(isolate_);
-  if (IsSubtypeOf(table.type, kWasmFuncRef, module_)) {
-    SBXCHECK(dispatch_table !=
-             *isolate_->factory()->empty_wasm_dispatch_table());
+  if (table_object->has_trusted_dispatch_table()) {
+    Tagged<WasmDispatchTable> dispatch_table =
+        table_object->trusted_dispatch_table(isolate_);
     SBXCHECK_EQ(dispatch_table->table_type(),
                 module_->canonical_type(table.type));
     SBXCHECK_GE(dispatch_table->length(), table.initial_size);
-  }
-  trusted_instance_data->dispatch_tables()->set(table_index, dispatch_table);
-  if (table_index == 0) {
-    trusted_instance_data->set_dispatch_table0(dispatch_table);
+    trusted_instance_data->dispatch_tables()->set(table_index, dispatch_table);
+    if (table_index == 0) {
+      trusted_instance_data->set_dispatch_table0(dispatch_table);
+    }
+  } else {
+    // Function tables are required to have a WasmDispatchTable.
+    SBXCHECK(!IsSubtypeOf(table.type, kWasmFuncRef, module_));
   }
   return true;
 }
@@ -2684,8 +2686,7 @@ namespace {
 V8_INLINE void SetFunctionTablePlaceholder(
     Isolate* isolate,
     DirectHandle<WasmTrustedInstanceData> trusted_instance_data,
-    DirectHandle<WasmTableObject> table_object,
-    DirectHandle<WasmDispatchTable> dispatch_table, uint32_t entry_index,
+    DirectHandle<WasmTableObject> table_object, uint32_t entry_index,
     uint32_t func_index) {
   const WasmModule* module = trusted_instance_data->module();
   const WasmFunction* function = &module->functions[func_index];
@@ -2696,7 +2697,7 @@ V8_INLINE void SetFunctionTablePlaceholder(
     WasmTableObject::SetFunctionTablePlaceholder(
         isolate, table_object, entry_index, trusted_instance_data, func_index);
   }
-  WasmTableObject::UpdateDispatchTable(isolate, dispatch_table, entry_index,
+  WasmTableObject::UpdateDispatchTable(isolate, table_object, entry_index,
                                        function, trusted_instance_data
 #if V8_ENABLE_DRUMBRAKE
                                        ,
@@ -2707,9 +2708,9 @@ V8_INLINE void SetFunctionTablePlaceholder(
 
 V8_INLINE void SetFunctionTableNullEntry(
     Isolate* isolate, DirectHandle<WasmTableObject> table_object,
-    DirectHandle<WasmDispatchTable> dispatch_table, uint32_t entry_index) {
+    uint32_t entry_index) {
   table_object->entries()->set(entry_index, ReadOnlyRoots{isolate}.wasm_null());
-  dispatch_table->Clear(entry_index, WasmDispatchTable::kExistingEntry);
+  table_object->ClearDispatchTable(entry_index);
 }
 }  // namespace
 
@@ -2728,22 +2729,18 @@ void InstanceBuilder::SetTableInitialValues() {
         Cast<WasmTableObject>(maybe_shared_data->tables()->get(table_index)),
         isolate_);
     bool is_function_table = IsSubtypeOf(table.type, kWasmFuncRef, module_);
-    DirectHandle<WasmDispatchTable> dispatch_table(
-        maybe_shared_data->dispatch_table(table_index), isolate_);
     if (is_function_table &&
         table.initial_value.kind() == ConstantExpression::Kind::kRefFunc) {
       for (uint32_t entry_index = 0; entry_index < table.initial_size;
            entry_index++) {
         SetFunctionTablePlaceholder(isolate_, maybe_shared_data, table_object,
-                                    dispatch_table, entry_index,
-                                    table.initial_value.index());
+                                    entry_index, table.initial_value.index());
       }
     } else if (is_function_table && table.initial_value.kind() ==
                                         ConstantExpression::Kind::kRefNull) {
       for (uint32_t entry_index = 0; entry_index < table.initial_size;
            entry_index++) {
-        SetFunctionTableNullEntry(isolate_, table_object, dispatch_table,
-                                  entry_index);
+        SetFunctionTableNullEntry(isolate_, table_object, entry_index);
       }
     } else {
       ValueOrError result = EvaluateConstantExpression(
@@ -2752,8 +2749,8 @@ void InstanceBuilder::SetTableInitialValues() {
       if (MaybeMarkError(result, thrower_)) return;
       for (uint32_t entry_index = 0; entry_index < table.initial_size;
            entry_index++) {
-        WasmTableObject::Set(isolate_, table_object, dispatch_table,
-                             entry_index, to_value(result).to_ref());
+        WasmTableObject::Set(isolate_, table_object, entry_index,
+                             to_value(result).to_ref());
       }
     }
   }
@@ -2965,8 +2962,6 @@ void InstanceBuilder::LoadTableSegments() {
     bool is_function_table =
         IsSubtypeOf(module_->tables[table_index].type, kWasmFuncRef, module_);
 
-    DirectHandle<WasmDispatchTable> dispatch_table(
-        trusted_data(table->shared)->dispatch_table(table_index), isolate_);
     if (is_function_table) {
       for (size_t i = 0; i < count; i++) {
         int entry_index = static_cast<int>(dest_offset + i);
@@ -2981,15 +2976,13 @@ void InstanceBuilder::LoadTableSegments() {
           if (computed_value.to_i32() >= 0) {
             // TODO(42204563): Should this use trusted_data(table->shared)?
             SetFunctionTablePlaceholder(isolate_, trusted_data_, table_object,
-                                        dispatch_table, entry_index,
-                                        computed_value.to_i32());
+                                        entry_index, computed_value.to_i32());
           } else {
-            SetFunctionTableNullEntry(isolate_, table_object, dispatch_table,
-                                      entry_index);
+            SetFunctionTableNullEntry(isolate_, table_object, entry_index);
           }
         } else {
-          WasmTableObject::Set(isolate_, table_object, dispatch_table,
-                               entry_index, computed_value.to_ref());
+          WasmTableObject::Set(isolate_, table_object, entry_index,
+                               computed_value.to_ref());
         }
       }
     } else {
@@ -2999,8 +2992,8 @@ void InstanceBuilder::LoadTableSegments() {
             &init_expr_zone_, isolate_, trusted_data_, shared_trusted_data_,
             elem_segment, decoder, kStrictFunctionsAndNull);
         if (MaybeMarkError(computed_element, thrower_)) return;
-        WasmTableObject::Set(isolate_, table_object, dispatch_table,
-                             entry_index, to_value(computed_element).to_ref());
+        WasmTableObject::Set(isolate_, table_object, entry_index,
+                             to_value(computed_element).to_ref());
       }
     }
     // Active segment have to be set to empty after instance initialization

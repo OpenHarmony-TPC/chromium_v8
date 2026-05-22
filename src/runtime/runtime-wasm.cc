@@ -885,9 +885,7 @@ RUNTIME_FUNCTION(Runtime_WasmFunctionTableSet) {
   if (!table->is_in_bounds(entry_index)) {
     return ThrowWasmError(isolate, MessageTemplate::kWasmTrapTableOutOfBounds);
   }
-  DirectHandle<WasmDispatchTable> dispatch_table(
-      trusted_instance_data->dispatch_table(table_index), isolate);
-  WasmTableObject::Set(isolate, table, dispatch_table, entry_index, element);
+  WasmTableObject::Set(isolate, table, entry_index, element);
   return ReadOnlyRoots(isolate).undefined_value();
 }
 
@@ -954,10 +952,7 @@ RUNTIME_FUNCTION(Runtime_WasmTableGrow) {
   DirectHandle<WasmTableObject> table(
       Cast<WasmTableObject>(trusted_instance_data->tables()->get(table_index)),
       isolate);
-  DirectHandle<WasmDispatchTable> dispatch_table(
-      trusted_instance_data->dispatch_table(table_index), isolate);
-  int result =
-      WasmTableObject::Grow(isolate, table, dispatch_table, delta, value);
+  int result = WasmTableObject::Grow(isolate, table, delta, value);
 
   return Smi::FromInt(result);
 }
@@ -988,10 +983,7 @@ RUNTIME_FUNCTION(Runtime_WasmTableFill) {
   if (fill_count < count) {
     return ThrowTableOutOfBounds(isolate, trusted_instance_data);
   }
-  DirectHandle<WasmDispatchTable> dispatch_table(
-      trusted_instance_data->dispatch_table(table_index), isolate);
-  WasmTableObject::Fill(isolate, table, dispatch_table, start, value,
-                        fill_count);
+  WasmTableObject::Fill(isolate, table, start, value, fill_count);
 
   return ReadOnlyRoots(isolate).undefined_value();
 }
