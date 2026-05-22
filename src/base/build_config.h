@@ -53,13 +53,6 @@
 #endif
 
 
-// jitfort conflicts with pthread_jit_write_protect
-#if defined(V8_HOST_ARCH_ARM64) && defined(V8_ENABLE_JITFORT) && !V8_HAS_PTHREAD_JIT_WRITE_PROTECT
-#define V8_HAS_JIT_FORT_PROTECT 1
-#else
-#define V8_HAS_JIT_FORT_PROTECT 0
-#endif
-
 #if defined(V8_TARGET_ARCH_IA32) || defined(V8_TARGET_ARCH_X64)
 #define V8_TARGET_ARCH_STORES_RETURN_ADDRESS_ON_STACK true
 #else
