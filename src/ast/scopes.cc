@@ -2145,27 +2145,21 @@ Variable* Scope::Lookup(VariableProxy* proxy, Scope* scope,
                                 force_context_allocation);
       }
 #ifdef OHOS_JS_ENGINE
-      if (V8_UNLIKELY(scope->is_with_scope())) {
-        if (!(proxy->raw_name()->is_base_std_builtin_name() &&
-              scope->has_never_hide_base_std_hint())) {
-          return LookupWith(proxy, scope, outer_scope_end, cache_scope,
-                            force_context_allocation);
-        }
-        // Skip the annotated with scope for base standard library names.
-      } else {
-        CHECK_EQ(mode, kDeserializedScope);
-        CHECK(scope->is_debug_evaluate_scope());
-        return cache_scope->NonLocal(proxy->raw_name(), VariableMode::kDynamic);
+      if (V8_UNLIKELY(scope->is_with_scope() &&
+                      !(proxy->raw_name()->is_base_std_builtin_name() &&
+                        scope->has_never_hide_base_std_hint()))) {
+        return LookupWith(proxy, scope, outer_scope_end, cache_scope,
+                          force_context_allocation);
       }
 #else
       if (scope->is_with_scope()) {
         return LookupWith(proxy, scope, outer_scope_end, cache_scope,
                           force_context_allocation);
       }
+#endif
       CHECK_EQ(mode, kDeserializedScope);
       CHECK(scope->is_debug_evaluate_scope());
       return cache_scope->NonLocal(proxy->raw_name(), VariableMode::kDynamic);
-#endif
     }
 
     force_context_allocation |= scope->is_function_scope();
