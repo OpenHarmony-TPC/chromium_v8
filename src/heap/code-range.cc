@@ -187,8 +187,7 @@ bool CodeRange::InitReservation(v8::PageAllocator* page_allocator,
     params.page_freeing_mode = base::PageFreeingMode::kDiscard;
   }
 
-#if defined(V8_TARGET_OS_IOS) || defined(V8_TARGET_OS_CHROMEOS) || \
-    defined(V8_HAS_JIT_FORT_PROTECT)
+#if defined(V8_TARGET_OS_IOS) || defined(V8_TARGET_OS_CHROMEOS)
   // iOS:
   // We only get one shot at doing MAP_JIT on iOS. So we need to make it
   // the least restrictive so it succeeds otherwise we will terminate the
@@ -590,7 +589,6 @@ uint8_t* CodeRange::RemapEmbeddedBuiltins(Isolate* isolate,
 
   const size_t commit_page_size = page_allocator()->CommitPageSize();
   size_t code_size = RoundUp(embedded_blob_code_size, commit_page_size);
-#ifndef V8_HAS_JIT_FORT_PROTECT
   if constexpr (base::OS::IsRemapPageSupported()) {
     // By default, the embedded builtins are not remapped, but copied. This
     // costs memory, since builtins become private dirty anonymous memory,
@@ -615,7 +613,6 @@ uint8_t* CodeRange::RemapEmbeddedBuiltins(Isolate* isolate,
       }
     }
   }
-#endif
 
   if (V8_HEAP_USE_PTHREAD_JIT_WRITE_PROTECT ||
       V8_HEAP_USE_BECORE_JIT_WRITE_PROTECT || ThreadIsolation::Enabled()) {

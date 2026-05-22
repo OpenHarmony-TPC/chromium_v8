@@ -21,9 +21,6 @@
 #if V8_HAS_BECORE_JIT_WRITE_PROTECT
 #include <BrowserEngineCore/BEMemory.h>
 #endif
-#if V8_HAS_JIT_FORT_PROTECT
-#include "src/base/platform/jitfort.h"
-#endif
 
 namespace v8 {
 namespace internal {
@@ -384,28 +381,7 @@ void RwxMemoryWriteScope::SetExecutable() {
       ThreadIsolation::pkey(), base::MemoryProtectionKey::kDisableWrite);
 }
 
-#elif V8_HAS_JIT_FORT_PROTECT
-
-// static
-bool RwxMemoryWriteScope::IsSupported()
-{
-  return true;
-}
-
-// static
-void RwxMemoryWriteScope::SetWritable()
-{
-  base::JITFort::SetJITMemoryWritable();
-}
-
-// static
-void RwxMemoryWriteScope::SetExecutable()
-{
-  base::JITFort::SetJITMemoryExecutable();
-}
-
 #else  // !V8_HAS_PTHREAD_JIT_WRITE_PROTECT && !V8_TRY_USE_PKU_JIT_WRITE_PROTECT
-       // && !V8_HAS_JIT_FORT_PROTECT
 
 // static
 bool RwxMemoryWriteScope::IsSupported() { return false; }

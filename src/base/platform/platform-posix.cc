@@ -84,10 +84,6 @@
 #include <sys/syscall.h>
 #endif
 
-#if V8_HAS_JIT_FORT_PROTECT
-#include "src/base/platform/jitfort.h"
-#endif
-
 #if V8_OS_FREEBSD || V8_OS_DARWIN || V8_OS_OPENBSD || V8_OS_SOLARIS
 #define MAP_ANONYMOUS MAP_ANON
 #endif
@@ -123,11 +119,7 @@ const pthread_t kNoThread = static_cast<pthread_t>(0);
 const char* g_gc_fake_mmap = nullptr;
 
 #if OHOS_JS_ENGINE
-#if V8_ENABLE_JITFORT
-#define MAP_JIT 0x1000
-#else
 #define MAP_JIT 0x1040
-#endif
 #endif
 
 #ifdef V8_HOST_ARCH_ARM64
@@ -738,13 +730,6 @@ bool OS::DiscardSystemPages(void* address, size_t size) {
 bool OS::DecommitPages(void* address, size_t size) {
   DCHECK_EQ(0, reinterpret_cast<uintptr_t>(address) % CommitPageSize());
   DCHECK_EQ(0, size % CommitPageSize());
-#if V8_HAS_JIT_FORT_PROTECT
-  if (mprotect(address, size, PROT_NONE) != 0) {
-    CHECK_EQ(ENOMEM, errno);
-    return false;
-  }
-  madvise(address, size, MADV_DONTNEED);
-#else
   // From https://pubs.opengroup.org/onlinepubs/9699919799/functions/mmap.html:
   // "If a MAP_FIXED request is successful, then any previous mappings [...] for
   // those whole pages containing any part of the address range [pa,pa+len)
@@ -759,7 +744,6 @@ bool OS::DecommitPages(void* address, size_t size) {
     return false;
   }
   CHECK_EQ(ret, address);
-#endif
   return true;
 }
 #endif  // !defined(_AIX)
@@ -1311,9 +1295,6 @@ Thread::Thread(const Options& options)
   const int min_stack_size = static_cast<int>(PTHREAD_STACK_MIN);
   if (stack_size_ > 0) stack_size_ = std::max(stack_size_, min_stack_size);
   set_name(options.name());
-#if V8_HAS_JIT_FORT_PROTECT
-  base::JITFort::EnableJitfort();
-#endif
 }
 
 Thread::~Thread() {

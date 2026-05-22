@@ -201,11 +201,6 @@
   'test-concurrent-allocation/ConcurrentAllocationInOldSpace': [PASS, ['mode == debug', SKIP]],
 }],  # arch == arm64 and system == macos and not simulator_run
 
-['arch == arm64 and not simulator_run', {
-  'test-assembler-arm64/*': [SKIP],
-}],  # arch == arm64 and not simulator_run
-
-
 ##############################################################################
 ['arch == arm and not simulator_run', {
   # Fails on ODROID: https://crbug.com/v8/11634
