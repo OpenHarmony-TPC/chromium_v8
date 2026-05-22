@@ -1452,8 +1452,7 @@ bool V8Debugger::addInternalObject(v8::Local<v8::Context> context,
                                    v8::Local<v8::Object> object,
                                    V8InternalValueType type) {
   int contextId = InspectedContext::contextId(context);
-  std::shared_ptr<InspectedContext> inspectedContext =
-      m_inspector->getContext(contextId);
+  InspectedContext* inspectedContext = m_inspector->getContext(contextId);
   return inspectedContext ? inspectedContext->addInternalObject(object, type)
                           : false;
 }
