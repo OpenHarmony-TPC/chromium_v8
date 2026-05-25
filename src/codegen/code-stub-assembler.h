@@ -4146,17 +4146,19 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
       TNode<Context> context, TNode<JSArrayBufferView> array_buffer_view,
       const char* method_name);
 
-  // JSTypedArray helpers
-  TNode<UintPtrT> LoadJSTypedArrayLength(TNode<JSTypedArray> typed_array);
+  TNode<UintPtrT> LoadJSTypedArrayLength(
+      TNode<JSTypedArray> typed_array); 
   void StoreJSTypedArrayLength(TNode<JSTypedArray> typed_array,
                                TNode<UintPtrT> value);
   TNode<UintPtrT> LoadJSTypedArrayLengthAndCheckDetached(
-      TNode<JSTypedArray> typed_array, Label* detached);
+      TNode<JSTypedArray> typed_array, Label* detached,
+      std::optional<TNode<Int32T>> elements_kind = std::nullopt);
   // Helper for length tracking JSTypedArrays and JSTypedArrays backed by
   // ResizableArrayBuffer.
   TNode<UintPtrT> LoadVariableLengthJSTypedArrayLength(
       TNode<JSTypedArray> array, TNode<JSArrayBuffer> buffer,
-      Label* detached_or_out_of_bounds);
+      Label* detached_or_out_of_bounds,
+      std::optional<TNode<Int32T>> elements_kind = std::nullopt);
   // Helper for length tracking JSTypedArrays and JSTypedArrays backed by
   // ResizableArrayBuffer.
   TNode<UintPtrT> LoadVariableLengthJSTypedArrayByteLength(
@@ -4259,6 +4261,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
       TNode<NativeContext> native_context) {
     return AllocateRootFunctionWithContext(static_cast<RootIndex>(function),
                                            context, native_context);
+  }
+
+  TNode<BoolT> IsBaselineCode(TNode<Code> code) {
+    TNode<Int32T> code_flags =
+        LoadObjectField<Int32T>(code, Code::kFlagsOffset);
+    return Word32Equal(DecodeWord32<Code::KindField>(code_flags),
+                       Int32Constant(static_cast<int>(CodeKind::BASELINE)));
   }
 
   // Promise helpers

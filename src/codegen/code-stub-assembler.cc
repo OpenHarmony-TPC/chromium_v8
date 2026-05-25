@@ -3771,13 +3771,7 @@ TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
             &check_for_interpreter_data);
   {
     TNode<Code> code = CAST(var_result.value());
-#ifdef DEBUG
-    TNode<Int32T> code_flags =
-        LoadObjectField<Int32T>(code, Code::kFlagsOffset);
-    CSA_DCHECK(
-        this, Word32Equal(DecodeWord32<Code::KindField>(code_flags),
-                          Int32Constant(static_cast<int>(CodeKind::BASELINE))));
-#endif  // DEBUG
+    CSA_SBXCHECK(this, IsBaselineCode(code));
     TNode<HeapObject> baseline_data = CAST(LoadProtectedPointerField(
         code, Code::kDeoptimizationDataOrInterpreterDataOffset));
     var_result = baseline_data;
@@ -17171,7 +17165,8 @@ void CodeStubAssembler::StoreJSTypedArrayLength(TNode<JSTypedArray> typed_array,
 }
 
 TNode<UintPtrT> CodeStubAssembler::LoadJSTypedArrayLengthAndCheckDetached(
-    TNode<JSTypedArray> typed_array, Label* detached) {
+    TNode<JSTypedArray> typed_array, Label* detached,
+    std::optional<TNode<Int32T>> elements_kind) {
   TVARIABLE(UintPtrT, result);
   TNode<JSArrayBuffer> buffer = LoadJSArrayBufferViewBuffer(typed_array);
 
@@ -17181,7 +17176,8 @@ TNode<UintPtrT> CodeStubAssembler::LoadJSTypedArrayLengthAndCheckDetached(
   BIND(&variable_length);
   {
     result =
-        LoadVariableLengthJSTypedArrayLength(typed_array, buffer, detached);
+        LoadVariableLengthJSTypedArrayLength(typed_array, buffer, detached,
+                                             elements_kind);
     Goto(&end);
   }
 
@@ -17200,12 +17196,12 @@ TNode<UintPtrT> CodeStubAssembler::LoadJSTypedArrayLengthAndCheckDetached(
 // ES #sec-integerindexedobjectlength
 TNode<UintPtrT> CodeStubAssembler::LoadVariableLengthJSTypedArrayLength(
     TNode<JSTypedArray> array, TNode<JSArrayBuffer> buffer,
-    Label* detached_or_out_of_bounds) {
+    Label* detached_or_out_of_bounds, std::optional<TNode<Int32T>> elements_kind) {
   // byte_length already takes array's offset into account.
   TNode<UintPtrT> byte_length = LoadVariableLengthJSArrayBufferViewByteLength(
       array, buffer, detached_or_out_of_bounds);
-  TNode<Uint8T> element_shift =
-      RabGsabElementsKindToElementByteShift(LoadElementsKind(array));
+  TNode<Int32T> kind = elements_kind ? *elements_kind : LoadElementsKind(array);
+  TNode<Uint8T> element_shift = RabGsabElementsKindToElementByteShift(kind);
   return WordShr(byte_length, element_shift);
 }
 
@@ -17815,6 +17811,7 @@ TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
     BIND(&check_is_baseline_data);
     {
       TNode<Code> baseline_code = CAST(sfi_data);
+      CSA_SBXCHECK(this, IsBaselineCode(baseline_code));
       sfi_code = baseline_code;
       Goto(&done);
     }
@@ -17837,8 +17834,9 @@ TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
 #if V8_ENABLE_WEBASSEMBLY
     // IsWasmFunctionData: Use the wrapper code
     BIND(&check_is_wasm_function_data);
-    sfi_code = CAST(LoadObjectField(
-        CAST(sfi_data), WasmExportedFunctionData::kWrapperCodeOffset));
+    sfi_code = CAST(LoadTrustedPointerFromObject(
+        CAST(sfi_data), WasmExportedFunctionData::kWrapperCodeOffset,
+        kCodeIndirectPointerTag));
     Goto(&done);
 #endif  // V8_ENABLE_WEBASSEMBLY
   }

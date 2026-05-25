@@ -706,7 +706,7 @@ static void AssertCodeIsBaselineAllowClobber(MacroAssembler* masm,
   __ movl(scratch, FieldOperand(code, Code::kFlagsOffset));
   __ DecodeField<Code::KindField>(scratch);
   __ cmpl(scratch, Immediate(static_cast<int>(CodeKind::BASELINE)));
-  __ Assert(equal, AbortReason::kExpectedBaselineData);
+  __ SbxCheck(equal, AbortReason::kExpectedBaselineData);
 }
 
 static void AssertCodeIsBaseline(MacroAssembler* masm, Register code,
@@ -5166,8 +5166,8 @@ void Builtins::Generate_InterpreterOnStackReplacement_ToBaseline(
   if (v8_flags.debug_code) {
     __ IsObjectType(code_obj, CODE_TYPE, kScratchRegister);
     __ Assert(equal, AbortReason::kExpectedBaselineData);
-    AssertCodeIsBaseline(masm, code_obj, r11);
   }
+  AssertCodeIsBaseline(masm, code_obj, r11);
 
   // Load the feedback cell and feedback vector.
   Register feedback_cell = r8;

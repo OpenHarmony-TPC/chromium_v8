@@ -14,6 +14,10 @@
 #include "src/objects/templates.h"
 #include "src/sandbox/sandbox.h"
 
+#ifdef V8_INTL_SUPPORT
+#include "src/objects/js-segments.h"
+#endif  // V8_INTL_SUPPORT
+
 #ifdef V8_OS_LINUX
 #include <signal.h>
 #include <sys/mman.h>
@@ -801,6 +805,7 @@ SandboxTesting::InstanceTypeMap& SandboxTesting::GetInstanceTypeMap() {
   if (!is_initialized) {
     types["JS_OBJECT_TYPE"] = JS_OBJECT_TYPE;
     types["JS_FUNCTION_TYPE"] = JS_FUNCTION_TYPE;
+    types["JS_BOUND_FUNCTION_TYPE"] = JS_BOUND_FUNCTION_TYPE;
     types["JS_ARRAY_TYPE"] = JS_ARRAY_TYPE;
     types["JS_ARRAY_BUFFER_TYPE"] = JS_ARRAY_BUFFER_TYPE;
     types["JS_TYPED_ARRAY_TYPE"] = JS_TYPED_ARRAY_TYPE;
@@ -837,6 +842,8 @@ SandboxTesting::FieldOffsetMap& SandboxTesting::GetFieldOffsetMap() {
 #endif  // V8_ENABLE_LEAPTIERING
     fields[JS_FUNCTION_TYPE]["shared_function_info"] =
         JSFunction::kSharedFunctionInfoOffset;
+    fields[JS_BOUND_FUNCTION_TYPE]["bound_arguments"] =
+        JSBoundFunction::kBoundArgumentsOffset;
     fields[JS_ARRAY_TYPE]["elements"] = JSArray::kElementsOffset;
     fields[JS_ARRAY_TYPE]["length"] = JSArray::kLengthOffset;
     fields[JS_TYPED_ARRAY_TYPE]["length"] = JSTypedArray::kRawLengthOffset;
@@ -869,6 +876,10 @@ SandboxTesting::FieldOffsetMap& SandboxTesting::GetFieldOffsetMap() {
         SharedFunctionInfo::kFormalParameterCountOffset;
     fields[SCRIPT_TYPE]["wasm_managed_native_module"] =
         Script::kEvalFromPositionOffset;
+#ifdef V8_INTL_SUPPORT
+    fields[JS_SEGMENTS_TYPE]["icu_iterator_with_text"] =
+        JSSegments::kIcuIteratorWithTextOffset;
+#endif  // V8_INTL_SUPPORT
 #ifdef V8_ENABLE_WEBASSEMBLY
     fields[WASM_MODULE_OBJECT_TYPE]["managed_native_module"] =
         WasmModuleObject::kManagedNativeModuleOffset;
