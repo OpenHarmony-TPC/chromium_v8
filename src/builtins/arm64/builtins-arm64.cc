@@ -386,7 +386,7 @@ static void AssertCodeIsBaselineAllowClobber(MacroAssembler* masm,
   __ Ldr(scratch, FieldMemOperand(code, Code::kFlagsOffset));
   __ DecodeField<Code::KindField>(scratch);
   __ Cmp(scratch, Operand(static_cast<int>(CodeKind::BASELINE)));
-  __ Assert(eq, AbortReason::kExpectedBaselineData);
+  __ SbxCheck(eq, AbortReason::kExpectedBaselineData);
 }
 
 static void AssertCodeIsBaseline(MacroAssembler* masm, Register code,
@@ -402,7 +402,7 @@ static void GetSharedFunctionInfoBytecodeOrBaseline(
     Label* is_baseline, Label* is_unavailable) {
   ASM_CODE_COMMENT(masm);
   DCHECK(!AreAliased(bytecode, scratch1));
-  Label is_interpreter_data, is_bytecode_array;
+  Label is_interpreter_data, is_bytecode_array, is_code;
 
   Register data = bytecode;
   __ LoadTrustedUnknownPointerField(
@@ -413,12 +413,18 @@ static void GetSharedFunctionInfoBytecodeOrBaseline(
           {INTERPRETER_DATA_TYPE, &is_interpreter_data},
           {BYTECODE_ARRAY_TYPE, &is_bytecode_array},
 #if !V8_JITLESS_BOOL
-          {CODE_TYPE, is_baseline},
+          {CODE_TYPE, &is_code},
 #endif
       });
   // Fallthrough means none of the types matched. The destination register is
   // zeroed.
   __ B(is_unavailable);
+
+#if !V8_JITLESS_BOOL
+  __ Bind(&is_code);
+  AssertCodeIsBaseline(masm, data, scratch1);
+  __ B(is_baseline);
+#endif
 
   __ bind(&is_interpreter_data);
   __ LoadInterpreterDataBytecodeArray(bytecode, data);
@@ -2952,8 +2958,8 @@ void Generate_PushBoundArguments(MacroAssembler* masm) {
   Label no_bound_arguments;
   __ LoadTaggedField(
       bound_argv, FieldMemOperand(x1, JSBoundFunction::kBoundArgumentsOffset));
-  __ SmiUntagField(bound_argc,
-                   FieldMemOperand(bound_argv, offsetof(FixedArray, length_)));
+  __ SmiUntagFieldUnsigned(
+      bound_argc, FieldMemOperand(bound_argv, offsetof(FixedArray, length_)));
   __ Cbz(bound_argc, &no_bound_arguments);
   {
     // ----------- S t a t e -------------
@@ -3455,7 +3461,8 @@ void SwitchStacks(MacroAssembler* masm, ExternalReference fn,
   {
     FrameScope scope(masm, StackFrame::MANUAL);
     DCHECK(old_stack.is_valid());
-    bool is_return = fn == ExternalReference::wasm_return_stack();
+    bool is_return = fn == ExternalReference::wasm_return_jspi_stack() ||
+                     fn == ExternalReference::wasm_return_wasmfx_stack();
     int num_args = is_return ? 2 : 5;
     if (maybe_suspender.is_valid()) {
       num_args++;
@@ -3492,8 +3499,8 @@ void ReloadParentStack(MacroAssembler* masm, Register return_reg,
   __ Ldr(parent, MemOperand(active_stack, wasm::kStackParentOffset));
 
   // Switch stack!
-  SwitchStacks(masm, ExternalReference::wasm_return_stack(), parent, nullptr,
-               no_reg, {return_reg, return_value, context, parent});
+  SwitchStacks(masm, ExternalReference::wasm_return_jspi_stack(), parent,
+               nullptr, no_reg, {return_reg, return_value, context, parent});
   LoadJumpBuffer(masm, parent, false, tmp3);
 }
 
@@ -3898,8 +3905,8 @@ void Builtins::Generate_WasmFXReturn(MacroAssembler* masm) {
   __ LoadRootRelative(active_stack, IsolateData::active_stack_offset());
   Register parent = x1;
   __ Move(parent, MemOperand(active_stack, wasm::kStackParentOffset));
-  SwitchStacks(masm, ExternalReference::wasm_return_stack(), parent, nullptr,
-               no_reg, {parent});
+  SwitchStacks(masm, ExternalReference::wasm_return_wasmfx_stack(), parent,
+	       nullptr, no_reg, {parent});
   LoadJumpBuffer(masm, parent, true, x2);
   __ Trap();
 }
@@ -5356,8 +5363,8 @@ void Builtins::Generate_InterpreterOnStackReplacement_ToBaseline(
   if (v8_flags.debug_code) {
     __ IsObjectType(code_obj, x3, x3, CODE_TYPE);
     __ Assert(eq, AbortReason::kExpectedBaselineData);
-    AssertCodeIsBaseline(masm, code_obj, x3);
   }
+  AssertCodeIsBaseline(masm, code_obj, x3);
 
   // Load the feedback cell and vector.
   Register feedback_cell = x2;

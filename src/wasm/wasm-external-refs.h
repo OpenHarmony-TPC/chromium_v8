@@ -203,7 +203,8 @@ void resume_wasmfx_stack(Isolate* isolate, wasm::StackMemory* to, Address sp,
 Address suspend_wasmfx_stack(Isolate* isolate, Address sp, Address fp,
                              Address pc, Address wanted_tag_raw,
                              Address cont_raw);
-void return_stack(Isolate* isolate, wasm::StackMemory* to);
+void return_jspi_stack(Isolate* isolate, wasm::StackMemory* to);
+void return_wasmfx_stack(Isolate* isolate, wasm::StackMemory* to);
 
 intptr_t switch_to_the_central_stack(Isolate* isolate, uintptr_t sp);
 void switch_from_the_central_stack(Isolate* isolate);
